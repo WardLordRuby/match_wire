@@ -1,17 +1,18 @@
 use clap::{Parser, ValueEnum};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Specify the maximum number of servers added to favorites.json [Note: current server-browser gets buggy after 100]
+    /// Specify the maximum number of servers added to favorites.json
+    /// {n}[Note: current server-browser gets buggy after 100] [default: 100]
     #[arg(short, long)]
     pub limit: Option<usize>,
 
-    /// Specify a minimum number of players a server must have
+    /// Specify a minimum number of players a server must have [default: 0]
     #[arg(short, long)]
     pub player_min: Option<u16>,
 
-    /// Specify region
+    /// Specify region [default: include all regions]
     #[arg(short, long, value_enum)]
     pub region: Option<Region>,
 }
