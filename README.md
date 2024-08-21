@@ -1,6 +1,6 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [help-img]: https://i.imgur.com/Jcupr8A.png "query arguments"
-[latest-dl]: https://todo!()
+[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.1.0/h2m_favorites.exe
 
 # H2M Favorites
 A comand line interface for writing your own queries of servers running [IW4Admin][iw4m-server-master]
