@@ -108,7 +108,7 @@ pub fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Err
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
 
-    let mut servers = filter_server_list(&args).unwrap();
+    let mut servers = filter_server_list(&args)?;
 
     println!(
         "{} servers match the prameters in the current query",
@@ -133,7 +133,7 @@ pub fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-pub fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
+fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
     let instance_url = format!("{MASTER_URL}instance");
     let mut host_list = reqwest::blocking::get(instance_url.as_str())?.json::<Vec<HostData>>()?;
 
@@ -160,12 +160,11 @@ pub fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Err
         );
         let mut failure_count = 0_usize;
         let mut server_list = Vec::new();
-        for i in (0..host_list.len()).rev() {
-            let location = match try_location_lookup(&host_list[i]) {
+        for host in host_list.iter_mut() {
+            let location = match try_location_lookup(host) {
                 Ok(loc) => loc,
                 Err(_) => {
                     failure_count += 1;
-                    host_list.swap_remove(i);
                     continue;
                 }
             };
@@ -186,7 +185,7 @@ pub fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Err
                     }
                 }
             }
-            server_list.append(&mut host_list[i].servers);
+            server_list.append(&mut host.servers);
         }
 
         if failure_count > 0 {
@@ -206,22 +205,26 @@ fn try_location_lookup(host: &HostData) -> Result<ServerLocation, Box<dyn Error>
     );
 
     let mut recovery_ip = false;
-    let mut attempt_backup_url = || -> reqwest::Result<reqwest::blocking::Response> {
-        recovery_ip = true;
-        let backup_url = format!(
-            "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
-            host.servers[0].ip
-        );
-        reqwest::blocking::get(backup_url.as_str())
-    };
+    let mut attempt_backup_url =
+        |err: reqwest::Error| -> reqwest::Result<reqwest::blocking::Response> {
+            if recovery_ip {
+                return Err(err);
+            }
+            recovery_ip = true;
+            let backup_url = format!(
+                "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
+                host.servers[0].ip
+            );
+            reqwest::blocking::get(backup_url.as_str())
+        };
 
     let api_attempt = match reqwest::blocking::get(location_api_url.as_str()) {
         Ok(response) => response,
-        Err(_) => attempt_backup_url()?,
+        Err(err) => attempt_backup_url(err)?,
     };
 
     Ok(match api_attempt.json::<ServerLocation>() {
         Ok(json) => json,
-        Err(_) => attempt_backup_url()?.json::<ServerLocation>()?,
+        Err(err) => attempt_backup_url(err)?.json::<ServerLocation>()?,
     })
 }
