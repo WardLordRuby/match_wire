@@ -153,7 +153,7 @@ fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>>
         }
     }
 
-    Ok(if let Some(region) = args.region {
+    if let Some(region) = args.region {
         println!(
             "Determining region of {} server hosters...",
             host_list.len()
@@ -192,10 +192,9 @@ fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>>
             println!("Failed to resolve location for {failure_count} server hoster(s)")
         }
 
-        server_list
-    } else {
-        host_list.drain(..).flat_map(|host| host.servers).collect()
-    })
+        return Ok(server_list);
+    }
+    Ok(host_list.drain(..).flat_map(|host| host.servers).collect())
 }
 
 fn try_location_lookup(host: &HostData) -> Result<ServerLocation, Box<dyn Error>> {
@@ -223,8 +222,8 @@ fn try_location_lookup(host: &HostData) -> Result<ServerLocation, Box<dyn Error>
         Err(err) => attempt_backup_url(err)?,
     };
 
-    Ok(match api_attempt.json::<ServerLocation>() {
-        Ok(json) => json,
-        Err(err) => attempt_backup_url(err)?.json::<ServerLocation>()?,
-    })
+    match api_attempt.json::<ServerLocation>() {
+        Ok(json) => Ok(json),
+        Err(err) => Ok(attempt_backup_url(err)?.json::<ServerLocation>()?),
+    }
 }
