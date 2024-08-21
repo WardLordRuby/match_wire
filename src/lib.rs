@@ -145,7 +145,6 @@ fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>>
             }
             if host_list[i].servers[j].clientnum < args.player_min {
                 host_list[i].servers.swap_remove(j);
-                continue;
             }
         }
         if host_list[i].servers.is_empty() {
