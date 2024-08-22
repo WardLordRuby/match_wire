@@ -148,12 +148,34 @@ async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn E
         .json::<Vec<HostData>>()
         .await?;
 
+    let include = args.includes.as_ref().map(|s| s.trim().to_lowercase());
+    let exclude = args.excludes.as_ref().map(|s| s.trim().to_lowercase());
+
     for i in (0..host_list.len()).rev() {
         for j in (0..host_list[i].servers.len()).rev() {
             if host_list[i].servers[j].game != "H2M" {
                 host_list[i].servers.swap_remove(j);
                 continue;
             }
+
+            let mut hostname_l = None;
+            if let Some(ref string) = include {
+                hostname_l = Some(host_list[i].servers[j].hostname.to_lowercase());
+                if !hostname_l.as_ref().unwrap().contains(string) {
+                    host_list[i].servers.swap_remove(j);
+                    continue;
+                }
+            }
+            if let Some(ref string) = exclude {
+                if hostname_l
+                    .unwrap_or_else(|| host_list[i].servers[j].hostname.to_lowercase())
+                    .contains(string)
+                {
+                    host_list[i].servers.swap_remove(j);
+                    continue;
+                }
+            }
+
             if host_list[i].servers[j].clientnum < args.player_min {
                 host_list[i].servers.swap_remove(j);
             }

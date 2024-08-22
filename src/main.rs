@@ -34,6 +34,8 @@ async fn main() {
         limit: cli.limit.unwrap_or(DEFAULT_SERVER_CAP),
         player_min: cli.player_min.unwrap_or(DEFAULT_MIN_PLAYERS),
         region: cli.region,
+        includes: cli.includes,
+        excludes: cli.excludes,
     };
     build_favorites(&exe_dir, args)
         .await
