@@ -17,12 +17,12 @@ pub struct Cli {
     pub region: Option<Region>,
 
     /// Server name must include [Note: case-insensitive]
-    #[arg(short, long)]
-    pub includes: Option<String>,
+    #[arg(short, long, num_args(1..))]
+    pub includes: Option<Vec<String>>,
 
     /// Server name must exclude [Note: case-insensitive, exclude has higher priority]
-    #[arg(short, long)]
-    pub excludes: Option<String>,
+    #[arg(short, long, num_args(1..))]
+    pub excludes: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -40,6 +40,6 @@ pub struct Filters {
     pub limit: usize,
     pub player_min: u16,
     pub region: Option<Region>,
-    pub includes: Option<String>,
-    pub excludes: Option<String>,
+    pub includes: Option<Vec<String>>,
+    pub excludes: Option<Vec<String>>,
 }

@@ -141,6 +141,10 @@ enum Task {
     Error(Box<dyn Error>),
 }
 
+fn lowercase_vec(vec: &[String]) -> Vec<String> {
+    vec.iter().map(|s| s.trim().to_lowercase()).collect()
+}
+
 async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
     let instance_url = format!("{MASTER_URL}instance");
     let mut host_list = reqwest::get(instance_url.as_str())
@@ -148,8 +152,8 @@ async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn E
         .json::<Vec<HostData>>()
         .await?;
 
-    let include = args.includes.as_ref().map(|s| s.trim().to_lowercase());
-    let exclude = args.excludes.as_ref().map(|s| s.trim().to_lowercase());
+    let include = args.includes.as_ref().map(|s| lowercase_vec(s));
+    let exclude = args.excludes.as_ref().map(|s| lowercase_vec(s));
 
     for i in (0..host_list.len()).rev() {
         for j in (0..host_list[i].servers.len()).rev() {
@@ -159,17 +163,23 @@ async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn E
             }
 
             let mut hostname_l = None;
-            if let Some(ref string) = include {
+            if let Some(ref strings) = include {
                 hostname_l = Some(host_list[i].servers[j].hostname.to_lowercase());
-                if !hostname_l.as_ref().unwrap().contains(string) {
+                if !strings
+                    .iter()
+                    .any(|string| hostname_l.as_ref().unwrap().contains(string))
+                {
                     host_list[i].servers.swap_remove(j);
                     continue;
                 }
             }
-            if let Some(ref string) = exclude {
-                if hostname_l
-                    .unwrap_or_else(|| host_list[i].servers[j].hostname.to_lowercase())
-                    .contains(string)
+            if let Some(ref strings) = exclude {
+                if hostname_l.is_none() {
+                    hostname_l = Some(host_list[i].servers[j].hostname.to_lowercase());
+                }
+                if strings
+                    .iter()
+                    .any(|string| hostname_l.as_ref().unwrap().contains(string))
                 {
                     host_list[i].servers.swap_remove(j);
                     continue;
