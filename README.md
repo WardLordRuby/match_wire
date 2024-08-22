@@ -1,6 +1,6 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[help-img]: https://i.imgur.com/Jcupr8A.png "query arguments"
-[step-2]: https://i.imgur.com/LdfRVqu.png "open command prompt in MWR directory"
+[help-img]: https://i.imgur.com/LdfRVqu.png "query arguments"
+[step-2]: https://i.imgur.com/HRvBykK.png "open command prompt in MWR directory"
 [latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.0/h2m_favorites.exe
 
 # H2M Favorites
