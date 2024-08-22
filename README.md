@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[help-img]: https://i.imgur.com/J4NHVeI.png "query arguments"
+[help-img]: https://i.imgur.com/vjiBSp1.png "query arguments"
 [step-2]: https://i.imgur.com/HRvBykK.png "open command prompt in MWR directory"
-[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.3/h2m_favorites.exe
+[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.5/h2m_favorites.exe
 
 # H2M Favorites
 A command line interface for writing your own queries of servers running [IW4Admin][iw4m-server-master]
@@ -34,6 +34,7 @@ Filtering H2M servers is easy by adding your own arguments. We can do this with 
 
 #### Tips:
 - For help with available filters you can run the command: `h2m_favorites.exe --help`
+- To add spaces to your search term surround it in quotations e.g. `h2m_favorites.exe -i "long search term"`
 - Commonly used queries can be automated by creating a new txt file and entering your desired query formatted for Cmd. Then save-as "your-custom-query.bat" and place inside your game directory.
 
 ## Query help
