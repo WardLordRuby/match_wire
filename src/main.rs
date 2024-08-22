@@ -6,6 +6,7 @@ use h2m_favorites::*;
 async fn main() {
     let exe_dir = std::env::current_dir().expect("Failed to get current dir");
 
+    #[cfg(not(debug_assertions))]
     match does_dir_contain(&exe_dir, Operation::Count, &REQUIRED_FILES)
         .expect("Failed to read contents of current dir")
     {

@@ -85,7 +85,7 @@ where
 }
 
 pub fn await_user_for_end() {
-    println!("Press any key to exit...");
+    println!("Press enter to exit...");
     let stdin = std::io::stdin();
     let _ = stdin.read_line(&mut String::new());
 }
