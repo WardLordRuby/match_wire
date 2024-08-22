@@ -26,11 +26,12 @@ pub struct ServerInfo {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Continent {
-    pub code: String,
+pub struct ServerLocation {
+    pub continent: Option<Continent>,
+    pub message: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ServerLocation {
-    pub continent: Continent,
+pub struct Continent {
+    pub code: String,
 }

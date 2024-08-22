@@ -3,6 +3,7 @@ pub mod not_your_private_keys;
 pub mod server_data;
 
 use cli::{Filters, Region};
+use futures::stream::{FuturesUnordered, StreamExt};
 use not_your_private_keys::LOCATION_PRIVATE_KEY;
 use server_data::*;
 use std::{collections::HashSet, error::Error, fs::File, io::Write, path::Path, sync::LazyLock};
@@ -99,7 +100,7 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> std::io::Result<()>
     write!(into, "[{ips}]")
 }
 
-pub fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Error>> {
+pub async fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Error>> {
     let mut ip_collected = 0;
     let mut ips = String::new();
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
@@ -108,7 +109,7 @@ pub fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Err
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
 
-    let mut servers = filter_server_list(&args)?;
+    let mut servers = filter_server_list(&args).await?;
 
     println!(
         "{} servers match the prameters in the current query",
@@ -133,9 +134,19 @@ pub fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
+enum Task {
+    Allowed(Vec<ServerInfo>),
+    Filtered,
+    #[allow(dead_code)]
+    Error(Box<dyn Error>),
+}
+
+async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
     let instance_url = format!("{MASTER_URL}instance");
-    let mut host_list = reqwest::blocking::get(instance_url.as_str())?.json::<Vec<HostData>>()?;
+    let mut host_list = reqwest::get(instance_url.as_str())
+        .await?
+        .json::<Vec<HostData>>()
+        .await?;
 
     for i in (0..host_list.len()).rev() {
         for j in (0..host_list[i].servers.len()).rev() {
@@ -159,32 +170,34 @@ fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>>
         );
         let mut failure_count = 0_usize;
         let mut server_list = Vec::new();
-        for host in host_list.iter_mut() {
-            let location = match try_location_lookup(host) {
-                Ok(loc) => loc,
-                Err(_) => {
-                    failure_count += 1;
-                    continue;
+
+        let mut tasks = FuturesUnordered::new();
+
+        for host in host_list {
+            let task = async move {
+                let location = match try_location_lookup(&host).await {
+                    Ok(loc) => loc,
+                    Err(err) => return Task::Error(err),
+                };
+                match region {
+                    Region::NA if location.code != "NA" => return Task::Filtered,
+                    Region::EU if location.code != "EU" => return Task::Filtered,
+                    Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
+                        return Task::Filtered
+                    }
+                    _ => (),
                 }
+                Task::Allowed(host.servers)
             };
-            match region {
-                Region::NA => {
-                    if location.continent.code != "NA" {
-                        continue;
-                    }
-                }
-                Region::EU => {
-                    if location.continent.code != "EU" {
-                        continue;
-                    }
-                }
-                Region::Apac => {
-                    if !APAC_CONT_CODES.contains(location.continent.code.as_str()) {
-                        continue;
-                    }
-                }
+            tasks.push(task);
+        }
+
+        while let Some(result) = tasks.next().await {
+            match result {
+                Task::Allowed(mut servers) => server_list.append(&mut servers),
+                Task::Filtered => (),
+                Task::Error(_) => failure_count += 1,
             }
-            server_list.append(&mut host.servers);
         }
 
         if failure_count > 0 {
@@ -196,33 +209,58 @@ fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>>
     Ok(host_list.drain(..).flat_map(|host| host.servers).collect())
 }
 
-fn try_location_lookup(host: &HostData) -> Result<ServerLocation, Box<dyn Error>> {
+async fn try_location_lookup(host: &HostData) -> Result<Continent, Box<dyn Error>> {
     let location_api_url = format!(
         "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
         host.ip_address
     );
 
     let mut recovery_ip = false;
-    let mut attempt_backup_url =
-        |err: reqwest::Error| -> reqwest::Result<reqwest::blocking::Response> {
-            if recovery_ip {
-                return Err(err);
-            }
-            recovery_ip = true;
-            let backup_url = format!(
-                "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
-                host.servers[0].ip
-            );
-            reqwest::blocking::get(backup_url.as_str())
-        };
-
-    let api_attempt = match reqwest::blocking::get(location_api_url.as_str()) {
-        Ok(response) => response,
-        Err(err) => attempt_backup_url(err)?,
+    let mut get_backup_url = || -> Option<String> {
+        if recovery_ip {
+            return None;
+        }
+        recovery_ip = true;
+        Some(format!(
+            "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
+            host.servers[0].ip
+        ))
     };
 
-    match api_attempt.json::<ServerLocation>() {
-        Ok(json) => Ok(json),
-        Err(err) => Ok(attempt_backup_url(err)?.json::<ServerLocation>()?),
+    let api_attempt = match reqwest::get(location_api_url.as_str()).await {
+        Ok(response) => response,
+        Err(_) => reqwest::get(get_backup_url().unwrap()).await?,
+    };
+
+    match api_attempt.json::<ServerLocation>().await {
+        Ok(json) => {
+            if let Some(code) = json.continent {
+                return Ok(code);
+            }
+            if let Some(backup_ip) = get_backup_url() {
+                return process_secondary_ip_location(backup_ip).await;
+            }
+            Err(json_msg_err(json.message))
+        }
+        Err(err) => {
+            if let Some(backup_ip) = get_backup_url() {
+                return process_secondary_ip_location(backup_ip).await;
+            }
+            Err(Box::new(err))
+        }
     }
+}
+
+async fn process_secondary_ip_location(ip: String) -> Result<Continent, Box<dyn Error>> {
+    let backup_json = reqwest::get(ip).await?.json::<ServerLocation>().await?;
+    if let Some(code) = backup_json.continent {
+        return Ok(code);
+    }
+    Err(json_msg_err(backup_json.message))
+}
+
+fn json_msg_err(msg: Option<String>) -> Box<dyn Error> {
+    Box::new(std::io::Error::other(
+        msg.unwrap_or_else(|| String::from("unknown error")),
+    ))
 }
