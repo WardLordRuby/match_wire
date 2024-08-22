@@ -1,6 +1,6 @@
 [package]
 name = "h2m_favorites"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["WardLordRuby"]
 description = """
 A CLI Server Scraper that compiles a valid favorites.json for H2M-mod. Supports custom server queries
