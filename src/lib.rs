@@ -2,21 +2,26 @@ pub mod cli;
 pub mod not_your_private_keys;
 pub mod server_data;
 
-use cli::{Filters, Region};
+use cli::{Cli, Region};
 use futures::stream::{FuturesUnordered, StreamExt};
 use not_your_private_keys::LOCATION_PRIVATE_KEY;
 use server_data::*;
 use std::{collections::HashSet, error::Error, fs::File, io::Write, path::Path, sync::LazyLock};
 
-pub const DEFAULT_MAX_PING: u128 = 200;
-pub const DEFAULT_MIN_PLAYERS: u16 = 0;
 pub const DEFAULT_SERVER_CAP: usize = 100;
+pub const H2M_MAX_CLIENT_NUM: i64 = 18;
+pub const H2M_MAX_TEAM_SIZE: i64 = 9;
 
 pub const REQUIRED_FILES: [&str; 3] = ["h1_mp64_ship.exe", "h2m-mod", "players2"];
+
+const GAME_ID: &str = "H2M";
+const CODE_NA: &str = "NA";
+const CODE_EU: &str = "EU";
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net/";
 
 const MASTER_URL: &str = "https://master.iw4.zip/";
+const JSON_SERVER_ENDPOINT: &str = "instance";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
@@ -100,12 +105,13 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> std::io::Result<()>
     write!(into, "[{ips}]")
 }
 
-pub async fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<dyn Error>> {
+pub async fn build_favorites(curr_dir: &Path, args: Cli) -> Result<(), Box<dyn Error>> {
     let mut ip_collected = 0;
     let mut ips = String::new();
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
+    let limit = args.limit.unwrap_or(DEFAULT_SERVER_CAP);
 
-    if args.limit >= DEFAULT_SERVER_CAP {
+    if limit >= DEFAULT_SERVER_CAP {
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
 
@@ -116,14 +122,14 @@ pub async fn build_favorites(curr_dir: &Path, args: Filters) -> Result<(), Box<d
         servers.len()
     );
 
-    if servers.len() > args.limit {
+    if servers.len() > limit {
         servers.sort_unstable_by_key(|server| server.clientnum);
     }
 
     for server in servers.iter().rev() {
         ips.push_str(&format!("\"{}:{}\",", server.ip, server.port));
         ip_collected += 1;
-        if ip_collected == args.limit {
+        if ip_collected == limit {
             break;
         }
     }
@@ -145,8 +151,8 @@ fn lowercase_vec(vec: &[String]) -> Vec<String> {
     vec.iter().map(|s| s.trim().to_lowercase()).collect()
 }
 
-async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
-    let instance_url = format!("{MASTER_URL}instance");
+async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
+    let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
     let mut host_list = reqwest::get(instance_url.as_str())
         .await?
         .json::<Vec<HostData>>()
@@ -157,9 +163,23 @@ async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn E
 
     for i in (0..host_list.len()).rev() {
         for j in (0..host_list[i].servers.len()).rev() {
-            if host_list[i].servers[j].game != "H2M" {
+            if host_list[i].servers[j].game != GAME_ID {
                 host_list[i].servers.swap_remove(j);
                 continue;
+            }
+
+            if let Some(team_size_max) = args.team_size_max {
+                if host_list[i].servers[j].maxclientnum > team_size_max * 2 {
+                    host_list[i].servers.swap_remove(j);
+                    continue;
+                }
+            }
+
+            if let Some(player_min) = args.player_min {
+                if host_list[i].servers[j].clientnum < player_min {
+                    host_list[i].servers.swap_remove(j);
+                    continue;
+                }
             }
 
             let mut hostname_l = None;
@@ -182,12 +202,7 @@ async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn E
                     .any(|string| hostname_l.as_ref().unwrap().contains(string))
                 {
                     host_list[i].servers.swap_remove(j);
-                    continue;
                 }
-            }
-
-            if host_list[i].servers[j].clientnum < args.player_min {
-                host_list[i].servers.swap_remove(j);
             }
         }
         if host_list[i].servers.is_empty() {
@@ -212,8 +227,8 @@ async fn filter_server_list(args: &Filters) -> Result<Vec<ServerInfo>, Box<dyn E
                     Err(err) => return Task::Error(err),
                 };
                 match region {
-                    Region::NA if location.code != "NA" => return Task::Filtered,
-                    Region::EU if location.code != "EU" => return Task::Filtered,
+                    Region::NA if location.code != CODE_NA => return Task::Filtered,
+                    Region::EU if location.code != CODE_EU => return Task::Filtered,
                     Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
                         return Task::Filtered
                     }

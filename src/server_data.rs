@@ -14,10 +14,10 @@ pub struct HostData {
 #[derive(Deserialize, Debug)]
 pub struct ServerInfo {
     pub ip: String,
-    pub clientnum: u16,
+    pub clientnum: u8,
     pub gametype: String,
     pub id: i64,
-    pub maxclientnum: u16,
+    pub maxclientnum: u8,
     pub port: u32,
     pub map: String,
     pub version: String,

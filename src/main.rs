@@ -1,5 +1,5 @@
 use clap::Parser;
-use cli::{Cli, Filters};
+use cli::Cli;
 use h2m_favorites::*;
 
 #[tokio::main]
@@ -31,14 +31,7 @@ async fn main() {
     }
 
     let cli = Cli::parse();
-    let args = Filters {
-        limit: cli.limit.unwrap_or(DEFAULT_SERVER_CAP),
-        player_min: cli.player_min.unwrap_or(DEFAULT_MIN_PLAYERS),
-        region: cli.region,
-        includes: cli.includes,
-        excludes: cli.excludes,
-    };
-    build_favorites(&exe_dir, args)
+    build_favorites(&exe_dir, cli)
         .await
         .unwrap_or_else(|err| eprintln!("{err:?}"));
     await_user_for_end();
