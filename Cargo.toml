@@ -1,6 +1,6 @@
 [package]
 name = "h2m_favorites"
-version = "0.2.3"
+version = "0.2.5"
 authors = ["WardLordRuby"]
 description = """
 A CLI Server Scraper that compiles a valid favorites.json for H2M-mod. Supports custom server queries
@@ -10,7 +10,7 @@ edition = "2021"
 [package.metadata.winresource]
 ProductName = "H2M Favorites"
 FileDescription = "H2M-mod server scraper"
-ProductVersion = "0.2.3"
+ProductVersion = "0.2.5"
 
 [dependencies]
 reqwest = { version = "0.12.7", features = ["blocking", "json"] }
