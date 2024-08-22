@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [help-img]: https://i.imgur.com/Jcupr8A.png "query arguments"
-[step-2]: https://i.imgur.com/HRvBykK.png "open command prompt in MWR directory"
-[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.1.0/h2m_favorites.exe
+[step-2]: https://i.imgur.com/LdfRVqu.png "open command prompt in MWR directory"
+[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.0/h2m_favorites.exe
 
 # H2M Favorites
 A command line interface for writing your own queries of servers running [IW4Admin][iw4m-server-master]
@@ -18,13 +18,13 @@ Double clicking h2m_favorites.exe will compile your favorites list with the top 
 #### Custom queries:
 Filtering H2M servers is easy by adding your own arguments. We can do this with a few simple steps.
 1. Navagate to your installation of MWR(2017)
-2. Right click inside the folder and select 'Open in Terminal' ![tutorial-1][step-2]
+2. Right click inside the folder (or shift right click) and select 'Open in Terminal' ![tutorial-1][step-2]
 3. In the terminal window we will be using an example query for deminstration pupropses  
    Examples:
      
    WindowsPowerShell:  
    ```
-   ./h2m_favorites.exe --region na --player-min 2
+   .\h2m_favorites.exe --region na --player-min 2
    ```
    Cmd:
    ```
