@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[help-img]: https://i.imgur.com/LdfRVqu.png "query arguments"
+[help-img]: https://i.imgur.com/J4NHVeI.png "query arguments"
 [step-2]: https://i.imgur.com/HRvBykK.png "open command prompt in MWR directory"
-[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.0/h2m_favorites.exe
+[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.3/h2m_favorites.exe
 
 # H2M Favorites
 A command line interface for writing your own queries of servers running [IW4Admin][iw4m-server-master]
