@@ -21,6 +21,7 @@ pub struct Cli {
     pub includes: Option<Vec<String>>,
 
     /// Server name must exclude [Note: case-insensitive, exclude has higher priority]
+    /// {n}[e.g. -e term1 term2 = "term1" "term2" | -e "term1 term2" = "term1 term2"]
     #[arg(short, long, num_args(1..))]
     pub excludes: Option<Vec<String>>,
 }
