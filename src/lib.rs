@@ -273,11 +273,6 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
 }
 
 async fn try_location_lookup(host: &HostData) -> Result<Continent, Box<dyn Error>> {
-    let location_api_url = format!(
-        "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
-        host.ip_address
-    );
-
     let mut recovery_ip = false;
     let mut get_backup_url = || -> Option<String> {
         if recovery_ip {
@@ -290,9 +285,24 @@ async fn try_location_lookup(host: &HostData) -> Result<Continent, Box<dyn Error
         ))
     };
 
+    let location_api_url = if !host.ip_address.is_empty() {
+        format!(
+            "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
+            host.ip_address
+        )
+    } else {
+        get_backup_url().unwrap()
+    };
+
     let api_attempt = match reqwest::get(location_api_url.as_str()).await {
         Ok(response) => response,
-        Err(_) => reqwest::get(get_backup_url().unwrap()).await?,
+        Err(err) => {
+            let backup_ip = get_backup_url();
+            if backup_ip.is_none() {
+                return Err(Box::new(err));
+            }
+            reqwest::get(backup_ip.unwrap()).await?
+        }
     };
 
     match api_attempt.json::<ServerLocation>().await {
