@@ -243,14 +243,13 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
                     Err(err) => return Task::Error(err),
                 };
                 match region {
-                    Region::NA if location.code != CODE_NA => return Task::Filtered,
-                    Region::EU if location.code != CODE_EU => return Task::Filtered,
+                    Region::NA if location.code != CODE_NA => Task::Filtered,
+                    Region::EU if location.code != CODE_EU => Task::Filtered,
                     Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
-                        return Task::Filtered
+                        Task::Filtered
                     }
-                    _ => (),
+                    _ => Task::Allowed(host.servers),
                 }
-                Task::Allowed(host.servers)
             };
             tasks.push(task);
         }
