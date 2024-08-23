@@ -151,6 +151,22 @@ fn lowercase_vec(vec: &[String]) -> Vec<String> {
     vec.iter().map(|s| s.trim().to_lowercase()).collect()
 }
 
+fn parse_hostname(name: &str) -> String {
+    const COLOR_ESCAPE_CODE: char = '^';
+    let mut host_name = String::new();
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == COLOR_ESCAPE_CODE {
+            if chars.peek().is_some() {
+                chars.next();
+            }
+        } else {
+            host_name.push(c.to_ascii_lowercase());
+        }
+    }
+    host_name
+}
+
 async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
     let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
     let mut host_list = reqwest::get(instance_url.as_str())
@@ -184,7 +200,7 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
 
             let mut hostname_l = None;
             if let Some(ref strings) = include {
-                hostname_l = Some(host_list[i].servers[j].hostname.to_lowercase());
+                hostname_l = Some(parse_hostname(&host_list[i].servers[j].hostname));
                 if !strings
                     .iter()
                     .any(|string| hostname_l.as_ref().unwrap().contains(string))
@@ -195,7 +211,7 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
             }
             if let Some(ref strings) = exclude {
                 if hostname_l.is_none() {
-                    hostname_l = Some(host_list[i].servers[j].hostname.to_lowercase());
+                    hostname_l = Some(parse_hostname(&host_list[i].servers[j].hostname));
                 }
                 if strings
                     .iter()
