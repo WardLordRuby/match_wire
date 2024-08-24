@@ -36,6 +36,8 @@ const JSON_SERVER_ENDPOINT: &str = "instance";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
+const LOCAL_HOST: &str = "localhost";
+
 static APAC_CONT_CODES: LazyLock<HashSet<&str>> = LazyLock::new(populate_apac_cont_codes);
 
 fn populate_apac_cont_codes() -> HashSet<&'static str> {
@@ -174,7 +176,7 @@ pub async fn build_favorites(curr_dir: &Path, args: Cli) -> io::Result<()> {
 }
 
 enum Task {
-    Allowed(Vec<ServerInfo>),
+    Allowed(ServerInfo),
     Filtered,
     #[allow(dead_code)]
     Error(io::Error),
@@ -261,22 +263,25 @@ async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
 
     if let Some(region) = args.region {
         println!(
-            "Determining region of {} server hosters...",
-            host_list.len()
+            "Determining region of {} servers...",
+            host_list.iter().fold(0_usize, |mut count, host| {
+                count += host.servers.len();
+                count
+            })
         );
-        let mut failure_count = 0_usize;
-        let mut server_list = Vec::new();
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(20))
-            .build()?;
+        let client = reqwest::Client::new();
 
-        let tasks = host_list
-            .into_iter()
-            .map(|host| {
+        let tasks = host_list.into_iter().fold(Vec::new(), |mut tasks, host| {
+            host.servers.into_iter().for_each(|mut server| {
                 let client = client.clone();
-                tokio::spawn(async move {
-                    let location = match try_location_lookup(&host, client).await {
+                if server.ip == LOCAL_HOST {
+                    if let Ok(ip) = parse_possible_ipv6(&host.ip_address, &host.webfront_url) {
+                        server.ip = ip.to_string()
+                    };
+                }
+                tasks.push(tokio::spawn(async move {
+                    let location = match try_location_lookup(&server, client).await {
                         Ok(loc) => loc,
                         Err(err) => return Task::Error(err),
                     };
@@ -286,16 +291,20 @@ async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
                         Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
                             Task::Filtered
                         }
-                        _ => Task::Allowed(host.servers),
+                        _ => Task::Allowed(server),
                     }
-                })
-            })
-            .collect::<Vec<_>>();
+                }));
+            });
+            tasks
+        });
+
+        let mut failure_count = 0_usize;
+        let mut server_list = Vec::new();
 
         for task in tasks {
             match task.await {
                 Ok(result) => match result {
-                    Task::Allowed(mut servers) => server_list.append(&mut servers),
+                    Task::Allowed(server) => server_list.push(server),
                     Task::Filtered => (),
                     Task::Error(_) => failure_count += 1,
                 },
@@ -312,37 +321,48 @@ async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
     Ok(host_list.drain(..).flat_map(|host| host.servers).collect())
 }
 
-async fn try_location_lookup(host: &HostData, client: reqwest::Client) -> io::Result<Continent> {
-    let format_url =
-        |ip: IpAddr| -> String { format!("{MASTER_LOCATION_URL}{ip}{LOCATION_PRIVATE_KEY}") };
-    let location_api_url = match resolve_address(&host.ip_address) {
-        Ok(ip) => format_url(ip),
-        Err(_) => {
+fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
+    match resolve_address(ip) {
+        Ok(ip) => Ok(ip),
+        Err(err) => {
             const HTTP_ENDING: &str = "//";
-            if let Some(i) = host.webfront_url.find(HTTP_ENDING) {
+            if let Some(i) = webfront_url.find(HTTP_ENDING) {
                 const PORT_SEPERATOR: char = ':';
                 let ip_start = i + HTTP_ENDING.len();
-                let ipv6_slice =
-                    if let Some(j) = host.webfront_url[ip_start..].rfind(PORT_SEPERATOR) {
-                        &host.webfront_url[ip_start..j + ip_start]
-                    } else {
-                        &host.webfront_url[ip_start..]
-                    };
-                match resolve_address(ipv6_slice) {
-                    Ok(ip) => format_url(ip),
-                    Err(_) => format_url(resolve_address(&host.servers[0].ip)?),
-                }
-            } else {
-                format_url(resolve_address(&host.servers[0].ip)?)
+                let ipv6_slice = if let Some(j) = webfront_url[ip_start..].rfind(PORT_SEPERATOR) {
+                    let ip_end = j + ip_start;
+                    if ip_end <= ip_start {
+                        return Err(io::Error::other("Failed to parse ip"));
+                    }
+                    &webfront_url[ip_start..ip_end]
+                } else {
+                    &webfront_url[ip_start..]
+                };
+                return resolve_address(ipv6_slice);
             }
+            Err(err)
         }
-    };
+    }
+}
+
+async fn try_location_lookup(
+    server: &ServerInfo,
+    client: reqwest::Client,
+) -> io::Result<Continent> {
+    let format_url =
+        |ip: IpAddr| -> String { format!("{MASTER_LOCATION_URL}{ip}{LOCATION_PRIVATE_KEY}") };
+    let location_api_url = resolve_address(&server.ip).map(format_url)?;
 
     let api_response = client
         .get(location_api_url.as_str())
         .send()
         .await
-        .map_err(|err| io::Error::other(format!("{err:?}, outbound url: {location_api_url}")))?;
+        .map_err(|err| {
+            io::Error::other(format!(
+                "{err:?}, outbound url: {location_api_url}, server id: {}",
+                server.id
+            ))
+        })?;
 
     match api_response.json::<ServerLocation>().await {
         Ok(json) => {
@@ -354,7 +374,10 @@ async fn try_location_lookup(host: &HostData, client: reqwest::Client) -> io::Re
                     .unwrap_or_else(|| String::from("unknown error")),
             ))
         }
-        Err(err) => Err(io::Error::other(format!("{err:?}"))),
+        Err(err) => Err(io::Error::other(format!(
+            "{err:?}, outbound url: {location_api_url}, server id: {}",
+            server.id
+        ))),
     }
 }
 
@@ -376,10 +399,9 @@ fn resolve_address(input: &str) -> io::Result<IpAddr> {
         return Ok(ip);
     }
 
-    let addr = (ip_trim, 80)
+    (ip_trim, 80)
         .to_socket_addrs()?
         .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Hostname could not be resolved"))?;
-
-    Ok(addr.ip())
+        .map(|socket| socket.ip())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Hostname could not be resolved"))
 }
