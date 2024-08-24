@@ -1,9 +1,18 @@
 use clap::Parser;
 use cli::Cli;
+use commands::filter::build_favorites;
 use h2m_favorites::*;
+use tracing::error;
 
 #[tokio::main]
 async fn main() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        error!(name: "PANIC", "{}", format_panic_info(info));
+        prev(info);
+    }));
+
+    subscriber::init_subscriber().unwrap_or_else(|err| eprintln!("{err:?}"));
     let exe_dir = std::env::current_dir().expect("Failed to get current dir");
 
     #[cfg(not(debug_assertions))]
@@ -31,11 +40,12 @@ async fn main() {
     }
     get_latest_version()
         .await
-        .unwrap_or_else(|err| eprintln!("{err}"));
+        .unwrap_or_else(|err| error!("{err}"));
 
     let cli = Cli::parse();
-    build_favorites(&exe_dir, cli)
-        .await
-        .unwrap_or_else(|err| eprintln!("{err:?}"));
+    build_favorites(&exe_dir, cli).await.unwrap_or_else(|err| {
+        error!("{err:?}");
+        eprintln!("{err:?}")
+    });
     await_user_for_end();
 }
