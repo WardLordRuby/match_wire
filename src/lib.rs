@@ -6,7 +6,16 @@ use cli::{Cli, Region};
 use futures::stream::{FuturesUnordered, StreamExt};
 use not_your_private_keys::LOCATION_PRIVATE_KEY;
 use server_data::*;
-use std::{collections::HashSet, error::Error, fs::File, io::Write, path::Path, sync::LazyLock};
+use std::{
+    collections::HashSet,
+    error::Error,
+    fs::File,
+    io,
+    io::Write,
+    net::{IpAddr, ToSocketAddrs},
+    path::Path,
+    sync::LazyLock,
+};
 
 pub const DEFAULT_SERVER_CAP: usize = 100;
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
@@ -263,7 +272,7 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
         }
 
         if failure_count > 0 {
-            println!("Failed to resolve location for {failure_count} server hoster(s)")
+            eprintln!("Failed to resolve location for {failure_count} server hoster(s)")
         }
 
         return Ok(server_list);
@@ -272,67 +281,69 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
 }
 
 async fn try_location_lookup(host: &HostData) -> Result<Continent, Box<dyn Error>> {
-    let mut recovery_ip = false;
-    let mut get_backup_url = || -> Option<String> {
-        if recovery_ip {
-            return None;
-        }
-        recovery_ip = true;
-        Some(format!(
-            "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
-            host.servers[0].ip
-        ))
-    };
-
-    let location_api_url = if !host.ip_address.is_empty() {
-        format!(
-            "{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}",
-            host.ip_address
-        )
-    } else {
-        get_backup_url().unwrap()
-    };
-
-    let api_attempt = match reqwest::get(location_api_url.as_str()).await {
-        Ok(response) => response,
-        Err(err) => {
-            let backup_ip = get_backup_url();
-            if backup_ip.is_none() {
-                return Err(Box::new(err));
+    let format_url =
+        |ip: IpAddr| -> String { format!("{MASTER_LOCATION_URL}{ip}{LOCATION_PRIVATE_KEY}") };
+    let location_api_url = match resolve_address(&host.ip_address) {
+        Ok(ip) => format_url(ip),
+        Err(_) => {
+            const HTTP_ENDING: &str = "//";
+            if let Some(i) = host.webfront_url.find(HTTP_ENDING) {
+                const PORT_SEPERATOR: char = ':';
+                let ip_start = i + HTTP_ENDING.len();
+                let ipv6_slice =
+                    if let Some(j) = host.webfront_url[ip_start..].rfind(PORT_SEPERATOR) {
+                        &host.webfront_url[ip_start..j + ip_start]
+                    } else {
+                        &host.webfront_url[ip_start..]
+                    };
+                match resolve_address(ipv6_slice) {
+                    Ok(ip) => format_url(ip),
+                    Err(_) => format_url(resolve_address(&host.servers[0].ip)?),
+                }
+            } else {
+                format_url(resolve_address(&host.servers[0].ip)?)
             }
-            reqwest::get(backup_ip.unwrap()).await?
         }
     };
 
-    match api_attempt.json::<ServerLocation>().await {
+    let api_response = reqwest::get(location_api_url.as_str()).await?;
+
+    match api_response.json::<ServerLocation>().await {
         Ok(json) => {
             if let Some(code) = json.continent {
                 return Ok(code);
             }
-            if let Some(backup_ip) = get_backup_url() {
-                return process_secondary_ip_location(backup_ip).await;
-            }
-            Err(json_msg_err(json.message))
+            Err(Box::new(io::Error::other(
+                json.message
+                    .unwrap_or_else(|| String::from("unknown error")),
+            )))
         }
-        Err(err) => {
-            if let Some(backup_ip) = get_backup_url() {
-                return process_secondary_ip_location(backup_ip).await;
-            }
-            Err(Box::new(err))
-        }
+        Err(err) => Err(Box::new(err)),
     }
 }
 
-async fn process_secondary_ip_location(ip: String) -> Result<Continent, Box<dyn Error>> {
-    let backup_json = reqwest::get(ip).await?.json::<ServerLocation>().await?;
-    if let Some(code) = backup_json.continent {
-        return Ok(code);
+fn resolve_address(input: &str) -> io::Result<IpAddr> {
+    let ip_trim = input.trim_matches('/').trim_matches(':');
+    if ip_trim.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Ip can not be empty",
+        ));
     }
-    Err(json_msg_err(backup_json.message))
-}
+    if let Ok(ip) = ip_trim.parse::<IpAddr>() {
+        if ip.is_unspecified() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Addr: {ip}, is not valid"),
+            ));
+        }
+        return Ok(ip);
+    }
 
-fn json_msg_err(msg: Option<String>) -> Box<dyn Error> {
-    Box::new(std::io::Error::other(
-        msg.unwrap_or_else(|| String::from("unknown error")),
-    ))
+    let addr = (ip_trim, 80)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Hostname could not be resolved"))?;
+
+    Ok(addr.ip())
 }
