@@ -2,8 +2,14 @@
 [help-img]: https://i.imgur.com/vjiBSp1.png "query arguments"
 [step-2]: https://i.imgur.com/HRvBykK.png "open command prompt in MWR directory"
 [latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.9/h2m_favorites.exe
+<div align="center">
+    <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
+</div>
 
 # H2M Favorites
+[![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/H2M_favorites/total?label=Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
+[![GitHub License](https://img.shields.io/github/license/WardLordRuby/H2M_favorites?label=License&labelColor=%2323282e)](LICENSE)  
+
 A command line interface for writing your own queries of servers running [IW4Admin][iw4m-server-master]
 
 This tool fixes the H2M server browser! It fixes that annoying bug where the browser connects you to a random server, by limiting the amount of servers listed in your favorites.json.
