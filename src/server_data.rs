@@ -28,6 +28,7 @@ pub struct ServerInfo {
 #[derive(Deserialize, Debug)]
 pub struct ServerLocation {
     pub continent: Option<Continent>,
+    #[serde(rename = "Message")]
     pub message: Option<String>,
 }
 
