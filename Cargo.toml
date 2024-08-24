@@ -14,11 +14,10 @@ ProductVersion = "0.2.6"
 
 [dependencies]
 reqwest = { version = "0.12.7", features = ["blocking", "json"] }
-serde = { version = "1.0.208", features = ["derive"] }
+serde = { version = "1.0.209", features = ["derive"] }
 serde_json = "1.0.125"
 clap = { version = "4.5.16", features = ["derive"] }
 tokio = { version = "1.39.3", features = ["rt-multi-thread", "macros"]}
-futures = "0.3.30"
 
 [build-dependencies]
 winresource = "0.1.17"

@@ -7,13 +7,13 @@ use json_data::*;
 use not_your_private_keys::LOCATION_PRIVATE_KEY;
 use std::{
     collections::HashSet,
-    error::Error,
     fs::File,
     io,
     io::Write,
     net::{IpAddr, ToSocketAddrs},
     path::Path,
     sync::LazyLock,
+    time::Duration,
 };
 
 pub const VERSION_URL: &str =
@@ -45,7 +45,14 @@ fn populate_apac_cont_codes() -> HashSet<&'static str> {
 
 pub async fn get_latest_version() -> reqwest::Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
-    let version = reqwest::get(VERSION_URL).await?.json::<Version>().await?;
+    let client = reqwest::Client::new();
+    let version = client
+        .get(VERSION_URL)
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await?
+        .json::<Version>()
+        .await?;
     if current_version != version.latest {
         println!(
             "New version available for download at: \n\
@@ -75,7 +82,7 @@ pub fn does_dir_contain<'a, T>(
     dir: &Path,
     operation: Operation,
     list: &'a [T],
-) -> std::io::Result<OperationResult<'a>>
+) -> io::Result<OperationResult<'a>>
 where
     T: std::borrow::Borrow<str> + std::cmp::Eq + std::hash::Hash,
 {
@@ -115,11 +122,11 @@ where
 
 pub fn await_user_for_end() {
     println!("Press enter to exit...");
-    let stdin = std::io::stdin();
+    let stdin = io::stdin();
     let _ = stdin.read_line(&mut String::new());
 }
 
-fn serialize_json(into: &mut std::fs::File, from: String) -> std::io::Result<()> {
+fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
     let ips = if from.ends_with(COMMA) {
         &from[..from.len() - COMMA.len_utf8()]
@@ -129,7 +136,7 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> std::io::Result<()>
     write!(into, "[{ips}]")
 }
 
-pub async fn build_favorites(curr_dir: &Path, args: Cli) -> Result<(), Box<dyn Error>> {
+pub async fn build_favorites(curr_dir: &Path, args: Cli) -> io::Result<()> {
     let mut ip_collected = 0;
     let mut ips = String::new();
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
@@ -139,7 +146,9 @@ pub async fn build_favorites(curr_dir: &Path, args: Cli) -> Result<(), Box<dyn E
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
 
-    let mut servers = filter_server_list(&args).await?;
+    let mut servers = filter_server_list(&args)
+        .await
+        .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     println!(
         "{} servers match the prameters in the current query",
@@ -168,7 +177,7 @@ enum Task {
     Allowed(Vec<ServerInfo>),
     Filtered,
     #[allow(dead_code)]
-    Error(Box<dyn Error>),
+    Error(io::Error),
 }
 
 fn lowercase_vec(vec: &[String]) -> Vec<String> {
@@ -191,7 +200,7 @@ fn parse_hostname(name: &str) -> String {
     host_name
 }
 
-async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error>> {
+async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
     let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
     let mut host_list = reqwest::get(instance_url.as_str())
         .await?
@@ -258,31 +267,39 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
         let mut failure_count = 0_usize;
         let mut server_list = Vec::new();
 
-        let mut tasks = FuturesUnordered::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()?;
 
-        for host in host_list {
-            let task = async move {
-                let location = match try_location_lookup(&host).await {
-                    Ok(loc) => loc,
-                    Err(err) => return Task::Error(err),
-                };
-                match region {
-                    Region::NA if location.code != CODE_NA => Task::Filtered,
-                    Region::EU if location.code != CODE_EU => Task::Filtered,
-                    Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
-                        Task::Filtered
+        let tasks = host_list
+            .into_iter()
+            .map(|host| {
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let location = match try_location_lookup(&host, client).await {
+                        Ok(loc) => loc,
+                        Err(err) => return Task::Error(err),
+                    };
+                    match region {
+                        Region::NA if location.code != CODE_NA => Task::Filtered,
+                        Region::EU if location.code != CODE_EU => Task::Filtered,
+                        Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
+                            Task::Filtered
+                        }
+                        _ => Task::Allowed(host.servers),
                     }
-                    _ => Task::Allowed(host.servers),
-                }
-            };
-            tasks.push(task);
-        }
+                })
+            })
+            .collect::<Vec<_>>();
 
-        while let Some(result) = tasks.next().await {
-            match result {
-                Task::Allowed(mut servers) => server_list.append(&mut servers),
-                Task::Filtered => (),
-                Task::Error(_) => failure_count += 1,
+        for task in tasks {
+            match task.await {
+                Ok(result) => match result {
+                    Task::Allowed(mut servers) => server_list.append(&mut servers),
+                    Task::Filtered => (),
+                    Task::Error(_) => failure_count += 1,
+                },
+                Err(_) => failure_count += 1,
             }
         }
 
@@ -295,7 +312,7 @@ async fn filter_server_list(args: &Cli) -> Result<Vec<ServerInfo>, Box<dyn Error
     Ok(host_list.drain(..).flat_map(|host| host.servers).collect())
 }
 
-async fn try_location_lookup(host: &HostData) -> Result<Continent, Box<dyn Error>> {
+async fn try_location_lookup(host: &HostData, client: reqwest::Client) -> io::Result<Continent> {
     let format_url =
         |ip: IpAddr| -> String { format!("{MASTER_LOCATION_URL}{ip}{LOCATION_PRIVATE_KEY}") };
     let location_api_url = match resolve_address(&host.ip_address) {
@@ -321,19 +338,23 @@ async fn try_location_lookup(host: &HostData) -> Result<Continent, Box<dyn Error
         }
     };
 
-    let api_response = reqwest::get(location_api_url.as_str()).await?;
+    let api_response = client
+        .get(location_api_url.as_str())
+        .send()
+        .await
+        .map_err(|err| io::Error::other(format!("{err:?}, outbound url: {location_api_url}")))?;
 
     match api_response.json::<ServerLocation>().await {
         Ok(json) => {
             if let Some(code) = json.continent {
                 return Ok(code);
             }
-            Err(Box::new(io::Error::other(
+            Err(io::Error::other(
                 json.message
                     .unwrap_or_else(|| String::from("unknown error")),
-            )))
+            ))
         }
-        Err(err) => Err(Box::new(err)),
+        Err(err) => Err(io::Error::other(format!("{err:?}"))),
     }
 }
 
