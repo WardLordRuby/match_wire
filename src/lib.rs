@@ -1,11 +1,10 @@
 pub mod cli;
+pub mod json_data;
 pub mod not_your_private_keys;
-pub mod server_data;
 
 use cli::{Cli, Region};
-use futures::stream::{FuturesUnordered, StreamExt};
+use json_data::*;
 use not_your_private_keys::LOCATION_PRIVATE_KEY;
-use server_data::*;
 use std::{
     collections::HashSet,
     error::Error,
@@ -16,6 +15,9 @@ use std::{
     path::Path,
     sync::LazyLock,
 };
+
+pub const VERSION_URL: &str =
+    "https://gist.githubusercontent.com/WardLordRuby/324d7c1fb454aed5f5155a790bd028f0/raw/";
 
 pub const DEFAULT_SERVER_CAP: usize = 100;
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
@@ -39,6 +41,19 @@ static APAC_CONT_CODES: LazyLock<HashSet<&str>> = LazyLock::new(populate_apac_co
 fn populate_apac_cont_codes() -> HashSet<&'static str> {
     const APAC_CONT_CODES_ARR: [&str; 3] = ["AS", "OC", "AF"];
     HashSet::from(APAC_CONT_CODES_ARR)
+}
+
+pub async fn get_latest_version() -> reqwest::Result<()> {
+    let current_version = env!("CARGO_PKG_VERSION");
+    let version = reqwest::get(VERSION_URL).await?.json::<Version>().await?;
+    if current_version != version.latest {
+        println!(
+            "New version available for download at: \n\
+            https://github.com/WardLordRuby/H2M_favorites/releases/download/v{}/h2m_favorites.exe",
+            version.latest
+        )
+    }
+    Ok(())
 }
 
 #[derive(Debug)]

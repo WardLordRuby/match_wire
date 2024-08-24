@@ -29,6 +29,9 @@ async fn main() {
         }
         _ => unreachable!(),
     }
+    get_latest_version()
+        .await
+        .unwrap_or_else(|err| eprintln!("{err}"));
 
     let cli = Cli::parse();
     build_favorites(&exe_dir, cli)
