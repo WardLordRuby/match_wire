@@ -49,10 +49,8 @@ where
 
 #[cfg(not(debug_assertions))]
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
-    use crate::LOG_NAME;
-
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
-        .filename_prefix(LOG_NAME)
+        .filename_prefix(crate::LOG_NAME)
         .max_log_files(5)
         .build(local_env_dir)
         .map_err(std::io::Error::other)?;

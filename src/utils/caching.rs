@@ -40,7 +40,7 @@ impl Cache {
         self.servers.push(ServerCache::from(server, region))
     }
 
-    pub fn update_cache_with_consume(&mut self, server: ServerCache) {
+    pub fn push(&mut self, server: ServerCache) {
         self.host_to_connect
             .insert(server.hostname.clone(), server.get_id());
         self.ip_to_region

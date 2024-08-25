@@ -6,7 +6,7 @@ use crate::{
     utils::{caching::Cache, json_data::*},
 };
 
-use tracing::{error, instrument};
+use tracing::{error, instrument, trace};
 
 use std::{
     collections::HashSet,
@@ -60,6 +60,7 @@ impl Region {
 }
 
 pub async fn get_server_master() -> reqwest::Result<Vec<HostData>> {
+    trace!("retreiving master server list");
     let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
     reqwest::get(instance_url.as_str())
         .await?
@@ -204,6 +205,7 @@ async fn filter_server_list(
                 }
                 if new_lookups.insert(server.ip.clone()) {
                     let client = client.clone();
+                    trace!("Requsting location data for: {}", server.ip);
                     tasks.push(tokio::spawn(async move {
                         let location = match try_location_lookup(&server, client).await {
                             Ok(loc) => loc,
@@ -230,7 +232,7 @@ async fn filter_server_list(
                         server_list.push(server)
                     }
                     Task::Filtered((server, region)) => {
-                        cache.update_cache_with_consume(ServerCache::consume(server, region));
+                        cache.push(ServerCache::consume(server, region));
                     }
                     Task::Err(err) => {
                         error!("{err}");
@@ -244,7 +246,7 @@ async fn filter_server_list(
             }
         }
 
-        let mut update = check_again
+        let update = check_again
             .into_iter()
             .fold(Vec::new(), |mut update, server| {
                 if let Some(cached_region) = cache.ip_to_region.get(&server.ip) {
@@ -256,9 +258,7 @@ async fn filter_server_list(
                 update
             });
 
-        update
-            .drain(..)
-            .for_each(|server| cache.update_cache_with_consume(server));
+        update.into_iter().for_each(|server| cache.push(server));
 
         if failure_count > 0 {
             eprintln!("Failed to resolve location for {failure_count} server hoster(s)")
@@ -267,7 +267,10 @@ async fn filter_server_list(
         return Ok((server_list, !new_lookups.is_empty()));
     }
     Ok((
-        host_list.drain(..).flat_map(|host| host.servers).collect(),
+        host_list
+            .into_iter()
+            .flat_map(|host| host.servers)
+            .collect(),
         false,
     ))
 }
@@ -313,6 +316,7 @@ pub enum IP {
     Err(io::Error),
 }
 
+#[instrument(level = "trace", skip_all)]
 pub fn resolve_address(server_ip: &str, host_ip: &str, webfront_url: &str) -> IP {
     let ip_trim = server_ip.trim_matches('/').trim_matches(':');
     if ip_trim.is_empty() || ip_trim == LOCAL_HOST {
@@ -331,20 +335,23 @@ pub fn resolve_address(server_ip: &str, host_ip: &str, webfront_url: &str) -> IP
         if server_ip == ip.to_string() {
             return IP::Unchanged;
         }
+        trace!("{server_ip} trimmed and parsed to: {ip}");
         return IP::Modified(ip);
     }
 
     if let Ok(mut socket_addr) = (ip_trim, 80).to_socket_addrs() {
         if let Some(ip) = socket_addr.next().map(|socket| socket.ip()) {
+            trace!("Found socket address of: {ip}, from: {ip_trim}");
             return IP::Modified(ip);
         }
     }
-    match parse_possible_ipv6(server_ip, webfront_url) {
+    match parse_possible_ipv6(host_ip, webfront_url) {
         Ok(ip) => IP::Modified(ip),
         Err(err) => IP::Err(err),
     }
 }
 
+#[instrument(level = "trace", skip_all)]
 fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
     match ip.parse::<IpAddr>() {
         Ok(ip) => Ok(ip),
@@ -362,6 +369,7 @@ fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
                 } else {
                     &webfront_url[ip_start..]
                 };
+                trace!("Parsed: {ipv6_slice}, from webfront_url");
                 return ipv6_slice.parse::<IpAddr>().map_err(io::Error::other);
             }
             Err(io::Error::other(err))
