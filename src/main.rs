@@ -2,7 +2,16 @@ use clap::Parser;
 use cli::Cli;
 use commands::filter::{build_favorites, MASTER_URL};
 use h2m_favorites::*;
-use tracing::error;
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
+use tracing::{error, info, instrument};
+use utils::{
+    caching::{build_cache, read_cache, update_cache, Cache},
+    json_data::CacheFile,
+    subscriber::init_subscriber,
+};
 
 #[tokio::main]
 async fn main() {
@@ -11,15 +20,6 @@ async fn main() {
         error!(name: "PANIC", "{}", format_panic_info(info));
         prev(info);
     }));
-
-    let (mut cache, local_env_dir) = match app_startup().await {
-        Ok(cache) => cache,
-        Err(err) => {
-            eprintln!("Failed to reach server host {MASTER_URL}, {err:?}");
-            await_user_for_end();
-            return;
-        }
-    };
 
     let exe_dir = match std::env::current_dir() {
         Ok(dir) => dir,
@@ -53,6 +53,16 @@ async fn main() {
         }
         _ => unreachable!(),
     }
+
+    let (mut cache, local_env_dir) = match app_startup().await {
+        Ok(cache) => cache,
+        Err(err) => {
+            eprintln!("Failed to reach server host {MASTER_URL}, {err:?}");
+            await_user_for_end();
+            return;
+        }
+    };
+
     get_latest_version()
         .await
         .unwrap_or_else(|err| error!("{err}"));
@@ -65,10 +75,56 @@ async fn main() {
             eprintln!("{err:?}");
             false
         });
+
     if let Some(ref local_dir) = local_env_dir {
         if cli.region.is_some() && cache_needs_update {
             update_cache(cache, local_dir).unwrap_or_else(|err| error!("{err}"));
         }
     }
     await_user_for_end();
+}
+
+#[instrument(skip_all)]
+async fn app_startup() -> io::Result<(Cache, Option<PathBuf>)> {
+    let mut local_env_dir = None;
+    if let Some(path) = std::env::var_os(LOCAL_DATA) {
+        let mut dir = PathBuf::from(path);
+
+        if let Err(err) = check_app_dir_exists(&mut dir) {
+            error!("{err:?}");
+        } else {
+            init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{err}"));
+            local_env_dir = Some(dir);
+            match read_cache(local_env_dir.as_ref().unwrap()) {
+                Ok(cache) => return Ok((cache, local_env_dir)),
+                Err(err) => info!("{err}"),
+            }
+        }
+    } else {
+        error!("Could not find %appdata%/local");
+        if cfg!(debug_assertions) {
+            init_subscriber(Path::new("")).unwrap();
+        }
+    }
+    let server_cache = build_cache().await.map_err(io::Error::other)?;
+    if let Some(ref dir) = local_env_dir {
+        match std::fs::File::create(dir.join(CACHED_DATA)) {
+            Ok(file) => {
+                let data = CacheFile {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    created: std::time::SystemTime::now(),
+                    cache: server_cache,
+                };
+                if let Err(err) = serde_json::to_writer_pretty(file, &data) {
+                    error!("{err}")
+                }
+                return Ok((Cache::from(data.cache, data.created), local_env_dir));
+            }
+            Err(err) => error!("{err}"),
+        }
+    }
+    Ok((
+        Cache::from(server_cache, std::time::SystemTime::now()),
+        local_env_dir,
+    ))
 }
