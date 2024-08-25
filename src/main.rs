@@ -1,6 +1,6 @@
 use clap::Parser;
 use cli::Cli;
-use commands::filter::build_favorites;
+use commands::filter::{build_favorites, MASTER_URL};
 use h2m_favorites::*;
 use tracing::error;
 
@@ -12,8 +12,23 @@ async fn main() {
         prev(info);
     }));
 
-    subscriber::init_subscriber().unwrap_or_else(|err| eprintln!("{err:?}"));
-    let exe_dir = std::env::current_dir().expect("Failed to get current dir");
+    let (mut cache, local_env_dir) = match app_startup().await {
+        Ok(cache) => cache,
+        Err(err) => {
+            eprintln!("Failed to reach server host {MASTER_URL}, {err:?}");
+            await_user_for_end();
+            return;
+        }
+    };
+
+    let exe_dir = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("Failed to get current dir, {err:?}");
+            await_user_for_end();
+            return;
+        }
+    };
 
     #[cfg(not(debug_assertions))]
     match does_dir_contain(&exe_dir, Operation::Count, &REQUIRED_FILES)
@@ -43,9 +58,17 @@ async fn main() {
         .unwrap_or_else(|err| error!("{err}"));
 
     let cli = Cli::parse();
-    build_favorites(&exe_dir, cli).await.unwrap_or_else(|err| {
-        error!("{err:?}");
-        eprintln!("{err:?}")
-    });
+    let cache_needs_update = build_favorites(&exe_dir, &cli, &mut cache)
+        .await
+        .unwrap_or_else(|err| {
+            error!("{err:?}");
+            eprintln!("{err:?}");
+            false
+        });
+    if let Some(ref local_dir) = local_env_dir {
+        if cli.region.is_some() && cache_needs_update {
+            update_cache(cache, local_dir).unwrap_or_else(|err| error!("{err}"));
+        }
+    }
     await_user_for_end();
 }

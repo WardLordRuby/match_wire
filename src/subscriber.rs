@@ -48,18 +48,8 @@ where
 }
 
 #[cfg(not(debug_assertions))]
-pub fn init_subscriber() -> std::io::Result<()> {
-    use crate::{check_app_dir_exists, LOG_NAME};
-
-    let mut local_env_dir =
-        std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Could not find %appdata%/local",
-            )
-        })?);
-
-    check_app_dir_exists(&mut local_env_dir)?;
+pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
+    use crate::LOG_NAME;
 
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
         .filename_prefix(LOG_NAME)
@@ -84,7 +74,7 @@ pub fn init_subscriber() -> std::io::Result<()> {
 }
 
 #[cfg(debug_assertions)]
-pub fn init_subscriber() -> std::io::Result<()> {
+pub fn init_subscriber(_local_env_dir: &std::path::Path) -> std::io::Result<()> {
     use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
     tracing_subscriber::registry()

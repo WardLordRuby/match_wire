@@ -3,7 +3,7 @@ use crate::{
     json_data::*,
     lowercase_vec,
     not_your_private_keys::LOCATION_PRIVATE_KEY,
-    parse_hostname,
+    parse_hostname, Cache,
 };
 
 use tracing::{error, instrument};
@@ -19,7 +19,7 @@ use std::{
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net/";
 
-const MASTER_URL: &str = "https://master.iw4.zip/";
+pub const MASTER_URL: &str = "https://master.iw4.zip/";
 const JSON_SERVER_ENDPOINT: &str = "instance";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
@@ -48,8 +48,76 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     write!(into, "[{ips}]")
 }
 
+impl Region {
+    fn matches(&self, country_code: &str) -> bool {
+        match self {
+            Region::NA if country_code != CODE_NA => false,
+            Region::EU if country_code != CODE_EU => false,
+            Region::Apac if !APAC_CONT_CODES.contains(country_code) => false,
+            _ => true,
+        }
+    }
+}
+
+async fn get_server_master() -> reqwest::Result<Vec<HostData>> {
+    let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
+    reqwest::get(instance_url.as_str())
+        .await?
+        .json::<Vec<HostData>>()
+        .await
+}
+
+pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
+    let host_list = get_server_master().await?;
+    let client = reqwest::Client::new();
+    let mut tasks = Vec::new();
+
+    println!("Updating server location cache...");
+
+    for host in host_list {
+        for mut server in host.servers {
+            if server.game != GAME_ID {
+                continue;
+            }
+            match resolve_address(&server.ip, &host.ip_address, &host.webfront_url) {
+                IP::Unchanged => (),
+                IP::Modified(ip) => server.ip = ip.to_string(),
+                IP::Err(err) => {
+                    error!("{err}");
+                    continue;
+                }
+            }
+            let client = client.clone();
+            tasks.push(tokio::spawn(async move {
+                let location = match try_location_lookup(&server, client).await {
+                    Ok(loc) => loc,
+                    Err(err) => return Err(err),
+                };
+                Ok(ServerCache {
+                    hostname: server.hostname,
+                    ip: server.ip,
+                    port: server.port,
+                    region: location.code,
+                })
+            }))
+        }
+    }
+
+    let mut collection = Vec::new();
+    for task in tasks {
+        match task.await {
+            Ok(result) => match result {
+                Ok(cache) => collection.push(cache),
+                Err(err) => error!("{err:?}"),
+            },
+            Err(err) => error!("{err:?}"),
+        }
+    }
+    Ok(collection)
+}
+
 #[instrument(name = "filter", skip_all)]
-pub async fn build_favorites(curr_dir: &Path, args: Cli) -> io::Result<()> {
+pub async fn build_favorites(curr_dir: &Path, args: &Cli, cache: &mut Cache) -> io::Result<bool> {
     let mut ip_collected = 0;
     let mut ips = String::new();
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
@@ -59,7 +127,7 @@ pub async fn build_favorites(curr_dir: &Path, args: Cli) -> io::Result<()> {
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
 
-    let mut servers = filter_server_list(&args)
+    let (mut servers, update_cache) = filter_server_list(args, cache)
         .await
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
@@ -83,22 +151,21 @@ pub async fn build_favorites(curr_dir: &Path, args: Cli) -> io::Result<()> {
     serialize_json(&mut favorites_json, ips)?;
 
     println!("{FAVORITES} updated with {ip_collected} entries");
-    Ok(())
+    Ok(update_cache)
 }
 
 enum Task {
-    Allowed(ServerInfo),
-    Filtered,
-    Error(io::Error),
+    Allowed((ServerInfo, String)),
+    Filtered((ServerInfo, String)),
+    Err(io::Error),
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
-    let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
-    let mut host_list = reqwest::get(instance_url.as_str())
-        .await?
-        .json::<Vec<HostData>>()
-        .await?;
+async fn filter_server_list(
+    args: &Cli,
+    cache: &mut Cache,
+) -> reqwest::Result<(Vec<ServerInfo>, bool)> {
+    let mut host_list = get_server_master().await?;
 
     let include = args.includes.as_ref().map(|s| lowercase_vec(s));
     let exclude = args.excludes.as_ref().map(|s| lowercase_vec(s));
@@ -162,42 +229,59 @@ async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
         );
 
         let client = reqwest::Client::new();
+        let mut server_list = Vec::new();
+        let mut tasks = Vec::new();
+        let mut check_again = Vec::new();
+        let mut new_lookups = HashSet::new();
 
-        let tasks = host_list.into_iter().fold(Vec::new(), |mut tasks, host| {
-            host.servers.into_iter().for_each(|mut server| {
-                let client = client.clone();
-                if server.ip == LOCAL_HOST {
-                    if let Ok(ip) = parse_possible_ipv6(&host.ip_address, &host.webfront_url) {
-                        server.ip = ip.to_string()
-                    };
-                }
-                tasks.push(tokio::spawn(async move {
-                    let location = match try_location_lookup(&server, client).await {
-                        Ok(loc) => loc,
-                        Err(err) => return Task::Error(err),
-                    };
-                    match region {
-                        Region::NA if location.code != CODE_NA => Task::Filtered,
-                        Region::EU if location.code != CODE_EU => Task::Filtered,
-                        Region::Apac if !APAC_CONT_CODES.contains(location.code.as_str()) => {
-                            Task::Filtered
-                        }
-                        _ => Task::Allowed(server),
+        for host in host_list {
+            for mut server in host.servers {
+                match resolve_address(&server.ip, &host.ip_address, &host.webfront_url) {
+                    IP::Unchanged => (),
+                    IP::Modified(ip) => server.ip = ip.to_string(),
+                    IP::Err(err) => {
+                        error!("{err}");
+                        continue;
                     }
-                }));
-            });
-            tasks
-        });
+                }
+                if let Some(cached_region) = cache.ip_to_region.get(&server.ip) {
+                    if region.matches(cached_region) {
+                        server_list.push(server);
+                        continue;
+                    }
+                    continue;
+                }
+                if new_lookups.insert(server.ip.clone()) {
+                    let client = client.clone();
+                    tasks.push(tokio::spawn(async move {
+                        let location = match try_location_lookup(&server, client).await {
+                            Ok(loc) => loc,
+                            Err(err) => return Task::Err(err),
+                        };
+                        if region.matches(&location.code) {
+                            return Task::Allowed((server, location.code));
+                        }
+                        Task::Filtered((server, location.code))
+                    }))
+                } else {
+                    check_again.push(server)
+                }
+            }
+        }
 
         let mut failure_count = 0_usize;
-        let mut server_list = Vec::new();
 
         for task in tasks {
             match task.await {
                 Ok(result) => match result {
-                    Task::Allowed(server) => server_list.push(server),
-                    Task::Filtered => (),
-                    Task::Error(err) => {
+                    Task::Allowed((server, region)) => {
+                        cache.update_cache_with(&server, region);
+                        server_list.push(server)
+                    }
+                    Task::Filtered((server, region)) => {
+                        cache.update_cache_with(&server, region);
+                    }
+                    Task::Err(err) => {
                         error!("{err}");
                         failure_count += 1
                     }
@@ -209,17 +293,36 @@ async fn filter_server_list(args: &Cli) -> reqwest::Result<Vec<ServerInfo>> {
             }
         }
 
+        let mut update = check_again
+            .into_iter()
+            .fold(Vec::new(), |mut update, server| {
+                if let Some(cached_region) = cache.ip_to_region.get(&server.ip) {
+                    update.push(ServerCache::from(&server, cached_region.clone()));
+                    if region.matches(cached_region) {
+                        server_list.push(server)
+                    }
+                }
+                update
+            });
+
+        update
+            .drain(..)
+            .for_each(|server| cache.update_cache_with_consume(server));
+
         if failure_count > 0 {
             eprintln!("Failed to resolve location for {failure_count} server hoster(s)")
         }
 
-        return Ok(server_list);
+        return Ok((server_list, !new_lookups.is_empty()));
     }
-    Ok(host_list.drain(..).flat_map(|host| host.servers).collect())
+    Ok((
+        host_list.drain(..).flat_map(|host| host.servers).collect(),
+        false,
+    ))
 }
 
 fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
-    match resolve_address(ip) {
+    match ip.parse::<IpAddr>() {
         Ok(ip) => Ok(ip),
         Err(err) => {
             const HTTP_ENDING: &str = "//";
@@ -235,9 +338,9 @@ fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
                 } else {
                     &webfront_url[ip_start..]
                 };
-                return resolve_address(ipv6_slice);
+                return ipv6_slice.parse::<IpAddr>().map_err(io::Error::other);
             }
-            Err(err)
+            Err(io::Error::other(err))
         }
     }
 }
@@ -247,9 +350,7 @@ async fn try_location_lookup(
     server: &ServerInfo,
     client: reqwest::Client,
 ) -> io::Result<Continent> {
-    let format_url =
-        |ip: IpAddr| -> String { format!("{MASTER_LOCATION_URL}{ip}{LOCATION_PRIVATE_KEY}") };
-    let location_api_url = resolve_address(&server.ip).map(format_url)?;
+    let location_api_url = format!("{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}", server.ip);
 
     let api_response = client
         .get(location_api_url.as_str())
@@ -279,27 +380,40 @@ async fn try_location_lookup(
     }
 }
 
-fn resolve_address(input: &str) -> io::Result<IpAddr> {
-    let ip_trim = input.trim_matches('/').trim_matches(':');
-    if ip_trim.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Ip can not be empty",
-        ));
+enum IP {
+    Unchanged,
+    Modified(IpAddr),
+    Err(io::Error),
+}
+
+fn resolve_address(server_ip: &str, host_ip: &str, webfront_url: &str) -> IP {
+    let ip_trim = server_ip.trim_matches('/').trim_matches(':');
+    if ip_trim.is_empty() || ip_trim == LOCAL_HOST {
+        match parse_possible_ipv6(host_ip, webfront_url) {
+            Ok(ip) => return IP::Modified(ip),
+            Err(err) => return IP::Err(err),
+        }
     }
     if let Ok(ip) = ip_trim.parse::<IpAddr>() {
         if ip.is_unspecified() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Addr: {ip}, is not valid"),
+            return IP::Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Addr: {ip}, is unspecified"),
             ));
         }
-        return Ok(ip);
+        if server_ip == ip.to_string() {
+            return IP::Unchanged;
+        }
+        return IP::Modified(ip);
     }
 
-    (ip_trim, 80)
-        .to_socket_addrs()?
-        .next()
-        .map(|socket| socket.ip())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Hostname could not be resolved"))
+    if let Ok(mut socket_addr) = (ip_trim, 80).to_socket_addrs() {
+        if let Some(ip) = socket_addr.next().map(|socket| socket.ip()) {
+            return IP::Modified(ip);
+        }
+    }
+    match parse_possible_ipv6(server_ip, webfront_url) {
+        Ok(ip) => IP::Modified(ip),
+        Err(err) => IP::Err(err),
+    }
 }

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
 pub struct HostData {
@@ -40,4 +40,19 @@ pub struct Continent {
 #[derive(Deserialize, Debug)]
 pub struct Version {
     pub latest: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct CacheFile {
+    pub version: String,
+    pub created: std::time::SystemTime,
+    pub cache: Vec<ServerCache>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct ServerCache {
+    pub hostname: String,
+    pub ip: String,
+    pub port: u32,
+    pub region: String,
 }
