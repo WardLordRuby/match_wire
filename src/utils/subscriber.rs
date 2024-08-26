@@ -64,6 +64,8 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
                         .with_ansi(false)
                         .without_time(),
                 ))
+                // MARK: TODO
+                // Need to set only info level and higher
                 .fmt_fields(PrettyFields::new())
                 .with_writer(file_appender),
         )

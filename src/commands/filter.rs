@@ -1,5 +1,5 @@
 use crate::{
-    cli::{Cli, Region},
+    cli::{Filters, Region},
     lowercase_vec,
     not_your_private_keys::LOCATION_PRIVATE_KEY,
     parse_hostname,
@@ -13,8 +13,8 @@ use std::{
     fs::File,
     io::{self, Write},
     net::{IpAddr, ToSocketAddrs},
-    path::Path,
-    sync::LazyLock,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
 };
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net/";
@@ -69,7 +69,11 @@ pub async fn get_server_master() -> reqwest::Result<Vec<HostData>> {
 }
 
 #[instrument(name = "filter", skip_all)]
-pub async fn build_favorites(curr_dir: &Path, args: &Cli, cache: &mut Cache) -> io::Result<bool> {
+pub async fn build_favorites(
+    curr_dir: Arc<PathBuf>,
+    args: &Filters,
+    cache: &mut Cache,
+) -> io::Result<bool> {
     let mut ip_collected = 0;
     let mut ips = String::new();
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
@@ -114,7 +118,7 @@ enum Task {
 
 #[instrument(level = "trace", skip_all)]
 async fn filter_server_list(
-    args: &Cli,
+    args: &Filters,
     cache: &mut Cache,
 ) -> reqwest::Result<(Vec<ServerInfo>, bool)> {
     let mut host_list = get_server_master().await?;

@@ -1,9 +1,39 @@
 use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
-use clap::{value_parser, Parser, ValueEnum};
+use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Create a new favorites.json using various filter options
+    /// {n}Using no arguments will take the top 100 servers with highest playercounts
+    Filter {
+        #[command(flatten)]
+        args: Option<Filters>,
+    },
+
+    /// Reconnect to last server joined
+    Reconnect {
+        /// Display previously connected servers
+        #[arg(short = 'H', long, action = ArgAction::SetTrue)]
+        history: bool,
+    },
+
+    /// Quit the program
+    Quit,
+
+    /// Open the current local data directory
+    #[command(hide = true)]
+    LocalEnv,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct Filters {
     /// Specify the maximum number of servers added to favorites.json
     /// {n}  [Note: current server-browser gets buggy after 100] [Default: 100]
     #[arg(short, long)]

@@ -4,18 +4,35 @@ use crate::{
     utils::json_data::{CacheFile, ServerCache, ServerInfo},
     Operation, OperationResult, CACHED_DATA,
 };
-use std::{collections::HashMap, io, path::Path, time::Duration};
-use tracing::error;
+use std::{
+    collections::HashMap,
+    io,
+    path::Path,
+    time::{Duration, SystemTime},
+};
+use tracing::{error, info, instrument, trace};
 
+#[derive(Debug)]
 pub struct Cache {
     pub host_to_connect: HashMap<String, String>,
     pub ip_to_region: HashMap<String, String>,
     pub servers: Vec<ServerCache>,
-    pub created: std::time::SystemTime,
+    pub created: SystemTime,
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        Cache {
+            host_to_connect: HashMap::new(),
+            ip_to_region: HashMap::new(),
+            servers: Vec::new(),
+            created: SystemTime::now(),
+        }
+    }
 }
 
 impl Cache {
-    pub fn from(servers: Vec<ServerCache>, created: std::time::SystemTime) -> Self {
+    pub fn from(servers: Vec<ServerCache>, created: SystemTime) -> Self {
         let len = servers.len();
         let (host_to_connect, ip_to_region) = servers.iter().fold(
             (HashMap::with_capacity(len), HashMap::new()),
@@ -78,6 +95,7 @@ impl ServerInfo {
     }
 }
 
+#[instrument(level = "trace", skip_all)]
 pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
     let host_list = get_server_master().await?;
     let client = reqwest::Client::new();
@@ -124,9 +142,11 @@ pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
             Err(err) => error!("{err:?}"),
         }
     }
+    trace!("Fetched regions for all H2M servers");
     Ok(collection)
 }
 
+#[instrument(level = "trace", skip_all)]
 pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
     match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
         Ok(OperationResult::Bool(true)) => {
@@ -144,6 +164,7 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
                 Err(err) => return new_io_error!(io::ErrorKind::Other, err),
                 _ => (),
             }
+            trace!("Cache read from file");
             Ok(Cache::from(data.cache, data.created))
         }
         Ok(OperationResult::Bool(false)) => {
@@ -154,6 +175,7 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
     }
 }
 
+#[instrument(skip_all)]
 pub fn update_cache(server_cache: Cache, local_env_dir: &Path) -> io::Result<()> {
     let file = std::fs::File::create(local_env_dir.join(CACHED_DATA))?;
     let data = CacheFile {
@@ -161,5 +183,7 @@ pub fn update_cache(server_cache: Cache, local_env_dir: &Path) -> io::Result<()>
         created: server_cache.created,
         cache: server_cache.servers,
     };
-    serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)
+    serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
+    info!("Cache updated locally");
+    Ok(())
 }
