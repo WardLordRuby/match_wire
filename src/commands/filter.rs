@@ -4,9 +4,11 @@ use crate::{
     not_your_private_keys::LOCATION_PRIVATE_KEY,
     parse_hostname,
     utils::{caching::Cache, json_data::*},
+    LOG_ONLY,
 };
 
-use tracing::{error, instrument, trace};
+use tokio::sync::Mutex;
+use tracing::{error, info, instrument, trace};
 
 use std::{
     collections::HashSet,
@@ -19,7 +21,7 @@ use std::{
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net/";
 
-pub const MASTER_URL: &str = "https://master.iw4.zip/";
+pub const MASTER_URL: &str = "http://master.iw4.zip/";
 const JSON_SERVER_ENDPOINT: &str = "instance";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
@@ -72,7 +74,7 @@ pub async fn get_server_master() -> reqwest::Result<Vec<HostData>> {
 pub async fn build_favorites(
     curr_dir: Arc<PathBuf>,
     args: &Filters,
-    cache: &mut Cache,
+    cache: Arc<Mutex<Cache>>,
 ) -> io::Result<bool> {
     let mut ip_collected = 0;
     let mut ips = String::new();
@@ -119,7 +121,7 @@ enum Task {
 #[instrument(level = "trace", skip_all)]
 async fn filter_server_list(
     args: &Filters,
-    cache: &mut Cache,
+    cache: Arc<Mutex<Cache>>,
 ) -> reqwest::Result<(Vec<ServerInfo>, bool)> {
     let mut host_list = get_server_master().await?;
 
@@ -190,13 +192,15 @@ async fn filter_server_list(
         let mut check_again = Vec::new();
         let mut new_lookups = HashSet::new();
 
+        let mut cache = cache.lock().await;
+
         for host in host_list {
             for mut server in host.servers {
                 match resolve_address(&server.ip, &host.ip_address, &host.webfront_url) {
                     IP::Unchanged => (),
                     IP::Modified(ip) => server.ip = ip.to_string(),
                     IP::Err(err) => {
-                        error!("{err}");
+                        error!(name: LOG_ONLY, "{err}");
                         continue;
                     }
                 }
@@ -239,15 +243,20 @@ async fn filter_server_list(
                         cache.push(ServerCache::consume(server, region));
                     }
                     Task::Err(err) => {
-                        error!("{err}");
+                        error!(name: LOG_ONLY, "{err}");
                         failure_count += 1
                     }
                 },
                 Err(err) => {
-                    error!("{err:?}");
+                    error!(name: LOG_ONLY, "{err:?}");
                     failure_count += 1
                 }
             }
+        }
+
+        match new_lookups.len() {
+            0 => (),
+            len => info!("Made {len} new location requests"),
         }
 
         let update = check_again
@@ -263,6 +272,8 @@ async fn filter_server_list(
             });
 
         update.into_iter().for_each(|server| cache.push(server));
+
+        drop(cache);
 
         if failure_count > 0 {
             eprintln!("Failed to resolve location for {failure_count} server hoster(s)")

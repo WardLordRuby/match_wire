@@ -11,11 +11,13 @@ pub mod utils {
 
 use std::{
     collections::HashSet,
-    io,
+    io::Result,
     path::{Path, PathBuf},
     time::Duration,
 };
 use utils::json_data::Version;
+
+pub const LOG_ONLY: &str = "log_only";
 
 pub const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/324d7c1fb454aed5f5155a790bd028f0/raw/";
@@ -47,7 +49,7 @@ pub const LOG_NAME: &str = "h2m_favorties.log";
 #[macro_export]
 macro_rules! new_io_error {
     ($kind:expr, $msg:expr) => {
-        Err(io::Error::new($kind, $msg))
+        Err(std::io::Error::new($kind, $msg))
     };
 }
 
@@ -90,7 +92,7 @@ pub fn does_dir_contain<'a, T>(
     dir: &Path,
     operation: Operation,
     list: &'a [T],
-) -> io::Result<OperationResult<'a>>
+) -> Result<OperationResult<'a>>
 where
     T: std::borrow::Borrow<str> + std::cmp::Eq + std::hash::Hash,
 {
@@ -129,7 +131,7 @@ where
 }
 
 /// Validates local/app_dir exists and modifies input if valid
-pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
+pub fn check_app_dir_exists(local: &mut PathBuf) -> Result<()> {
     use crate::{does_dir_contain, Operation, OperationResult, APP_NAME};
     match does_dir_contain(local, Operation::All, &[APP_NAME]) {
         Ok(OperationResult::Bool(true)) => {

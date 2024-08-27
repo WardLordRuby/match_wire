@@ -49,7 +49,7 @@ pub struct CacheFile {
     pub cache: Vec<ServerCache>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ServerCache {
     pub hostname: String,
     pub ip: String,

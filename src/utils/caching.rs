@@ -2,14 +2,16 @@ use crate::{
     commands::filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
     does_dir_contain, new_io_error,
     utils::json_data::{CacheFile, ServerCache, ServerInfo},
-    Operation, OperationResult, CACHED_DATA,
+    Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use std::{
     collections::HashMap,
     io,
-    path::Path,
+    path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
+use tokio::sync::Mutex;
 use tracing::{error, info, instrument, trace};
 
 #[derive(Debug)]
@@ -112,7 +114,7 @@ pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
                 IP::Unchanged => (),
                 IP::Modified(ip) => server.ip = ip.to_string(),
                 IP::Err(err) => {
-                    error!("{err}");
+                    error!(name: LOG_ONLY, "{err}");
                     continue;
                 }
             }
@@ -137,9 +139,9 @@ pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
         match task.await {
             Ok(result) => match result {
                 Ok(cache) => collection.push(cache),
-                Err(err) => error!("{err:?}"),
+                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
             },
-            Err(err) => error!("{err:?}"),
+            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
     trace!("Fetched regions for all H2M servers");
@@ -176,12 +178,19 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
 }
 
 #[instrument(skip_all)]
-pub fn update_cache(server_cache: Cache, local_env_dir: &Path) -> io::Result<()> {
-    let file = std::fs::File::create(local_env_dir.join(CACHED_DATA))?;
+pub async fn update_cache(
+    server_cache: Arc<Mutex<Cache>>,
+    local_env_dir: Arc<Option<PathBuf>>,
+) -> io::Result<()> {
+    let Some(ref local_path) = *local_env_dir else {
+        return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
+    };
+    let cache = server_cache.lock().await;
+    let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
     let data = CacheFile {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        created: server_cache.created,
-        cache: server_cache.servers,
+        created: cache.created,
+        cache: cache.servers.clone(),
     };
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
     info!("Cache updated locally");
