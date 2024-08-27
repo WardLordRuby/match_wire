@@ -1,4 +1,4 @@
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{filter::EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(not(debug_assertions))]
 use tracing::{Event, Level, Subscriber};
@@ -49,33 +49,44 @@ where
 
 #[cfg(not(debug_assertions))]
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
+    use tracing_subscriber::{filter::DynFilterFn, Layer};
+
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
         .filename_prefix(crate::LOG_NAME)
         .max_log_files(5)
         .build(local_env_dir)
         .map_err(std::io::Error::other)?;
 
+    let file_layer = fmt::layer()
+        .event_format(CustomFormatter::new(
+            fmt::format().with_target(false).with_ansi(false),
+        ))
+        .fmt_fields(PrettyFields::new())
+        .with_writer(file_appender)
+        .with_filter(EnvFilter::new("h2m_favorites=info,reqwest=warn"));
+
+    let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != "log_only");
+
+    let stdout_layer = fmt::layer()
+        .with_target(false)
+        .without_time()
+        .with_ansi(false)
+        .with_level(false)
+        .with_writer(std::io::stdout)
+        .with_filter(EnvFilter::new("h2m_favorites=info"))
+        .with_filter(exclude_log_only);
+
     tracing_subscriber::registry()
-        .with(
-            fmt::layer()
-                .event_format(CustomFormatter::new(
-                    fmt::format()
-                        .with_target(false)
-                        .with_ansi(false)
-                        .without_time(),
-                ))
-                // MARK: TODO
-                // Need to set only info level and higher
-                .fmt_fields(PrettyFields::new())
-                .with_writer(file_appender),
-        )
+        .with(file_layer)
+        .with(stdout_layer)
         .init();
+
     Ok(())
 }
 
 #[cfg(debug_assertions)]
 pub fn init_subscriber(_local_env_dir: &std::path::Path) -> std::io::Result<()> {
-    use tracing_subscriber::filter::{EnvFilter, LevelFilter};
+    use tracing_subscriber::filter::LevelFilter;
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(false).pretty())
