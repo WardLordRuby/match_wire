@@ -2,8 +2,15 @@ use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
 pub struct Cli {
+    /// Force app to run on a single thread
+    #[arg(short, long, action = ArgAction::SetTrue)]
+    pub single_thread: bool,
+}
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct UserInput {
     #[command(subcommand)]
     pub command: Command,
 }
@@ -12,22 +19,30 @@ pub struct Cli {
 pub enum Command {
     /// Create a new favorites.json using various filter options
     /// {n}Using no arguments will take the top 100 servers with highest playercounts
+    #[command(alias = "Filter")]
     Filter {
         #[command(flatten)]
         args: Option<Filters>,
     },
 
     /// Reconnect to last server joined
+    #[command(alias = "Reconnect")]
     Reconnect {
         /// Display previously connected servers
         #[arg(short = 'H', long, action = ArgAction::SetTrue)]
         history: bool,
     },
 
+    /// Open MWR(2017) directory
+    #[command(aliases(["gamedir", "Gamedir", "GameDir"]))]
+    GameDir,
+
     /// Quit the program
+    #[command(alias = "Quit")]
     Quit,
 
     /// Open the current local data directory
+    #[command(aliases(["localenv", "Localenv", "LocalEnv"]))]
     #[command(hide = true)]
     LocalEnv,
 }
