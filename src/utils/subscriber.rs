@@ -65,7 +65,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
         .with_writer(file_appender)
         .with_filter(EnvFilter::new("h2m_favorites=info,reqwest=warn"));
 
-    let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != "log_only");
+    let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != crate::LOG_ONLY);
 
     let stdout_layer = fmt::layer()
         .with_target(false)

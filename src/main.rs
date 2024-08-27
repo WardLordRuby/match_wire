@@ -1,5 +1,5 @@
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command, UserInput};
+use cli::{Cli, Command, Filters, UserInput};
 use commands::filter::build_favorites;
 use h2m_favorites::*;
 use std::{
@@ -40,7 +40,7 @@ fn main() {
     let command_runtime = if cli.single_thread {
         new_io_error!(
             ErrorKind::PermissionDenied,
-            "User chose to run in single thread"
+            "User chose to run on a single thread"
         )
     } else {
         tokio::runtime::Builder::new_multi_thread()
@@ -103,14 +103,14 @@ fn main() {
             }
         };
 
-        let arc_exe_dir = Arc::new(exe_dir);
-        let local_env_dir = Arc::new(local_env_dir);
-        let cache = Arc::new(Mutex::new(cache));
+        let exe_dir_arc = Arc::new(exe_dir);
+        let local_env_dir_arc = Arc::new(local_env_dir);
+        let cache_arc = Arc::new(Mutex::new(cache));
 
         let command_context = CommandContext {
-            cache: &cache,
-            exe_dir: &arc_exe_dir,
-            local_dir: &local_env_dir,
+            cache: &cache_arc,
+            exe_dir: &exe_dir_arc,
+            local_dir: &local_env_dir_arc,
             cache_needs_update: &cache_needs_update_arc,
             command_runtime: command_handle,
         };
@@ -128,7 +128,7 @@ fn main() {
             }
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
-                    update_cache(cache.clone(), local_env_dir.clone()).await.unwrap_or_else(|err| error!("{err}"));
+                    update_cache(cache_arc.clone(), local_env_dir_arc.clone()).await.unwrap_or_else(|err| error!("{err}"));
                     stdout_unchanged = true;
                     continue;
                 }
@@ -138,13 +138,13 @@ fn main() {
                 }
                 result = stdin.next_line() => {
                     match result {
-                        Ok(None) => break,
+                        Ok(None) => continue,
                         Ok(Some(line)) if line.is_empty() => continue,
                         Ok(Some(line)) => {
                             // MARK: TODO
                             // need to lock input while commands are being processed
                             let command_handle = match shellwords::split(&line) {
-                                Ok(user_args) => execute_command(user_args, &command_context),
+                                Ok(user_args) => try_execute_command(user_args, &command_context),
                                 Err(err) => {
                                     error!("{err}");
                                     continue;
@@ -159,7 +159,7 @@ fn main() {
                         }
                         Err(err) => {
                             error!("{err}");
-                            break
+                            continue;
                         }
                     }
                 }
@@ -170,8 +170,9 @@ fn main() {
                 }
             }
         }
+
         if cache_needs_update_arc.load(Ordering::SeqCst) {
-            update_cache(cache, local_env_dir).await.unwrap_or_else(|err| error!("{err}"));
+            update_cache(cache_arc, local_env_dir_arc).await.unwrap_or_else(|err| error!("{err}"));
         }
         if shutdown_signal {
             std::process::exit(0);
@@ -209,59 +210,20 @@ impl CommandHandle {
     }
 }
 
-fn execute_command(mut user_args: Vec<String>, command_context: &CommandContext) -> CommandHandle {
-    let mut args = vec![String::new()];
-    args.append(&mut user_args);
-    match UserInput::try_parse_from(args) {
+fn try_execute_command(
+    mut user_args: Vec<String>,
+    command_context: &CommandContext,
+) -> CommandHandle {
+    let mut input_tokens = vec![String::new()];
+    input_tokens.append(&mut user_args);
+    match UserInput::try_parse_from(input_tokens) {
         Ok(cli) => match cli.command {
-            Command::Filter { args } => {
-                let cache = Arc::clone(command_context.cache);
-                let exe_dir = Arc::clone(command_context.exe_dir);
-                let cache_needs_update = Arc::clone(command_context.cache_needs_update);
-                let task_join = command_context.command_runtime.spawn(async move {
-                    let result = build_favorites(exe_dir, &args.unwrap_or_default(), cache)
-                        .await
-                        .unwrap_or_else(|err| {
-                            error!("{err}");
-                            false
-                        });
-                    if result {
-                        cache_needs_update.store(true, Ordering::SeqCst);
-                    }
-                });
-                CommandHandle::with_handle(task_join)
-            }
+            Command::Filter { args } => new_favorites_with(args, command_context),
             Command::Reconnect {
                 history: show_history,
-            } => {
-                if show_history {
-                    todo!()
-                } else {
-                    todo!()
-                }
-            }
-            Command::GameDir => {
-                if let Err(err) = std::process::Command::new("explorer")
-                    .arg(command_context.exe_dir.as_path())
-                    .spawn()
-                {
-                    error!("{err}")
-                };
-                CommandHandle::default()
-            }
-            Command::LocalEnv => {
-                if let Some(ref dir) = **command_context.local_dir {
-                    if let Err(err) = std::process::Command::new("explorer")
-                        .arg(dir.as_path())
-                        .spawn()
-                    {
-                        error!("{err}")
-                    };
-                } else {
-                    error!("Could not find local dir");
-                }
-                CommandHandle::default()
-            }
+            } => reconnect(show_history),
+            Command::GameDir => open_dir(Some(command_context.exe_dir.as_path())),
+            Command::LocalEnv => open_dir(command_context.local_dir.as_ref().as_ref()),
             Command::Quit => CommandHandle::exit(),
         },
         Err(err) => {
@@ -271,6 +233,45 @@ fn execute_command(mut user_args: Vec<String>, command_context: &CommandContext)
             CommandHandle::default()
         }
     }
+}
+
+fn new_favorites_with(args: Option<Filters>, command_context: &CommandContext) -> CommandHandle {
+    let cache = Arc::clone(command_context.cache);
+    let exe_dir = Arc::clone(command_context.exe_dir);
+    let cache_needs_update = Arc::clone(command_context.cache_needs_update);
+    let task_join = command_context.command_runtime.spawn(async move {
+        let result = build_favorites(exe_dir, &args.unwrap_or_default(), cache)
+            .await
+            .unwrap_or_else(|err| {
+                error!("{err}");
+                false
+            });
+        if result {
+            cache_needs_update.store(true, Ordering::SeqCst);
+        }
+    });
+    CommandHandle::with_handle(task_join)
+}
+
+fn reconnect(show_history: bool) -> CommandHandle {
+    if show_history {
+        todo!();
+    }
+    todo!()
+}
+
+fn open_dir<P: AsRef<Path>>(path: Option<P>) -> CommandHandle {
+    if let Some(dir) = path {
+        if let Err(err) = std::process::Command::new("explorer")
+            .arg(dir.as_ref())
+            .spawn()
+        {
+            error!("{err}")
+        };
+    } else {
+        error!("Could not find local dir");
+    }
+    CommandHandle::default()
 }
 
 async fn print_stdin_ready(buf_writer: &mut BufWriter<tokio::io::Stdout>) -> std::io::Result<()> {

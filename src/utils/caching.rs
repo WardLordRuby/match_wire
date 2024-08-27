@@ -192,6 +192,7 @@ pub async fn update_cache(
         created: cache.created,
         cache: cache.servers.clone(),
     };
+    drop(cache);
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
     info!("Cache updated locally");
     Ok(())
