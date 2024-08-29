@@ -1,6 +1,7 @@
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command, Filters, UserInput};
+use cli::{Cli, Command, Filters, UserCommand};
 use commands::filter::build_favorites;
+use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
 use std::{
     io::ErrorKind,
@@ -11,15 +12,15 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-    runtime::Handle,
-    signal,
+    runtime,
     sync::{mpsc, Mutex},
     task::JoinHandle,
 };
+use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
     caching::{build_cache, read_cache, update_cache, Cache},
+    input_line::*,
     json_data::CacheFile,
     subscriber::init_subscriber,
 };
@@ -30,6 +31,15 @@ fn main() {
         error!(name: "PANIC", "{}", format_panic_info(info));
         prev(info);
     }));
+
+    let mut term = std::io::stdout();
+    let term_size = terminal::size().unwrap();
+    execute!(
+        term,
+        cursor::Hide,
+        terminal::SetTitle(env!("CARGO_PKG_NAME")),
+    )
+    .unwrap();
 
     let main_runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -67,7 +77,7 @@ fn main() {
             .await
             .unwrap_or_else(|err| error!("{err}"));
 
-        let (update_cache_tx, mut update_cache_rx) = mpsc::unbounded_channel();
+        let (update_cache_tx, mut update_cache_rx) = mpsc::channel(20);
         let cache_needs_update_arc = Arc::new(AtomicBool::new(false));
 
         tokio::spawn({
@@ -75,17 +85,13 @@ fn main() {
             async move {
                 loop {
                     if cache_needs_update.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-                        && update_cache_tx.send(true).is_err() {
+                        && update_cache_tx.send(true).await.is_err() {
                             break;
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
                 }
             }
         });
-
-        let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-        let mut stdout = BufWriter::new(tokio::io::stdout());
-        let mut shutdown_signal = false;
 
         let (cache, local_env_dir, exe_dir) = match app_startup.await {
             Ok(startup_result) => match startup_result {
@@ -115,52 +121,69 @@ fn main() {
             command_runtime: command_handle,
         };
 
-        UserInput::command().print_help().expect("Failed to print help");
+        let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
-        let mut stdout_unchanged = false;
+        UserCommand::command().print_help().expect("Failed to print help");
+
+        execute!(term, cursor::Show).unwrap();
+
+        let mut reader = EventStream::new();
+        let mut line_handle = LineReader::new("h2m_favorites.exe> ", &mut term, term_size).unwrap();
+
+        terminal::enable_raw_mode().unwrap();
+
+        let mut command_processed = false;
 
         loop {
-            let mut processing_taks = Vec::new();
-            if stdout_unchanged {
-                stdout_unchanged = false;
-            } else {
-                print_stdin_ready(&mut stdout).await.unwrap();
+            if command_processed {
+                line_handle.clear_unwanted_inputs(&mut reader).await.unwrap();
+                command_processed = false;
             }
+            line_handle.render().unwrap();
+            let mut processing_taks = Vec::new();
+            let event = reader.next();
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
                     update_cache(cache_arc.clone(), local_env_dir_arc.clone()).await.unwrap_or_else(|err| error!("{err}"));
-                    stdout_unchanged = true;
                     continue;
                 }
-                _ = signal::ctrl_c() => {
-                    shutdown_signal = true;
-                    break;
+                _ = close_listener.recv() => {
+                    terminal::disable_raw_mode().unwrap();
+                    return;
                 }
-                result = stdin.next_line() => {
-                    match result {
-                        Ok(None) => continue,
-                        Ok(Some(line)) if line.is_empty() => continue,
-                        Ok(Some(line)) => {
-                            // MARK: TODO
-                            // need to lock input while commands are being processed
-                            let command_handle = match shellwords::split(&line) {
-                                Ok(user_args) => try_execute_command(user_args, &command_context),
+
+                Some(event_result) = event => {
+                    match event_result {
+                        Ok(event) => {
+                            match line_handle.process_input_event(event) {
+                                Ok(EventLoop::Continue) => continue,
+                                Ok(EventLoop::Break) => break,
+                                Ok(EventLoop::TryProcessCommand) => {
+                                    command_processed = true;
+                                    let command_handle = match shellwords::split(line_handle.history.last()) {
+                                        Ok(user_args) => try_execute_command(user_args, &command_context),
+                                        Err(err) => {
+                                            error!("{err}");
+                                            continue;
+                                        }
+                                    };
+                                    if command_handle.exit {
+                                        break;
+                                    }
+                                    if let Some(join_handle) = command_handle.handle {
+                                        processing_taks.push(join_handle);
+                                    }
+                                }
                                 Err(err) => {
                                     error!("{err}");
-                                    continue;
+                                    break;
                                 }
-                            };
-                            if command_handle.exit {
-                                break;
-                            }
-                            if let Some(join_handle) = command_handle.handle {
-                                processing_taks.push(join_handle);
                             }
                         }
                         Err(err) => {
                             error!("{err}");
-                            continue;
-                        }
+                            break;
+                        },
                     }
                 }
             }
@@ -174,9 +197,7 @@ fn main() {
         if cache_needs_update_arc.load(Ordering::SeqCst) {
             update_cache(cache_arc, local_env_dir_arc).await.unwrap_or_else(|err| error!("{err}"));
         }
-        if shutdown_signal {
-            std::process::exit(0);
-        }
+        terminal::disable_raw_mode().unwrap();
     });
 }
 
@@ -185,7 +206,7 @@ struct CommandContext<'a> {
     exe_dir: &'a Arc<PathBuf>,
     local_dir: &'a Arc<Option<PathBuf>>,
     cache_needs_update: &'a Arc<AtomicBool>,
-    command_runtime: &'a Handle,
+    command_runtime: &'a runtime::Handle,
 }
 
 #[derive(Default)]
@@ -216,7 +237,7 @@ fn try_execute_command(
 ) -> CommandHandle {
     let mut input_tokens = vec![String::new()];
     input_tokens.append(&mut user_args);
-    match UserInput::try_parse_from(input_tokens) {
+    match UserCommand::try_parse_from(input_tokens) {
         Ok(cli) => match cli.command {
             Command::Filter { args } => new_favorites_with(args, command_context),
             Command::Reconnect {
@@ -274,16 +295,13 @@ fn open_dir<P: AsRef<Path>>(path: Option<P>) -> CommandHandle {
     CommandHandle::default()
 }
 
-async fn print_stdin_ready(buf_writer: &mut BufWriter<tokio::io::Stdout>) -> std::io::Result<()> {
-    buf_writer.write_all(b"h2m_favorites.exe> ").await?;
-    buf_writer.flush().await
-}
-
 pub async fn await_user_for_end() {
+    use std::io::{BufRead, BufReader};
+
     println!("Press enter to exit...");
-    let stdin = tokio::io::stdin();
+    let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin);
-    let _ = reader.read_line(&mut String::new()).await;
+    let _ = reader.read_line(&mut String::new());
 }
 
 #[instrument(skip_all)]

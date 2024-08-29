@@ -10,7 +10,7 @@ pub struct Cli {
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-pub struct UserInput {
+pub struct UserCommand {
     #[command(subcommand)]
     pub command: Command,
 }

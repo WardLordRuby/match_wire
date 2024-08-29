@@ -5,6 +5,7 @@ pub mod commands {
 }
 pub mod utils {
     pub mod caching;
+    pub mod input_line;
     pub mod json_data;
     pub mod subscriber;
 }
@@ -34,11 +35,11 @@ pub const APP_NAME: &str = "h2m_favorites";
 pub const LOG_NAME: &str = "h2m_favorties.log";
 
 // MARK: TODOS
-// 1. need to rework the program to stay open so we can store a map in memory - needs cleanup / mostly done
+// 1. need to rework the program to stay open so we can store a map in memory - DONE
 // 2. grab tracing and set up tracing as well as our map save to file - DONE
-// 3. create map of host-name -> (ip:port, region) - DONE
-//    - need a map when user filters favorites
-//    - need a map when starts the app
+// 3. create maps - DONE
+//    - (host_name -> ip:port)
+//    - (ip -> region)
 // 4. app will have additional command so all current args need to get moved into a new filter command - DONE
 // 5. app needs to display a '>' when waiting for a user to enter the next command - DONE
 // 6. app needs to be able to interact with h2m-mod.exe or h2m-revivied.exe

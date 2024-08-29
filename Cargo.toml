@@ -26,6 +26,8 @@ tracing = { version = "0.1.40", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 shellwords = "1.1.0"
+tokio-stream = "0.1.15"
+crossterm = { version = "0.28.1", features = ["event-stream"]}
 
 [build-dependencies]
 winresource = "0.1.17"
