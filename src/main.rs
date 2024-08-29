@@ -1,6 +1,9 @@
 use clap::{CommandFactory, Parser};
 use cli::{Cli, UserCommand};
-use commands::handler::{try_execute_command, CommandContext};
+use commands::{
+    handler::{try_execute_command, CommandContext},
+    reconnect::try_locate_h2m_console,
+};
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
 use std::{
@@ -117,6 +120,14 @@ fn main() {
             command_runtime: command_handle,
         };
 
+        let h2m_handle = try_locate_h2m_console();
+        match h2m_handle {
+            Ok((h2m_stdin_handle, h2m_stdout_handle)) => {
+                info!("Found h2m stdin handle: {h2m_stdin_handle:?}, found h2m stdout handle: {h2m_stdout_handle:?}");
+            }
+            Err(err) => error!("{err}"), 
+        }
+
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
         UserCommand::command().print_help().expect("Failed to print help");
@@ -193,6 +204,8 @@ fn main() {
         if cache_needs_update_arc.load(Ordering::SeqCst) {
             update_cache(cache_arc, local_env_dir_arc).await.unwrap_or_else(|err| error!("{err}"));
         }
+        // MARK: TODO
+        // need to make sure we do all winapi cleanup
         terminal::disable_raw_mode().unwrap();
     });
 }
