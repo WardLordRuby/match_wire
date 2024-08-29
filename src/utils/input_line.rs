@@ -219,6 +219,10 @@ impl<'a> LineReader<'a> {
                 self.enter_command()?;
                 Ok(EventLoop::TryProcessCommand)
             }
+            Event::Resize(x, y) => {
+                self.term_size = (x, y);
+                Ok(EventLoop::Continue)
+            }
             _ => Ok(EventLoop::Continue),
         }
     }
