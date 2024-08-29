@@ -42,8 +42,7 @@ pub enum Command {
     Quit,
 
     /// Open the current local data directory
-    #[command(aliases(["localenv", "Localenv", "LocalEnv"]))]
-    #[command(hide = true)]
+    #[command(aliases(["localenv", "Localenv", "LocalEnv"]), hide = true)]
     LocalEnv,
 }
 

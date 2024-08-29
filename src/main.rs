@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command, Filters, UserCommand};
-use commands::filter::build_favorites;
+use cli::{Cli, UserCommand};
+use commands::handler::{try_execute_command, CommandContext};
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
 use std::{
@@ -11,11 +11,7 @@ use std::{
         Arc,
     },
 };
-use tokio::{
-    runtime,
-    sync::{mpsc, Mutex},
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
@@ -199,109 +195,6 @@ fn main() {
         }
         terminal::disable_raw_mode().unwrap();
     });
-}
-
-struct CommandContext<'a> {
-    cache: &'a Arc<Mutex<Cache>>,
-    exe_dir: &'a Arc<PathBuf>,
-    local_dir: &'a Arc<Option<PathBuf>>,
-    cache_needs_update: &'a Arc<AtomicBool>,
-    command_runtime: &'a runtime::Handle,
-}
-
-#[derive(Default)]
-struct CommandHandle {
-    handle: Option<JoinHandle<()>>,
-    exit: bool,
-}
-
-impl CommandHandle {
-    fn exit() -> Self {
-        CommandHandle {
-            handle: None,
-            exit: true,
-        }
-    }
-
-    fn with_handle(handle: JoinHandle<()>) -> Self {
-        CommandHandle {
-            handle: Some(handle),
-            exit: false,
-        }
-    }
-}
-
-fn try_execute_command(
-    mut user_args: Vec<String>,
-    command_context: &CommandContext,
-) -> CommandHandle {
-    let mut input_tokens = vec![String::new()];
-    input_tokens.append(&mut user_args);
-    match UserCommand::try_parse_from(input_tokens) {
-        Ok(cli) => match cli.command {
-            Command::Filter { args } => new_favorites_with(args, command_context),
-            Command::Reconnect {
-                history: show_history,
-            } => reconnect(show_history),
-            Command::GameDir => open_dir(Some(command_context.exe_dir.as_path())),
-            Command::LocalEnv => open_dir(command_context.local_dir.as_ref().as_ref()),
-            Command::Quit => CommandHandle::exit(),
-        },
-        Err(err) => {
-            if let Err(err) = err.print() {
-                error!("{err}");
-            }
-            CommandHandle::default()
-        }
-    }
-}
-
-fn new_favorites_with(args: Option<Filters>, command_context: &CommandContext) -> CommandHandle {
-    let cache = Arc::clone(command_context.cache);
-    let exe_dir = Arc::clone(command_context.exe_dir);
-    let cache_needs_update = Arc::clone(command_context.cache_needs_update);
-    let task_join = command_context.command_runtime.spawn(async move {
-        let result = build_favorites(exe_dir, &args.unwrap_or_default(), cache)
-            .await
-            .unwrap_or_else(|err| {
-                error!("{err}");
-                false
-            });
-        if result {
-            cache_needs_update.store(true, Ordering::SeqCst);
-        }
-    });
-    CommandHandle::with_handle(task_join)
-}
-
-fn reconnect(show_history: bool) -> CommandHandle {
-    if show_history {
-        todo!();
-    }
-    todo!()
-}
-
-fn open_dir<P: AsRef<Path>>(path: Option<P>) -> CommandHandle {
-    if let Some(dir) = path {
-        if let Err(err) = std::process::Command::new("explorer")
-            .arg(dir.as_ref())
-            .spawn()
-        {
-            error!("{err}")
-        };
-    } else {
-        error!("Could not find local dir");
-    }
-    CommandHandle::default()
-}
-
-pub async fn await_user_for_end() {
-    use std::io::{BufRead, BufReader};
-
-    println!("Press enter to exit...");
-    let stdin = std::io::stdin();
-    let mut reader = BufReader::new(stdin);
-    let _ = reader.read_line(&mut String::new());
 }
 
 #[instrument(skip_all)]

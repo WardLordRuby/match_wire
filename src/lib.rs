@@ -2,6 +2,8 @@ pub mod cli;
 pub mod not_your_private_keys;
 pub mod commands {
     pub mod filter;
+    pub mod handler;
+    pub mod reconnect;
 }
 pub mod utils {
     pub mod caching;
@@ -129,6 +131,15 @@ where
             (num_found, collection)
         })),
     }
+}
+
+pub async fn await_user_for_end() {
+    use std::io::{BufRead, BufReader};
+
+    println!("Press enter to exit...");
+    let stdin = std::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let _ = reader.read_line(&mut String::new());
 }
 
 /// Validates local/app_dir exists and modifies input if valid

@@ -23,12 +23,6 @@ pub struct History {
 }
 
 impl History {
-    pub fn new(prev_entries_len: usize) -> Self {
-        History {
-            curr_index: prev_entries_len + 1,
-            ..Default::default()
-        }
-    }
     pub fn last(&self) -> &str {
         self.prev_entries.last().unwrap()
     }
@@ -152,8 +146,8 @@ impl<'a> LineReader<'a> {
             return;
         }
         if self.history.curr_index == prev_entries_len - 1 {
-            self.line = std::mem::take(&mut self.history.temp_top);
             self.history.curr_index = prev_entries_len;
+            self.line = std::mem::take(&mut self.history.temp_top);
             return;
         }
         self.history.curr_index += 1;
