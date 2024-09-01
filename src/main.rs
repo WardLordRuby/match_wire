@@ -1,8 +1,8 @@
 use clap::{CommandFactory, Parser};
 use cli::{Cli, UserCommand};
 use commands::{
-    handler::{try_execute_command, CommandContext},
-    reconnect::try_locate_h2m_console,
+    handler::{try_execute_command, CommandContextBuilder},
+    launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, HostName},
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
@@ -108,24 +108,34 @@ fn main() {
             }
         };
 
-        let exe_dir_arc = Arc::new(exe_dir);
-        let local_env_dir_arc = Arc::new(local_env_dir);
-        let cache_arc = Arc::new(Mutex::new(cache));
-
-        let command_context = CommandContext {
-            cache: &cache_arc,
-            exe_dir: &exe_dir_arc,
-            local_dir: &local_env_dir_arc,
-            cache_needs_update: &cache_needs_update_arc,
-            command_runtime: command_handle,
+        let h2m_console_handle = if !h2m_running() {
+            launch_h2m_pseudo(&exe_dir).map(Arc::new)
+        } else {
+            Err(String::from("Close H2M and relaunch using 'launch' command"))
         };
 
-        let h2m_handle = try_locate_h2m_console();
-        match h2m_handle {
-            Ok((h2m_stdin_handle, h2m_stdout_handle)) => {
-                info!("Found h2m stdin handle: {h2m_stdin_handle:?}, found h2m stdout handle: {h2m_stdout_handle:?}");
-            }
-            Err(err) => error!("{err}"), 
+        let exe_dir_arc = Arc::new(exe_dir);
+        let cache_arc = Arc::new(Mutex::new(cache));
+        let local_env_dir_arc = local_env_dir.map(Arc::new);
+        let connected_to_pseudoterminal_arc  = Arc::new(AtomicBool::new(false));
+        let h2m_console_history_arc = Arc::new(Mutex::new(Vec::<String>::new()));
+        let h2m_server_connection_history_arc = Arc::new(Mutex::new(Vec::<HostName>::new()));
+
+        let mut command_context = CommandContextBuilder::new()
+            .cache(&cache_arc)
+            .exe_dir(&exe_dir_arc)
+            .cache_needs_update(&cache_needs_update_arc)
+            .connected_to_pseudoterminal(&connected_to_pseudoterminal_arc)
+            .h2m_console_history(&h2m_console_history_arc)
+            .h2m_server_connection_history(&h2m_server_connection_history_arc)
+            .command_runtime(command_handle)
+            .local_dir(local_env_dir_arc.as_ref())
+            .build()
+            .unwrap();
+
+        match h2m_console_handle {
+            Ok(ref handle) => initalize_listener(Arc::clone(handle), &command_context),
+            Err(err) => error!("{err}"),
         }
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
@@ -139,12 +149,10 @@ fn main() {
 
         terminal::enable_raw_mode().unwrap();
 
-        let mut command_processed = false;
-
         loop {
-            if command_processed {
+            if command_context.was_command_entered() {
                 line_handle.clear_unwanted_inputs(&mut reader).await.unwrap();
-                command_processed = false;
+                command_context.command_handled()
             }
             line_handle.render().unwrap();
             let mut processing_taks = Vec::new();
@@ -155,10 +163,10 @@ fn main() {
                     continue;
                 }
                 _ = close_listener.recv() => {
+                    info!(name: LOG_ONLY, "app shutdown");
                     terminal::disable_raw_mode().unwrap();
                     return;
                 }
-
                 Some(event_result) = event => {
                     match event_result {
                         Ok(event) => {
@@ -166,9 +174,8 @@ fn main() {
                                 Ok(EventLoop::Continue) => continue,
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
-                                    command_processed = true;
                                     let command_handle = match shellwords::split(line_handle.history.last()) {
-                                        Ok(user_args) => try_execute_command(user_args, &command_context),
+                                        Ok(user_args) => try_execute_command(user_args, &mut command_context),
                                         Err(err) => {
                                             error!("{err}");
                                             continue;
@@ -204,8 +211,7 @@ fn main() {
         if cache_needs_update_arc.load(Ordering::SeqCst) {
             update_cache(cache_arc, local_env_dir_arc).await.unwrap_or_else(|err| error!("{err}"));
         }
-        // MARK: TODO
-        // need to make sure we do all winapi cleanup
+        info!(name: LOG_ONLY, "app shutdown");
         terminal::disable_raw_mode().unwrap();
     });
 }

@@ -180,9 +180,9 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
 #[instrument(skip_all)]
 pub async fn update_cache(
     server_cache: Arc<Mutex<Cache>>,
-    local_env_dir: Arc<Option<PathBuf>>,
+    local_env_dir: Option<Arc<PathBuf>>,
 ) -> io::Result<()> {
-    let Some(ref local_path) = *local_env_dir else {
+    let Some(ref local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
     let cache = server_cache.lock().await;

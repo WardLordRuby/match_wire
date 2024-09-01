@@ -3,6 +3,7 @@ pub mod not_your_private_keys;
 pub mod commands {
     pub mod filter;
     pub mod handler;
+    pub mod launch_h2m;
     pub mod reconnect;
 }
 pub mod utils {
@@ -44,10 +45,11 @@ pub const LOG_NAME: &str = "h2m_favorties.log";
 //    - (ip -> region)
 // 4. app will have additional command so all current args need to get moved into a new filter command - DONE
 // 5. app needs to display a '>' when waiting for a user to enter the next command - DONE
-// 6. app needs to be able to interact with h2m-mod.exe or h2m-revivied.exe
+// 6. app needs to be able to interact with h2m-mod.exe or h2m-revivied.exe - DONE
 //    - listen to the stdout
 //    - inject a connect command if it is not busy
-// 7. make splash screen for startup
+// 7. parse colors from other terminal and use colors on our own errors
+// 8. make splash screen for startup
 
 #[macro_export]
 macro_rules! new_io_error {
