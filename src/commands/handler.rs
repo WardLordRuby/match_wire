@@ -1,10 +1,15 @@
 use crate::{
     cli::{Command, Filters, UserCommand},
-    commands::{filter::build_favorites, launch_h2m::HostName, reconnect::reconnect},
+    commands::{
+        filter::build_favorites,
+        launch_h2m::{initalize_listener, launch_h2m_pseudo, HostName},
+        reconnect::reconnect,
+    },
     utils::caching::Cache,
 };
 use clap::Parser;
 use std::{
+    fmt::Display,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -190,19 +195,21 @@ impl CommandHandle {
     }
 }
 
-pub fn try_execute_command(
+pub async fn try_execute_command<'a>(
     mut user_args: Vec<String>,
-    command_context: &mut CommandContext,
+    context: &mut CommandContext<'a>,
 ) -> CommandHandle {
     let mut input_tokens = vec![String::new()];
     input_tokens.append(&mut user_args);
-    command_context.command_entered();
+    context.command_entered();
     match UserCommand::try_parse_from(input_tokens) {
         Ok(cli) => match cli.command {
-            Command::Filter { args } => new_favorites_with(args, command_context),
-            Command::Reconnect { args } => reconnect(args, command_context),
-            Command::GameDir => open_dir(Some(command_context.exe_dir.as_path())),
-            Command::LocalEnv => open_dir(command_context.local_dir.map(|i| i.as_path())),
+            Command::Filter { args } => new_favorites_with(args, context),
+            Command::Reconnect { args } => reconnect(args, context).await,
+            Command::Launch => launch_handler(context),
+            Command::DisplayLogs => h2m_console_history(&context.h2m_console_history()).await,
+            Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
+            Command::LocalEnv => open_dir(context.local_dir.map(|i| i.as_path())),
             Command::Quit => CommandHandle::exit(),
         },
         Err(err) => {
@@ -214,11 +221,11 @@ pub fn try_execute_command(
     }
 }
 
-fn new_favorites_with(args: Option<Filters>, command_context: &CommandContext) -> CommandHandle {
-    let cache = command_context.cache();
-    let exe_dir = command_context.exe_dir();
-    let cache_needs_update = command_context.cache_needs_update();
-    let task_join = command_context.command_runtime.spawn(async move {
+fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> CommandHandle {
+    let cache = context.cache();
+    let exe_dir = context.exe_dir();
+    let cache_needs_update = context.cache_needs_update();
+    let task_join = context.command_runtime.spawn(async move {
         let result = build_favorites(exe_dir, &args.unwrap_or_default(), cache)
             .await
             .unwrap_or_else(|err| {
@@ -230,6 +237,31 @@ fn new_favorites_with(args: Option<Filters>, command_context: &CommandContext) -
         }
     });
     CommandHandle::with_handle(task_join)
+}
+
+fn launch_handler(context: &mut CommandContext) -> CommandHandle {
+    match launch_h2m_pseudo(context.exe_dir) {
+        Ok(handle) => initalize_listener(handle, context),
+        Err(err) => error!("{err}"),
+    }
+    CommandHandle::default()
+}
+
+struct DisplayLogs<'a>(&'a [String]);
+
+impl<'a> Display for DisplayLogs<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for line in self.0 {
+            writeln!(f, "{line}")?;
+        }
+        Ok(())
+    }
+}
+
+async fn h2m_console_history(history: &Mutex<Vec<String>>) -> CommandHandle {
+    let history = history.lock().await;
+    println!("{}", DisplayLogs(&history));
+    CommandHandle::default()
 }
 
 fn open_dir(path: Option<&Path>) -> CommandHandle {

@@ -1,4 +1,4 @@
-use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
+use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
@@ -32,6 +32,16 @@ pub enum Command {
         args: HistoryArgs,
     },
 
+    /// Launch H2M-Mod
+    #[command(alias = "Launch")]
+    Launch,
+
+    // MARK: TODO
+    // command to wipe and reset cache
+    /// Print H2M console logs
+    #[command(aliases(["Display", "logs", "Logs"]))]
+    DisplayLogs,
+
     /// Open MWR(2017) directory
     #[command(aliases(["gamedir", "Gamedir", "GameDir"]))]
     GameDir,
@@ -53,7 +63,7 @@ pub struct HistoryArgs {
     pub history: bool,
 
     /// Connect to numbered entry in history
-    #[arg(short, long)]
+    #[arg(short, long, value_parser = value_parser!(u32).range(1..=HISTORY_MAX))]
     pub connect: Option<usize>,
 }
 
