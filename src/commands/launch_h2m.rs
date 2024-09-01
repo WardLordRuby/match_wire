@@ -3,7 +3,7 @@ use std::{
     ffi::{CStr, OsString},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
-    sync::{atomic::Ordering, Arc},
+    sync::atomic::Ordering,
 };
 use tracing::error;
 use winapi::{
@@ -34,14 +34,20 @@ impl From<&[u16]> for HostName {
     }
 }
 
-pub fn initalize_listener(handle: Arc<PTY>, command_context: &CommandContext) {
-    let listening = command_context.connected_to_pseudoterminal();
-    if listening.load(Ordering::Relaxed) {
-        error!("Still listening to H2M console events");
+pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
+    if context.check_h2m_connection().is_ok() {
+        error!("H2M connection still active, can not initalize new listener");
         return;
     }
-    let h2m_console_history = command_context.h2m_console_history();
-    let h2m_server_connection_history = command_context.h2m_server_connection_history();
+
+    // Before modifying context be sure to guard against already active connections by checking `.check_h2m_connection().is_err()`
+    context.set_listener(handle);
+
+    let h2m_console_history = context.h2m_console_history();
+    let h2m_server_connection_history = context.h2m_server_connection_history();
+    let listening = context.connected_to_pseudoterminal();
+    let handle = context.h2m_handle().unwrap();
+
     tokio::spawn(async move {
         let mut buffer = OsString::new();
 
@@ -68,9 +74,9 @@ pub fn initalize_listener(handle: Arc<PTY>, command_context: &CommandContext) {
                             }
                             if !wide_encode_buf.is_empty() {
                                 let mut console_history = h2m_console_history.blocking_lock();
-                                let mut connection_history =
-                                    h2m_server_connection_history.blocking_lock();
                                 if wide_encode_buf.starts_with(&JOIN_BYTES) {
+                                    let mut connection_history =
+                                        h2m_server_connection_history.blocking_lock();
                                     connection_history.push(HostName::from(&wide_encode_buf[..]));
                                 }
                                 console_history.push(String::from_utf16_lossy(&wide_encode_buf));
@@ -85,7 +91,6 @@ pub fn initalize_listener(handle: Arc<PTY>, command_context: &CommandContext) {
                 Err(err) => error!("{err:?}"),
             }
         }
-        // ideally we should make our handle no longer accessable here
         listening.store(false, Ordering::SeqCst)
     });
 }

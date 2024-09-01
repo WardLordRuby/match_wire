@@ -41,6 +41,13 @@ impl<'a> CommandContext<'a> {
     pub fn command_runtime(&self) -> &'a runtime::Handle {
         self.command_runtime
     }
+    pub fn check_h2m_connection(&mut self) -> Result<(), &'static str> {
+        if !Arc::clone(self.connected_to_pseudoterminal).load(Ordering::Relaxed) {
+            self.h2m_disconnected();
+            return Err("H2M connection closed, restart H2M using the 'launch' command");
+        }
+        Ok(())
+    }
     pub fn connected_to_pseudoterminal(&self) -> Arc<AtomicBool> {
         Arc::clone(self.connected_to_pseudoterminal)
     }
@@ -62,7 +69,12 @@ impl<'a> CommandContext<'a> {
     pub fn h2m_handle(&self) -> Option<Arc<PTY>> {
         self.h2m_handle.as_ref().map(Arc::clone)
     }
-    pub fn update_h2m_handle(&mut self, handle: PTY) {
+    pub fn h2m_disconnected(&mut self) {
+        self.h2m_handle = None
+    }
+    /// NOTE: Only intended to be called by `initalize_listener(..)`
+    pub fn set_listener(&mut self, handle: PTY) {
+        Arc::clone(self.connected_to_pseudoterminal).store(true, Ordering::SeqCst);
         self.h2m_handle = Some(Arc::new(handle))
     }
     pub fn was_command_entered(&self) -> bool {
@@ -85,7 +97,6 @@ pub struct CommandContextBuilder<'a> {
     local_dir: Option<&'a Arc<PathBuf>>,
     h2m_console_history: Option<&'a Arc<Mutex<Vec<String>>>>,
     h2m_server_connection_history: Option<&'a Arc<Mutex<Vec<HostName>>>>,
-    h2m_handle: Option<Arc<PTY>>,
     connected_to_pseudoterminal: Option<&'a Arc<AtomicBool>>,
 }
 
@@ -125,10 +136,6 @@ impl<'a> CommandContextBuilder<'a> {
         self.h2m_server_connection_history = Some(h2m_server_connection_history);
         self
     }
-    pub fn h2m_handle(mut self, handle: Option<PTY>) -> Self {
-        self.h2m_handle = handle.map(Arc::new);
-        self
-    }
     pub fn connected_to_pseudoterminal(
         mut self,
         connected_to_pseudoterminal: &'a Arc<AtomicBool>,
@@ -150,7 +157,7 @@ impl<'a> CommandContextBuilder<'a> {
             h2m_server_connection_history: self
                 .h2m_server_connection_history
                 .ok_or("h2m_server_connection_history is required")?,
-            h2m_handle: self.h2m_handle,
+            h2m_handle: None,
             connected_to_pseudoterminal: self
                 .connected_to_pseudoterminal
                 .ok_or("connected_to_pseudoterminal is required")?,

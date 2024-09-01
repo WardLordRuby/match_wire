@@ -131,14 +131,13 @@ fn main() {
             .connected_to_pseudoterminal(&connected_to_pseudoterminal_arc)
             .h2m_console_history(&h2m_console_history_arc)
             .h2m_server_connection_history(&h2m_server_connection_history_arc)
-            .h2m_handle(h2m_console_handle)
             .command_runtime(command_handle)
             .local_dir(local_env_dir_arc.as_ref())
             .build()
             .unwrap();
 
-        if let Some(handle) = command_context.h2m_handle() {
-            initalize_listener(handle, &command_context);
+        if let Some(handle) = h2m_console_handle {
+            initalize_listener(handle, &mut command_context);
         }
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
@@ -184,7 +183,7 @@ fn main() {
                                         let servers_arc = command_context.h2m_server_connection_history();
                                         let servers = servers_arc.blocking_lock();
                                         dbg!(&servers);
-                                        dbg!(command_context.connected_to_pseudoterminal().load(Ordering::Relaxed));
+                                        dbg!(command_context.check_h2m_connection());
                                     }
                                     let command_handle = match shellwords::split(line_handle.history.last()) {
                                         Ok(user_args) => try_execute_command(user_args, &mut command_context),

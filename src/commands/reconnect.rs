@@ -46,7 +46,7 @@ impl Display for DisplayHistoryErr {
     }
 }
 
-pub fn reconnect(args: HistoryArgs, context: &CommandContext) -> CommandHandle {
+pub fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> CommandHandle {
     let h2m_handle_arc = context.h2m_handle();
     if h2m_handle_arc.is_none() {
         error!("Use the 'launch' command to open H2M-Mod");
@@ -78,6 +78,10 @@ pub fn reconnect(args: HistoryArgs, context: &CommandContext) -> CommandHandle {
             .get(&server_history.last().unwrap().raw)
     };
     if let Some(ip_port) = connect {
+        if let Err(err) = context.check_h2m_connection() {
+            error!("{err}");
+            return CommandHandle::default();
+        }
         connect_to(ip_port, &h2m_handle_arc.unwrap()).unwrap_or_else(|err| error!("{err}"));
     } else {
         error!("Could not find server in cache")
@@ -85,6 +89,7 @@ pub fn reconnect(args: HistoryArgs, context: &CommandContext) -> CommandHandle {
     CommandHandle::default()
 }
 
+/// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
 fn connect_to(ip_port: &str, handle: &PTY) -> Result<(), String> {
     let send_command =
         |command: &dyn AsRef<str>| match handle.write(OsString::from(command.as_ref())) {
