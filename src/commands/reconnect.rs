@@ -9,23 +9,15 @@ use std::{ffi::OsString, fmt::Display};
 use tracing::error;
 use winptyrs::PTY;
 
-// MARK: TODO
-// 1. find correct threadProcessId - Done
-// 2. get rawHandles to stdout and stdin of that threadProcessId - Done
-// 3. filter stdout reads - Done
-// 4. create a stack of (color_coded_hostname, parsed_hostname) - Done
-// 5. create a fn to display list of parsed_hostname -> connect ip:port
-// 6. add feat to connect to specify what number in the stack to connect to
-// 7. create launch h2m command
-// 8. send commands into stdin psuedo terminal
+pub const HISTORY_MAX: i64 = 6;
 
 struct DisplayHistory<'a>(&'a [HostName]);
 
 impl<'a> Display for DisplayHistory<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, host_name) in self.0.iter().rev().enumerate() {
-            writeln!(f, "{i}. {}", host_name.parsed)?;
-            if i == 6 {
+            writeln!(f, "{}. {}", i + 1, host_name.parsed)?;
+            if i == HISTORY_MAX as usize - 1 {
                 break;
             }
         }
@@ -46,24 +38,25 @@ impl Display for DisplayHistoryErr {
     }
 }
 
-pub fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> CommandHandle {
+pub async fn reconnect<'a>(args: HistoryArgs, context: &mut CommandContext<'a>) -> CommandHandle {
     let h2m_handle_arc = context.h2m_handle();
     if h2m_handle_arc.is_none() {
         error!("Use the 'launch' command to open H2M-Mod");
         return CommandHandle::default();
     }
     let server_history_arc = context.h2m_server_connection_history();
-    let server_history = server_history_arc.blocking_lock();
+    let server_history = server_history_arc.lock().await;
     if server_history.is_empty() {
         error!("No joined servers in history, connect to a server to add it to history");
         return CommandHandle::default();
     }
     if args.history {
         println!("{}", DisplayHistory(&server_history));
+        return CommandHandle::default();
     }
     let history_len = server_history.len();
     let cache_arc = context.cache();
-    let cache = cache_arc.blocking_lock();
+    let cache = cache_arc.lock().await;
     let connect = if let Some(num) = args.connect {
         if num > history_len {
             error!("{}", DisplayHistoryErr(history_len));

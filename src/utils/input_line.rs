@@ -1,6 +1,7 @@
 use crossterm::{
     cursor,
     event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    style,
     terminal::{Clear, ClearType::*},
     QueueableCommand,
 };
@@ -99,6 +100,7 @@ impl<'a> LineReader<'a> {
     pub fn render(&mut self) -> io::Result<()> {
         let line_len = self.get_curr_len();
         self.move_to_beginning(line_len)?;
+        self.term.queue(style::ResetColor)?;
         write!(self.term, "{}{}", self.prompt, self.line)?;
         self.move_to_line_end()?;
         self.term.flush()

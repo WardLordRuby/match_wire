@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, UserCommand};
 use commands::{
     handler::{try_execute_command, CommandContextBuilder},
-    launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, HostName},
+    launch_h2m::{initalize_listener, launch_h2m_pseudo, HostName},
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
@@ -108,14 +108,10 @@ fn main() {
             }
         };
 
-        let h2m_console_handle = if !h2m_running() {
-            launch_h2m_pseudo(&exe_dir).map(Some)
-        } else {
-            Err(String::from("Close H2M and relaunch using 'launch' command"))
-        }.unwrap_or_else(|err| {
-            error!("{err}");
-            None
-        });
+        let h2m_console_handle = launch_h2m_pseudo(&exe_dir).map(Some).unwrap_or_else(|err| {
+                error!("{err}");
+                None
+            });
 
         let exe_dir_arc = Arc::new(exe_dir);
         let cache_arc = Arc::new(Mutex::new(cache));
@@ -178,15 +174,16 @@ fn main() {
                                 Ok(EventLoop::TryProcessCommand) => {
                                     if line_handle.history.last() == "dbg" {
                                         let history_arc = command_context.h2m_console_history();
-                                        let history = history_arc.blocking_lock();
+                                        let history = history_arc.lock().await;
                                         dbg!(&history);
                                         let servers_arc = command_context.h2m_server_connection_history();
-                                        let servers = servers_arc.blocking_lock();
+                                        let servers = servers_arc.lock().await;
                                         dbg!(&servers);
                                         dbg!(command_context.check_h2m_connection());
+                                        continue;
                                     }
                                     let command_handle = match shellwords::split(line_handle.history.last()) {
-                                        Ok(user_args) => try_execute_command(user_args, &mut command_context),
+                                        Ok(user_args) => try_execute_command(user_args, &mut command_context).await,
                                         Err(err) => {
                                             error!("{err}");
                                             continue;

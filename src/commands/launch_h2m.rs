@@ -14,6 +14,7 @@ use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
 
 const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
 const H2M_WINDOW_NAMES: [&str; 2] = ["h2m-mod", "h2m-revived"];
+const JOIN_CHARS: &str = "Joining ";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
@@ -26,12 +27,22 @@ pub struct HostName {
 
 impl From<&[u16]> for HostName {
     fn from(value: &[u16]) -> Self {
-        let host_name = String::from_utf16_lossy(&value[JOIN_BYTES.len()..]);
+        let host_name = String::from_utf16_lossy(value);
+        let host_name = strip_ansi_codes(&host_name);
         HostName {
             parsed: parse_hostname(&host_name),
             raw: host_name,
         }
     }
+}
+
+fn strip_ansi_codes(input: &str) -> String {
+    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
+    re.replace_all(input, "")
+        .trim_start()
+        .trim_start_matches(JOIN_CHARS)
+        .trim_end_matches('.')
+        .to_string()
 }
 
 pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
@@ -51,9 +62,10 @@ pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
     tokio::spawn(async move {
         let mut buffer = OsString::new();
 
+        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         while let Ok(true) = handle.is_alive() {
-            tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
-            match handle.read(4000, false) {
+            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+            match handle.read(1024, false) {
                 Ok(os_string) => {
                     if os_string.is_empty() {
                         continue;
@@ -73,10 +85,13 @@ pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
                                 wide_encode.next();
                             }
                             if !wide_encode_buf.is_empty() {
-                                let mut console_history = h2m_console_history.blocking_lock();
-                                if wide_encode_buf.starts_with(&JOIN_BYTES) {
+                                let mut console_history = h2m_console_history.lock().await;
+                                if wide_encode_buf
+                                    .windows(JOIN_BYTES.len())
+                                    .any(|window| window == JOIN_BYTES)
+                                {
                                     let mut connection_history =
-                                        h2m_server_connection_history.blocking_lock();
+                                        h2m_server_connection_history.lock().await;
                                     connection_history.push(HostName::from(&wide_encode_buf[..]));
                                 }
                                 console_history.push(String::from_utf16_lossy(&wide_encode_buf));
@@ -96,6 +111,12 @@ pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
 }
 
 pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<PTY, String> {
+    if h2m_running() {
+        return Err(String::from(
+            "Close H2M and relaunch using 'launch' command",
+        ));
+    }
+
     let pty_args = PTYArgs {
         cols: 100,
         rows: 50,
@@ -119,7 +140,7 @@ pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<PTY, String> {
     Ok(conpty)
 }
 
-pub fn h2m_running() -> bool {
+fn h2m_running() -> bool {
     let mut result: bool = false;
     unsafe {
         EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize);
