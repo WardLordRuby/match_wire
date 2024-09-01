@@ -18,6 +18,7 @@ const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 
+#[derive(Debug)]
 pub struct HostName {
     pub parsed: String,
     pub raw: String,
@@ -53,18 +54,22 @@ pub fn initalize_listener(handle: Arc<PTY>, command_context: &CommandContext) {
                     }
                     buffer.push(os_string);
                     let mut wide_encode_buf = Vec::new();
-                    let mut console_history = h2m_console_history.lock().await;
-                    let mut connection_history = h2m_server_connection_history.lock().await;
                     let mut wide_encode = buffer.encode_wide().peekable();
                     while let Some(byte) = wide_encode.next() {
                         if byte == NEW_LINE {
                             continue;
                         }
+                        // MARK: DEBUG
+                        // make sure we properly parse each line and remove color code
+                        // create tests for this
                         if byte == CARRIAGE_RETURN {
                             if wide_encode.peek().is_some() {
                                 wide_encode.next();
                             }
                             if !wide_encode_buf.is_empty() {
+                                let mut console_history = h2m_console_history.blocking_lock();
+                                let mut connection_history =
+                                    h2m_server_connection_history.blocking_lock();
                                 if wide_encode_buf.starts_with(&JOIN_BYTES) {
                                     connection_history.push(HostName::from(&wide_encode_buf[..]));
                                 }
@@ -80,6 +85,7 @@ pub fn initalize_listener(handle: Arc<PTY>, command_context: &CommandContext) {
                 Err(err) => error!("{err:?}"),
             }
         }
+        // ideally we should make our handle no longer accessable here
         listening.store(false, Ordering::SeqCst)
     });
 }

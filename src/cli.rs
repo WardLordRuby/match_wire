@@ -28,9 +28,8 @@ pub enum Command {
     /// Reconnect to last server joined
     #[command(alias = "Reconnect")]
     Reconnect {
-        /// Display previously connected servers
-        #[arg(short = 'H', long, action = ArgAction::SetTrue)]
-        history: bool,
+        #[clap(flatten)]
+        args: HistoryArgs,
     },
 
     /// Open MWR(2017) directory
@@ -44,6 +43,18 @@ pub enum Command {
     /// Open the current local data directory
     #[command(aliases(["localenv", "Localenv", "LocalEnv"]), hide = true)]
     LocalEnv,
+}
+
+#[derive(Args, Debug)]
+#[group(multiple = false)]
+pub struct HistoryArgs {
+    /// Display previously connected servers
+    #[arg(short = 'H', long, action = ArgAction::SetTrue)]
+    pub history: bool,
+
+    /// Connect to numbered entry in history
+    #[arg(short, long)]
+    pub connect: Option<usize>,
 }
 
 #[derive(Args, Debug, Clone, Default)]

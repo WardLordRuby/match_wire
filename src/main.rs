@@ -109,10 +109,13 @@ fn main() {
         };
 
         let h2m_console_handle = if !h2m_running() {
-            launch_h2m_pseudo(&exe_dir).map(Arc::new)
+            launch_h2m_pseudo(&exe_dir).map(Some)
         } else {
             Err(String::from("Close H2M and relaunch using 'launch' command"))
-        };
+        }.unwrap_or_else(|err| {
+            error!("{err}");
+            None
+        });
 
         let exe_dir_arc = Arc::new(exe_dir);
         let cache_arc = Arc::new(Mutex::new(cache));
@@ -128,14 +131,14 @@ fn main() {
             .connected_to_pseudoterminal(&connected_to_pseudoterminal_arc)
             .h2m_console_history(&h2m_console_history_arc)
             .h2m_server_connection_history(&h2m_server_connection_history_arc)
+            .h2m_handle(h2m_console_handle)
             .command_runtime(command_handle)
             .local_dir(local_env_dir_arc.as_ref())
             .build()
             .unwrap();
 
-        match h2m_console_handle {
-            Ok(ref handle) => initalize_listener(Arc::clone(handle), &command_context),
-            Err(err) => error!("{err}"),
+        if let Some(handle) = command_context.h2m_handle() {
+            initalize_listener(handle, &command_context);
         }
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
@@ -174,6 +177,15 @@ fn main() {
                                 Ok(EventLoop::Continue) => continue,
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
+                                    if line_handle.history.last() == "dbg" {
+                                        let history_arc = command_context.h2m_console_history();
+                                        let history = history_arc.blocking_lock();
+                                        dbg!(&history);
+                                        let servers_arc = command_context.h2m_server_connection_history();
+                                        let servers = servers_arc.blocking_lock();
+                                        dbg!(&servers);
+                                        dbg!(command_context.connected_to_pseudoterminal().load(Ordering::Relaxed));
+                                    }
                                     let command_handle = match shellwords::split(line_handle.history.last()) {
                                         Ok(user_args) => try_execute_command(user_args, &mut command_context),
                                         Err(err) => {

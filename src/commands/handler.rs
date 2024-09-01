@@ -13,6 +13,7 @@ use std::{
 };
 use tokio::{runtime, sync::Mutex, task::JoinHandle};
 use tracing::error;
+use winptyrs::PTY;
 
 pub struct CommandContext<'a> {
     cache: &'a Arc<Mutex<Cache>>,
@@ -22,6 +23,7 @@ pub struct CommandContext<'a> {
     connected_to_pseudoterminal: &'a Arc<AtomicBool>,
     h2m_console_history: &'a Arc<Mutex<Vec<String>>>,
     h2m_server_connection_history: &'a Arc<Mutex<Vec<HostName>>>,
+    h2m_handle: Option<Arc<PTY>>,
     command_entered: bool,
     local_dir: Option<&'a Arc<PathBuf>>,
 }
@@ -57,6 +59,12 @@ impl<'a> CommandContext<'a> {
     pub fn h2m_server_connection_history(&self) -> Arc<Mutex<Vec<HostName>>> {
         Arc::clone(self.h2m_server_connection_history)
     }
+    pub fn h2m_handle(&self) -> Option<Arc<PTY>> {
+        self.h2m_handle.as_ref().map(Arc::clone)
+    }
+    pub fn update_h2m_handle(&mut self, handle: PTY) {
+        self.h2m_handle = Some(Arc::new(handle))
+    }
     pub fn was_command_entered(&self) -> bool {
         self.command_entered
     }
@@ -77,6 +85,7 @@ pub struct CommandContextBuilder<'a> {
     local_dir: Option<&'a Arc<PathBuf>>,
     h2m_console_history: Option<&'a Arc<Mutex<Vec<String>>>>,
     h2m_server_connection_history: Option<&'a Arc<Mutex<Vec<HostName>>>>,
+    h2m_handle: Option<Arc<PTY>>,
     connected_to_pseudoterminal: Option<&'a Arc<AtomicBool>>,
 }
 
@@ -116,6 +125,10 @@ impl<'a> CommandContextBuilder<'a> {
         self.h2m_server_connection_history = Some(h2m_server_connection_history);
         self
     }
+    pub fn h2m_handle(mut self, handle: Option<PTY>) -> Self {
+        self.h2m_handle = handle.map(Arc::new);
+        self
+    }
     pub fn connected_to_pseudoterminal(
         mut self,
         connected_to_pseudoterminal: &'a Arc<AtomicBool>,
@@ -137,6 +150,7 @@ impl<'a> CommandContextBuilder<'a> {
             h2m_server_connection_history: self
                 .h2m_server_connection_history
                 .ok_or("h2m_server_connection_history is required")?,
+            h2m_handle: self.h2m_handle,
             connected_to_pseudoterminal: self
                 .connected_to_pseudoterminal
                 .ok_or("connected_to_pseudoterminal is required")?,
@@ -179,7 +193,7 @@ pub fn try_execute_command(
     match UserCommand::try_parse_from(input_tokens) {
         Ok(cli) => match cli.command {
             Command::Filter { args } => new_favorites_with(args, command_context),
-            Command::Reconnect { history } => reconnect(history),
+            Command::Reconnect { args } => reconnect(args, command_context),
             Command::GameDir => open_dir(Some(command_context.exe_dir.as_path())),
             Command::LocalEnv => open_dir(command_context.local_dir.map(|i| i.as_path())),
             Command::Quit => CommandHandle::exit(),
