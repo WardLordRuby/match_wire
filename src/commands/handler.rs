@@ -5,7 +5,8 @@ use crate::{
         launch_h2m::{initalize_listener, launch_h2m_pseudo, HostName},
         reconnect::reconnect,
     },
-    utils::caching::Cache,
+    utils::caching::{build_cache, Cache},
+    CACHED_DATA,
 };
 use clap::Parser;
 use std::{
@@ -21,55 +22,52 @@ use tracing::error;
 use winptyrs::PTY;
 
 pub struct CommandContext<'a> {
-    cache: &'a Arc<Mutex<Cache>>,
-    exe_dir: &'a Arc<PathBuf>,
-    cache_needs_update: &'a Arc<AtomicBool>,
+    cache: Arc<Mutex<Cache>>,
+    exe_dir: Arc<PathBuf>,
+    cache_needs_update: Arc<AtomicBool>,
     command_runtime: &'a runtime::Handle,
-    connected_to_pseudoterminal: &'a Arc<AtomicBool>,
-    h2m_console_history: &'a Arc<Mutex<Vec<String>>>,
-    h2m_server_connection_history: &'a Arc<Mutex<Vec<HostName>>>,
+    connected_to_pseudoterminal: Arc<AtomicBool>,
+    h2m_console_history: Arc<Mutex<Vec<String>>>,
+    h2m_server_connection_history: Arc<Mutex<Vec<HostName>>>,
     h2m_handle: Option<Arc<PTY>>,
     command_entered: bool,
-    local_dir: Option<&'a Arc<PathBuf>>,
+    local_dir: Option<Arc<PathBuf>>,
 }
 
 impl<'a> CommandContext<'a> {
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
-        Arc::clone(self.cache)
+        self.cache.clone()
     }
     pub fn exe_dir(&self) -> Arc<PathBuf> {
-        Arc::clone(self.exe_dir)
+        self.exe_dir.clone()
     }
     pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
-        Arc::clone(self.cache_needs_update)
+        self.cache_needs_update.clone()
     }
-    pub fn command_runtime(&self) -> &'a runtime::Handle {
+    pub fn command_runtime(&self) -> &runtime::Handle {
         self.command_runtime
     }
     pub fn check_h2m_connection(&mut self) -> Result<(), &'static str> {
-        if !Arc::clone(self.connected_to_pseudoterminal).load(Ordering::Relaxed) {
+        if !self.connected_to_pseudoterminal.load(Ordering::Relaxed) {
             self.h2m_disconnected();
             return Err("H2M connection closed, restart H2M using the 'launch' command");
         }
         Ok(())
     }
     pub fn connected_to_pseudoterminal(&self) -> Arc<AtomicBool> {
-        Arc::clone(self.connected_to_pseudoterminal)
+        self.connected_to_pseudoterminal.clone()
     }
-    pub fn local_dir(&self) -> Result<Arc<PathBuf>, &'static str> {
-        if let Some(arc_ref) = self.local_dir {
-            return Ok(Arc::clone(arc_ref));
-        }
-        Err("Local dir was not set")
+    pub fn local_dir(&self) -> Option<Arc<PathBuf>> {
+        self.local_dir.as_ref().map(Arc::clone)
     }
-    pub fn update_local_dir(&mut self, local_dir: &'a Arc<PathBuf>) {
-        self.local_dir = Some(local_dir)
+    pub fn update_local_dir(&mut self, local_dir: PathBuf) {
+        self.local_dir = Some(Arc::new(local_dir))
     }
     pub fn h2m_console_history(&self) -> Arc<Mutex<Vec<String>>> {
-        Arc::clone(self.h2m_console_history)
+        self.h2m_console_history.clone()
     }
     pub fn h2m_server_connection_history(&self) -> Arc<Mutex<Vec<HostName>>> {
-        Arc::clone(self.h2m_server_connection_history)
+        self.h2m_server_connection_history.clone()
     }
     pub fn h2m_handle(&self) -> Option<Arc<PTY>> {
         self.h2m_handle.as_ref().map(Arc::clone)
@@ -79,7 +77,8 @@ impl<'a> CommandContext<'a> {
     }
     /// NOTE: Only intended to be called by `initalize_listener(..)`
     pub fn set_listener(&mut self, handle: PTY) {
-        Arc::clone(self.connected_to_pseudoterminal).store(true, Ordering::SeqCst);
+        self.connected_to_pseudoterminal
+            .store(true, Ordering::SeqCst);
         self.h2m_handle = Some(Arc::new(handle))
     }
     pub fn was_command_entered(&self) -> bool {
@@ -95,14 +94,11 @@ impl<'a> CommandContext<'a> {
 
 #[derive(Default)]
 pub struct CommandContextBuilder<'a> {
-    cache: Option<&'a Arc<Mutex<Cache>>>,
-    exe_dir: Option<&'a Arc<PathBuf>>,
-    cache_needs_update: Option<&'a Arc<AtomicBool>>,
+    cache: Option<Arc<Mutex<Cache>>>,
+    exe_dir: Option<Arc<PathBuf>>,
     command_runtime: Option<&'a runtime::Handle>,
-    local_dir: Option<&'a Arc<PathBuf>>,
-    h2m_console_history: Option<&'a Arc<Mutex<Vec<String>>>>,
-    h2m_server_connection_history: Option<&'a Arc<Mutex<Vec<HostName>>>>,
-    connected_to_pseudoterminal: Option<&'a Arc<AtomicBool>>,
+    local_dir: Option<Arc<PathBuf>>,
+    h2m_server_connection_history: Option<Arc<Mutex<Vec<HostName>>>>,
 }
 
 impl<'a> CommandContextBuilder<'a> {
@@ -110,42 +106,28 @@ impl<'a> CommandContextBuilder<'a> {
         CommandContextBuilder::default()
     }
 
-    pub fn cache(mut self, cache: &'a Arc<Mutex<Cache>>) -> Self {
-        self.cache = Some(cache);
+    pub fn cache(mut self, cache: Cache) -> Self {
+        self.cache = Some(Arc::new(Mutex::new(cache)));
         self
     }
-    pub fn exe_dir(mut self, exe_dir: &'a Arc<PathBuf>) -> Self {
-        self.exe_dir = Some(exe_dir);
-        self
-    }
-    pub fn cache_needs_update(mut self, cache_needs_update: &'a Arc<AtomicBool>) -> Self {
-        self.cache_needs_update = Some(cache_needs_update);
+    pub fn exe_dir(mut self, exe_dir: PathBuf) -> Self {
+        self.exe_dir = Some(Arc::new(exe_dir));
         self
     }
     pub fn command_runtime(mut self, command_runtime: &'a runtime::Handle) -> Self {
         self.command_runtime = Some(command_runtime);
         self
     }
-    pub fn local_dir(mut self, local_dir: Option<&'a Arc<PathBuf>>) -> Self {
-        self.local_dir = local_dir;
-        self
-    }
-    pub fn h2m_console_history(mut self, h2m_console_history: &'a Arc<Mutex<Vec<String>>>) -> Self {
-        self.h2m_console_history = Some(h2m_console_history);
+    pub fn local_dir(mut self, local_dir: Option<PathBuf>) -> Self {
+        self.local_dir = local_dir.map(Arc::new);
         self
     }
     pub fn h2m_server_connection_history(
         mut self,
-        h2m_server_connection_history: &'a Arc<Mutex<Vec<HostName>>>,
+        h2m_server_connection_history: Vec<HostName>,
     ) -> Self {
-        self.h2m_server_connection_history = Some(h2m_server_connection_history);
-        self
-    }
-    pub fn connected_to_pseudoterminal(
-        mut self,
-        connected_to_pseudoterminal: &'a Arc<AtomicBool>,
-    ) -> Self {
-        self.connected_to_pseudoterminal = Some(connected_to_pseudoterminal);
+        self.h2m_server_connection_history =
+            Some(Arc::new(Mutex::new(h2m_server_connection_history)));
         self
     }
 
@@ -153,22 +135,16 @@ impl<'a> CommandContextBuilder<'a> {
         Ok(CommandContext {
             cache: self.cache.ok_or("cache is required")?,
             exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
-            cache_needs_update: self
-                .cache_needs_update
-                .ok_or("cache_needs_update is required")?,
-            h2m_console_history: self
-                .h2m_console_history
-                .ok_or("h2m_console_history is required")?,
+            command_runtime: self.command_runtime.ok_or("command_runtime is required")?,
             h2m_server_connection_history: self
                 .h2m_server_connection_history
-                .ok_or("h2m_server_connection_history is required")?,
-            h2m_handle: None,
-            connected_to_pseudoterminal: self
-                .connected_to_pseudoterminal
-                .ok_or("connected_to_pseudoterminal is required")?,
-            command_runtime: self.command_runtime.ok_or("command_runtime is required")?,
-            command_entered: false,
+                .unwrap_or_else(|| Arc::new(Mutex::new(Vec::new()))),
+            cache_needs_update: Arc::new(AtomicBool::new(false)),
+            h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
+            connected_to_pseudoterminal: Arc::new(AtomicBool::new(false)),
             local_dir: self.local_dir,
+            h2m_handle: None,
+            command_entered: false,
         })
     }
 }
@@ -207,9 +183,10 @@ pub async fn try_execute_command<'a>(
             Command::Filter { args } => new_favorites_with(args, context),
             Command::Reconnect { args } => reconnect(args, context).await,
             Command::Launch => launch_handler(context),
+            Command::UpdateCache => reset_cache(context).await,
             Command::DisplayLogs => h2m_console_history(&context.h2m_console_history()).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
-            Command::LocalEnv => open_dir(context.local_dir.map(|i| i.as_path())),
+            Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
             Command::Quit => CommandHandle::exit(),
         },
         Err(err) => {
@@ -239,8 +216,39 @@ fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> Comman
     CommandHandle::with_handle(task_join)
 }
 
+async fn reset_cache<'a>(context: &CommandContext<'a>) -> CommandHandle {
+    let Some(ref local_dir) = context.local_dir else {
+        error!("Can not create cache with out a valid save directory");
+        return CommandHandle::default();
+    };
+    let connection_history = context.h2m_server_connection_history();
+    let connection_history = connection_history.lock().await;
+
+    let cache_file = match build_cache(Some(&connection_history)).await {
+        Ok(data) => data,
+        Err(err) => {
+            error!("{err}");
+            return CommandHandle::default();
+        }
+    };
+    drop(connection_history);
+
+    match std::fs::File::create(local_dir.join(CACHED_DATA)) {
+        Ok(file) => {
+            if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
+                error!("{err}")
+            }
+        }
+        Err(err) => error!("{err}"),
+    }
+    let cache = context.cache();
+    let mut cache = cache.lock().await;
+    *cache = Cache::from(cache_file.cache, cache_file.created);
+    CommandHandle::default()
+}
+
 fn launch_handler(context: &mut CommandContext) -> CommandHandle {
-    match launch_h2m_pseudo(context.exe_dir) {
+    match launch_h2m_pseudo(&context.exe_dir) {
         Ok(handle) => initalize_listener(handle, context),
         Err(err) => error!("{err}"),
     }

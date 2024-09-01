@@ -1,4 +1,5 @@
 use crate::{commands::handler::CommandContext, parse_hostname};
+use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsString},
     os::windows::ffi::{OsStrExt, OsStringExt},
@@ -19,7 +20,7 @@ const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HostName {
     pub parsed: String,
     pub raw: String,
@@ -127,6 +128,9 @@ pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<PTY, String> {
 
     // MARK: FIX
     // why does the pseudo terminal spawn with no cols or rows
+
+    // MARK: TEST
+    // test with both backends so we can support versions < win10-f1809
     let mut conpty = PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap();
     if conpty
         .spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None)

@@ -36,8 +36,11 @@ pub enum Command {
     #[command(alias = "Launch")]
     Launch,
 
-    // MARK: TODO
-    // command to wipe and reset cache
+    /// Clear and rebuild server_list cache
+    /// {n}Try this if 'reconnect' is returning: "Could not find server in cache"
+    #[command(aliases(["Reset", "update", "Update"]))]
+    UpdateCache,
+
     /// Print H2M console logs
     #[command(aliases(["Display", "logs", "Logs"]))]
     DisplayLogs,

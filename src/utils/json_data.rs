@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::commands::launch_h2m::HostName;
+
 #[derive(Deserialize, Debug)]
 pub struct HostData {
     pub servers: Vec<ServerInfo>,
@@ -46,6 +48,7 @@ pub struct Version {
 pub struct CacheFile {
     pub version: String,
     pub created: std::time::SystemTime,
+    pub connection_history: Vec<HostName>,
     pub cache: Vec<ServerCache>,
 }
 

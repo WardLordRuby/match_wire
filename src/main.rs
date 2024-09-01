@@ -9,16 +9,13 @@ use h2m_favorites::*;
 use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::Ordering,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
-    caching::{build_cache, read_cache, update_cache, Cache},
+    caching::{build_cache, read_cache, update_cache, Cache, ReadCache},
     input_line::*,
     json_data::CacheFile,
     subscriber::init_subscriber,
@@ -76,23 +73,7 @@ fn main() {
             .await
             .unwrap_or_else(|err| error!("{err}"));
 
-        let (update_cache_tx, mut update_cache_rx) = mpsc::channel(20);
-        let cache_needs_update_arc = Arc::new(AtomicBool::new(false));
-
-        tokio::spawn({
-            let cache_needs_update = cache_needs_update_arc.clone();
-            async move {
-                loop {
-                    if cache_needs_update.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-                        && update_cache_tx.send(true).await.is_err() {
-                            break;
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
-                }
-            }
-        });
-
-        let (cache, local_env_dir, exe_dir) = match app_startup.await {
+        let startup_data = match app_startup.await {
             Ok(startup_result) => match startup_result {
                 Ok(data) => data,
                 Err(err) => {
@@ -108,29 +89,34 @@ fn main() {
             }
         };
 
-        let h2m_console_handle = launch_h2m_pseudo(&exe_dir).map(Some).unwrap_or_else(|err| {
-                error!("{err}");
-                None
-            });
-
-        let exe_dir_arc = Arc::new(exe_dir);
-        let cache_arc = Arc::new(Mutex::new(cache));
-        let local_env_dir_arc = local_env_dir.map(Arc::new);
-        let connected_to_pseudoterminal_arc  = Arc::new(AtomicBool::new(false));
-        let h2m_console_history_arc = Arc::new(Mutex::new(Vec::<String>::new()));
-        let h2m_server_connection_history_arc = Arc::new(Mutex::new(Vec::<HostName>::new()));
-
         let mut command_context = CommandContextBuilder::new()
-            .cache(&cache_arc)
-            .exe_dir(&exe_dir_arc)
-            .cache_needs_update(&cache_needs_update_arc)
-            .connected_to_pseudoterminal(&connected_to_pseudoterminal_arc)
-            .h2m_console_history(&h2m_console_history_arc)
-            .h2m_server_connection_history(&h2m_server_connection_history_arc)
+            .cache(startup_data.read.cache)
+            .exe_dir(startup_data.exe_dir)
+            .h2m_server_connection_history(startup_data.read.connection_history)
             .command_runtime(command_handle)
-            .local_dir(local_env_dir_arc.as_ref())
+            .local_dir(startup_data.local_dir)
             .build()
             .unwrap();
+
+        let (update_cache_tx, mut update_cache_rx) = mpsc::channel(20);
+
+        tokio::spawn({
+            let cache_needs_update = command_context.cache_needs_update();
+            async move {
+                loop {
+                    if cache_needs_update.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+                        && update_cache_tx.send(true).await.is_err() {
+                            break;
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
+                }
+            }
+        });
+
+        let h2m_console_handle = launch_h2m_pseudo(&command_context.exe_dir()).map(Some).unwrap_or_else(|err| {
+            error!("{err}");
+            None
+        });
 
         if let Some(handle) = h2m_console_handle {
             initalize_listener(handle, &mut command_context);
@@ -157,7 +143,7 @@ fn main() {
             let event = reader.next();
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
-                    update_cache(cache_arc.clone(), local_env_dir_arc.clone()).await.unwrap_or_else(|err| error!("{err}"));
+                    update_cache(command_context.h2m_server_connection_history(), command_context.cache(), command_context.local_dir()).await.unwrap_or_else(|err| error!("{err}"));
                     continue;
                 }
                 _ = close_listener.recv() => {
@@ -216,16 +202,22 @@ fn main() {
             }
         }
 
-        if cache_needs_update_arc.load(Ordering::SeqCst) {
-            update_cache(cache_arc, local_env_dir_arc).await.unwrap_or_else(|err| error!("{err}"));
+        if command_context.cache_needs_update().load(Ordering::SeqCst) {
+            update_cache(command_context.h2m_server_connection_history(), command_context.cache(), command_context.local_dir()).await.unwrap_or_else(|err| error!("{err}"));
         }
         info!(name: LOG_ONLY, "app shutdown");
         terminal::disable_raw_mode().unwrap();
     });
 }
 
+struct StartupData {
+    read: ReadCache,
+    exe_dir: PathBuf,
+    local_dir: Option<PathBuf>,
+}
+
 #[instrument(skip_all)]
-async fn app_startup() -> std::io::Result<(Cache, Option<PathBuf>, PathBuf)> {
+async fn app_startup() -> std::io::Result<StartupData> {
     let exe_dir = std::env::current_dir()
         .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
 
@@ -255,7 +247,7 @@ async fn app_startup() -> std::io::Result<(Cache, Option<PathBuf>, PathBuf)> {
         _ => unreachable!(),
     }
 
-    let mut local_env_dir = None;
+    let mut local_dir = None;
     if let Some(path) = std::env::var_os(LOCAL_DATA) {
         let mut dir = PathBuf::from(path);
 
@@ -264,9 +256,15 @@ async fn app_startup() -> std::io::Result<(Cache, Option<PathBuf>, PathBuf)> {
         } else {
             init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{err}"));
             info!(name: LOG_ONLY, "App startup");
-            local_env_dir = Some(dir);
-            match read_cache(local_env_dir.as_ref().unwrap()) {
-                Ok(cache) => return Ok((cache, local_env_dir, exe_dir)),
+            local_dir = Some(dir);
+            match read_cache(local_dir.as_ref().unwrap()) {
+                Ok(cache) => {
+                    return Ok(StartupData {
+                        read: cache,
+                        exe_dir,
+                        local_dir,
+                    })
+                }
                 Err(err) => info!("{err}"),
             }
         }
@@ -276,30 +274,31 @@ async fn app_startup() -> std::io::Result<(Cache, Option<PathBuf>, PathBuf)> {
             init_subscriber(Path::new("")).unwrap();
         }
     }
-    let server_cache = build_cache().await.map_err(std::io::Error::other)?;
-    if let Some(ref dir) = local_env_dir {
+    let cache_file = build_cache(None).await.map_err(std::io::Error::other)?;
+    if let Some(ref dir) = local_dir {
         match std::fs::File::create(dir.join(CACHED_DATA)) {
             Ok(file) => {
-                let data = CacheFile {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    created: std::time::SystemTime::now(),
-                    cache: server_cache,
-                };
-                if let Err(err) = serde_json::to_writer_pretty(file, &data) {
+                if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
                     error!("{err}")
                 }
-                return Ok((
-                    Cache::from(data.cache, data.created),
-                    local_env_dir,
+                return Ok(StartupData {
+                    read: ReadCache {
+                        cache: Cache::from(cache_file.cache, cache_file.created),
+                        connection_history: cache_file.connection_history,
+                    },
                     exe_dir,
-                ));
+                    local_dir,
+                });
             }
             Err(err) => error!("{err}"),
         }
     }
-    Ok((
-        Cache::from(server_cache, std::time::SystemTime::now()),
-        local_env_dir,
+    Ok(StartupData {
+        read: ReadCache {
+            cache: Cache::from(cache_file.cache, std::time::SystemTime::now()),
+            connection_history: Vec::new(),
+        },
         exe_dir,
-    ))
+        local_dir,
+    })
 }

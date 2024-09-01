@@ -1,5 +1,8 @@
 use crate::{
-    commands::filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
+    commands::{
+        filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
+        launch_h2m::HostName,
+    },
     does_dir_contain, new_io_error,
     utils::json_data::{CacheFile, ServerCache, ServerInfo},
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
@@ -13,6 +16,11 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tracing::{error, info, instrument, trace};
+
+pub struct ReadCache {
+    pub cache: Cache,
+    pub connection_history: Vec<HostName>,
+}
 
 #[derive(Debug)]
 pub struct Cache {
@@ -98,7 +106,7 @@ impl ServerInfo {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
+pub async fn build_cache(connection_history: Option<&[HostName]>) -> reqwest::Result<CacheFile> {
     let host_list = get_server_master().await?;
     let client = reqwest::Client::new();
     let mut tasks = Vec::new();
@@ -134,22 +142,27 @@ pub async fn build_cache() -> reqwest::Result<Vec<ServerCache>> {
         }
     }
 
-    let mut collection = Vec::new();
+    let mut cache = Vec::new();
     for task in tasks {
         match task.await {
             Ok(result) => match result {
-                Ok(cache) => collection.push(cache),
+                Ok(server) => cache.push(server),
                 Err(err) => error!(name: LOG_ONLY, "{err:?}"),
             },
             Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
     trace!("Fetched regions for all H2M servers");
-    Ok(collection)
+    Ok(CacheFile {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        created: std::time::SystemTime::now(),
+        connection_history: connection_history.map(|v| v.to_vec()).unwrap_or_default(),
+        cache,
+    })
 }
 
 #[instrument(level = "trace", skip_all)]
-pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
+pub fn read_cache(local_env_dir: &Path) -> io::Result<ReadCache> {
     match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
         Ok(OperationResult::Bool(true)) => {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
@@ -167,7 +180,10 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
                 _ => (),
             }
             trace!("Cache read from file");
-            Ok(Cache::from(data.cache, data.created))
+            Ok(ReadCache {
+                cache: Cache::from(data.cache, data.created),
+                connection_history: data.connection_history,
+            })
         }
         Ok(OperationResult::Bool(false)) => {
             new_io_error!(io::ErrorKind::NotFound, format!("{CACHED_DATA} not found"))
@@ -179,20 +195,24 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<Cache> {
 
 #[instrument(skip_all)]
 pub async fn update_cache(
+    connection_history: Arc<Mutex<Vec<HostName>>>,
     server_cache: Arc<Mutex<Cache>>,
     local_env_dir: Option<Arc<PathBuf>>,
 ) -> io::Result<()> {
     let Some(ref local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
-    let cache = server_cache.lock().await;
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
-    let data = CacheFile {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        created: cache.created,
-        cache: cache.servers.clone(),
+    let data = {
+        let cache = server_cache.lock().await;
+        let connection_history = connection_history.lock().await;
+        CacheFile {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            created: cache.created,
+            cache: cache.servers.clone(),
+            connection_history: connection_history.iter().rev().take(6).cloned().collect(),
+        }
     };
-    drop(cache);
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
     info!("Cache updated locally");
     Ok(())
