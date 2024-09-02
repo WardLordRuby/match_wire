@@ -51,18 +51,17 @@ The filter command with no added arguments will give you the top 100 most popula
 
 Examples:
      
-   ```
-   filter --team-size-max 6 --exclude trick shot 
-   ```
-   This query will filter all H2M servers to only include servers with a max team size of 6 and exclude all servers with trick or shot in their title.
-   ```
-   filter --region na --player-min 2
-   ```
-   This query will filter all H2M servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered results to your favorites.json.
+  ```
+  filter --team-size-max 6 --exclude trick shot 
+  ```
+  This query will filter all H2M servers to only include servers with a max team size of 6 and exclude all servers with trick or shot in their title.
+  ```
+  filter --region na --player-min 2
+  ```
+  This query will filter all H2M servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered results to your favorites.json.
 
 #### Tips:
-- After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list  
-  (bottom right of the H2M server browser)
+- After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list (bottom right of the H2M server browser)
 - Argmuents can be shortened to a single character for example `--includes` can be shortened to `-i`
 - To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
@@ -73,11 +72,11 @@ By default the reconnect command will connect you to the most recently connected
 
 Arguments:  
 
-```
-reconnect --history
-```
-This will display a numbered list of recently connected servers, 1 being most recent.  
-```
-reconnect --connect <NUM>
-```
-Using reconnect with the connect argument or `-c` for short will connect you back to the specified entry in your history.  
+  ```
+  reconnect --history
+  ```
+  This will display a numbered list of recently connected servers, 1 being most recent.  
+  ```
+  reconnect --connect <NUM>
+  ```
+  Using reconnect with the connect argument or `-c` for short will connect you back to the specified entry in your history.  
