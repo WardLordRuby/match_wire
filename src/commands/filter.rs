@@ -70,7 +70,7 @@ pub async fn get_server_master() -> reqwest::Result<Vec<HostData>> {
         .await
 }
 
-#[instrument(name = "filter", skip_all)]
+#[instrument(name = "filter", level = "trace", skip_all)]
 pub async fn build_favorites(
     curr_dir: Arc<PathBuf>,
     args: &Filters,

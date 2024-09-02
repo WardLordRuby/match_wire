@@ -70,7 +70,9 @@ impl<'a> LineReader<'a> {
         pos / self.term_size.0
     }
 
-    fn move_to_beginning(&mut self, from: u16) -> io::Result<()> {
+    // MARK: TODO
+    // why don't we always want to move from curr_col_len to beginning?
+    pub fn move_to_beginning(&mut self, from: u16) -> io::Result<()> {
         let move_up = self.line_height(from.saturating_sub(1));
         self.term
             .queue(cursor::MoveToColumn(0))?
@@ -93,7 +95,7 @@ impl<'a> LineReader<'a> {
         Ok(())
     }
 
-    fn get_curr_len(&self) -> u16 {
+    pub fn get_curr_len(&self) -> u16 {
         (self.prompt.chars().count() as u16).saturating_add(self.line.chars().count() as u16)
     }
 

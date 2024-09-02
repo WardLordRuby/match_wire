@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use std::{ffi::OsString, fmt::Display};
+use tokio::sync::RwLock;
 use tracing::error;
 use winptyrs::PTY;
 
@@ -39,11 +40,11 @@ impl Display for DisplayHistoryErr {
 }
 
 pub async fn reconnect<'a>(args: HistoryArgs, context: &mut CommandContext<'a>) -> CommandHandle {
-    let h2m_handle_arc = context.h2m_handle();
-    if h2m_handle_arc.is_none() {
-        error!("Use the 'launch' command to open H2M-Mod");
+    if let Err(err) = context.check_h2m_connection().await {
+        error!("{err}");
         return CommandHandle::default();
     }
+    let lock = context.pty_handle().unwrap();
     let server_history_arc = context.h2m_server_connection_history();
     let server_history = server_history_arc.lock().await;
     if server_history.is_empty() {
@@ -58,24 +59,22 @@ pub async fn reconnect<'a>(args: HistoryArgs, context: &mut CommandContext<'a>) 
     let cache_arc = context.cache();
     let cache = cache_arc.lock().await;
     let connect = if let Some(num) = args.connect {
-        if num > history_len {
+        if num as usize > history_len {
             error!("{}", DisplayHistoryErr(history_len));
             return CommandHandle::default();
         }
         cache
             .host_to_connect
-            .get(&server_history[history_len - num].raw)
+            .get(&server_history[history_len - num as usize].raw)
     } else {
         cache
             .host_to_connect
             .get(&server_history.last().unwrap().raw)
     };
     if let Some(ip_port) = connect {
-        if let Err(err) = context.check_h2m_connection() {
-            error!("{err}");
-            return CommandHandle::default();
-        }
-        connect_to(ip_port, &h2m_handle_arc.unwrap()).unwrap_or_else(|err| error!("{err}"));
+        connect_to(ip_port, &lock)
+            .await
+            .unwrap_or_else(|err| error!("{err}"));
     } else {
         error!("Could not find server in cache")
     }
@@ -83,20 +82,20 @@ pub async fn reconnect<'a>(args: HistoryArgs, context: &mut CommandContext<'a>) 
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
-fn connect_to(ip_port: &str, handle: &PTY) -> Result<(), String> {
-    let send_command =
-        |command: &dyn AsRef<str>| match handle.write(OsString::from(command.as_ref())) {
-            Ok(chars) => {
-                if chars == 0 {
-                    Err(String::from("Failed to send command to h2m console"))
-                } else {
-                    Ok(())
-                }
+async fn connect_to(ip_port: &str, lock: &RwLock<PTY>) -> Result<(), String> {
+    let handle = lock.read().await;
+    let send_command = |command: &str| match handle.write(OsString::from(command)) {
+        Ok(chars) => {
+            if chars == 0 {
+                Err(String::from("Failed to send command to h2m console"))
+            } else {
+                Ok(())
             }
-            Err(err) => Err(err.to_string_lossy().to_string()),
-        };
+        }
+        Err(err) => Err(err.to_string_lossy().to_string()),
+    };
 
-    send_command(&"disconnect\r\n")?;
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    send_command("disconnect\r\n")?;
+    std::thread::sleep(std::time::Duration::from_millis(10));
     send_command(&format!("connect {ip_port}\r\n"))
 }

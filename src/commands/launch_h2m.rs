@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsString},
     os::windows::ffi::{OsStrExt, OsStringExt},
-    path::Path,
     sync::atomic::Ordering,
 };
 use tracing::error;
@@ -46,23 +45,35 @@ fn strip_ansi_codes(input: &str) -> String {
         .to_string()
 }
 
-pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
-    if context.check_h2m_connection().is_ok() {
-        error!("H2M connection still active, can not initalize new listener");
+fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16]) {
+    let host_name = HostName::from(wide_encode);
+    if let Some(index) = history.iter().position(|prev| prev.raw == host_name.raw) {
+        let history_last = history.len() - 1;
+        if index != history_last {
+            history.swap(index, history_last);
+        }
+    } else {
+        history.push(host_name);
+    }
+}
+
+pub async fn initalize_listener<'a>(context: &mut CommandContext<'a>) {
+    if let Err(err) = context.check_h2m_connection().await {
+        error!("{err}");
         return;
     }
 
-    // Before modifying context be sure to guard against already active connections by checking `.check_h2m_connection().is_err()`
-    context.set_listener(handle);
-
     let h2m_console_history = context.h2m_console_history();
     let h2m_server_connection_history = context.h2m_server_connection_history();
-    let listening = context.connected_to_pseudoterminal();
-    let handle = context.h2m_handle().unwrap();
+    let cache_needs_update = context.cache_needs_update();
+    let lock = context.pty_handle().unwrap();
 
+    // MARK: IMPROVE
+    // speed up the time it takes to read in commands | maybe use channels?
     tokio::spawn(async move {
         let mut buffer = OsString::new();
 
+        let handle = lock.read().await;
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         while let Ok(true) = handle.is_alive() {
             tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
@@ -78,9 +89,6 @@ pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
                         if byte == NEW_LINE {
                             continue;
                         }
-                        // MARK: DEBUG
-                        // make sure we properly parse each line and remove color code
-                        // create tests for this
                         if byte == CARRIAGE_RETURN {
                             if wide_encode.peek().is_some() {
                                 wide_encode.next();
@@ -93,7 +101,8 @@ pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
                                 {
                                     let mut connection_history =
                                         h2m_server_connection_history.lock().await;
-                                    connection_history.push(HostName::from(&wide_encode_buf[..]));
+                                    add_to_history(&mut connection_history, &wide_encode_buf[..]);
+                                    cache_needs_update.store(true, Ordering::Relaxed);
                                 }
                                 console_history.push(String::from_utf16_lossy(&wide_encode_buf));
                                 wide_encode_buf.clear();
@@ -107,11 +116,12 @@ pub fn initalize_listener(handle: PTY, context: &mut CommandContext) {
                 Err(err) => error!("{err:?}"),
             }
         }
-        listening.store(false, Ordering::SeqCst)
     });
 }
 
-pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<PTY, String> {
+pub async fn launch_h2m_pseudo<'a>(context: &mut CommandContext<'a>) -> Result<(), String> {
+    // MARK: FIXME
+    // can we figure out a way to never inherit pseudo process name
     if h2m_running() {
         return Err(String::from(
             "Close H2M and relaunch using 'launch' command",
@@ -126,12 +136,15 @@ pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<PTY, String> {
         agent_config: AgentConfig::WINPTY_FLAG_PLAIN_OUTPUT,
     };
 
-    // MARK: FIX
+    // MARK: FIXME
     // why does the pseudo terminal spawn with no cols or rows
 
-    // MARK: TEST
-    // test with both backends so we can support versions < win10-f1809
-    let mut conpty = PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap();
+    context.init_pty(PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap());
+
+    let exe_dir = context.exe_dir();
+    let lock = context.pty_handle().unwrap();
+    let mut conpty = lock.write().await;
+
     if conpty
         .spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None)
         .is_err()
@@ -141,7 +154,7 @@ pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<PTY, String> {
             .map_err(|err| err.to_string_lossy().to_string())?;
     }
 
-    Ok(conpty)
+    Ok(())
 }
 
 fn h2m_running() -> bool {
@@ -184,10 +197,10 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     // Check if the window class name indicates it is the console window or game window
     // game class = "H1"
     // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
-    if class_name_str == "ConsoleWindowClass"
-        || class_name_str == "CASCADIA_HOSTING_WINDOW_CLASS"
-        || class_name_str == "H1"
-    {
+    // MARK: NOTE
+    // temp fix, to get around our process being picked up as the game process
+    // would like to add the console window types back in
+    if class_name_str == "H1" {
         let result = &mut *(lparam as *mut bool);
         *result = true;
         return 0; // Break

@@ -18,7 +18,7 @@ pub struct UserCommand {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Create a new favorites.json using various filter options
-    /// {n}Using no arguments will take the top 100 servers with highest playercounts
+    /// {n}  Using no arguments will take the top 100 servers with highest playercounts
     #[command(alias = "Filter")]
     Filter {
         #[command(flatten)]
@@ -36,8 +36,8 @@ pub enum Command {
     #[command(alias = "Launch")]
     Launch,
 
-    /// Clear and rebuild server_list cache
-    /// {n}Try this if 'reconnect' is returning: "Could not find server in cache"
+    /// Clear and rebuild the internal server cache list
+    /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
     #[command(aliases(["Reset", "update", "Update"]))]
     UpdateCache,
 
@@ -66,8 +66,8 @@ pub struct HistoryArgs {
     pub history: bool,
 
     /// Connect to numbered entry in history
-    #[arg(short, long, value_parser = value_parser!(u32).range(1..=HISTORY_MAX))]
-    pub connect: Option<usize>,
+    #[arg(short, long, value_parser = value_parser!(u8).range(1..=HISTORY_MAX))]
+    pub connect: Option<u8>,
 }
 
 #[derive(Args, Debug, Clone, Default)]

@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, UserCommand};
 use commands::{
     handler::{try_execute_command, CommandContextBuilder},
-    launch_h2m::{initalize_listener, launch_h2m_pseudo, HostName},
+    launch_h2m::{initalize_listener, launch_h2m_pseudo},
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
@@ -17,7 +17,6 @@ use tracing::{error, info, instrument};
 use utils::{
     caching::{build_cache, read_cache, update_cache, Cache, ReadCache},
     input_line::*,
-    json_data::CacheFile,
     subscriber::init_subscriber,
 };
 
@@ -113,18 +112,19 @@ fn main() {
             }
         });
 
-        let h2m_console_handle = launch_h2m_pseudo(&command_context.exe_dir()).map(Some).unwrap_or_else(|err| {
+        launch_h2m_pseudo(&mut command_context).await.map(Some).unwrap_or_else(|err| {
             error!("{err}");
             None
         });
 
-        if let Some(handle) = h2m_console_handle {
-            initalize_listener(handle, &mut command_context);
+        if command_context.pty_handle().is_some() {
+            initalize_listener(&mut command_context).await;
         }
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
         UserCommand::command().print_help().expect("Failed to print help");
+        println!();
 
         execute!(term, cursor::Show).unwrap();
 
@@ -143,7 +143,12 @@ fn main() {
             let event = reader.next();
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
-                    update_cache(command_context.h2m_server_connection_history(), command_context.cache(), command_context.local_dir()).await.unwrap_or_else(|err| error!("{err}"));
+                    update_cache(
+                        command_context.h2m_server_connection_history(),
+                        command_context.cache(),
+                        command_context.local_dir(),
+                        &mut line_handle
+                    ).await.unwrap_or_else(|err| error!("{err}"));
                     continue;
                 }
                 _ = close_listener.recv() => {
@@ -158,16 +163,6 @@ fn main() {
                                 Ok(EventLoop::Continue) => continue,
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
-                                    if line_handle.history.last() == "dbg" {
-                                        let history_arc = command_context.h2m_console_history();
-                                        let history = history_arc.lock().await;
-                                        dbg!(&history);
-                                        let servers_arc = command_context.h2m_server_connection_history();
-                                        let servers = servers_arc.lock().await;
-                                        dbg!(&servers);
-                                        dbg!(command_context.check_h2m_connection());
-                                        continue;
-                                    }
                                     let command_handle = match shellwords::split(line_handle.history.last()) {
                                         Ok(user_args) => try_execute_command(user_args, &mut command_context).await,
                                         Err(err) => {
@@ -201,9 +196,13 @@ fn main() {
                 }
             }
         }
-
         if command_context.cache_needs_update().load(Ordering::SeqCst) {
-            update_cache(command_context.h2m_server_connection_history(), command_context.cache(), command_context.local_dir()).await.unwrap_or_else(|err| error!("{err}"));
+            update_cache(
+                command_context.h2m_server_connection_history(),
+                command_context.cache(),
+                command_context.local_dir(),
+                &mut line_handle
+        ).await.unwrap_or_else(|err| error!("{err}"));
         }
         info!(name: LOG_ONLY, "app shutdown");
         terminal::disable_raw_mode().unwrap();
@@ -216,7 +215,7 @@ struct StartupData {
     local_dir: Option<PathBuf>,
 }
 
-#[instrument(skip_all)]
+#[instrument(level = "trace", skip_all)]
 async fn app_startup() -> std::io::Result<StartupData> {
     let exe_dir = std::env::current_dir()
         .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
@@ -248,6 +247,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
     }
 
     let mut local_dir = None;
+    let mut connection_history = None;
     if let Some(path) = std::env::var_os(LOCAL_DATA) {
         let mut dir = PathBuf::from(path);
 
@@ -265,7 +265,10 @@ async fn app_startup() -> std::io::Result<StartupData> {
                         local_dir,
                     })
                 }
-                Err(err) => info!("{err}"),
+                Err(err) => {
+                    info!("{err}");
+                    connection_history = err.connection_history;
+                }
             }
         }
     } else {
@@ -274,7 +277,9 @@ async fn app_startup() -> std::io::Result<StartupData> {
             init_subscriber(Path::new("")).unwrap();
         }
     }
-    let cache_file = build_cache(None).await.map_err(std::io::Error::other)?;
+    let cache_file = build_cache(connection_history.as_deref())
+        .await
+        .map_err(std::io::Error::other)?;
     if let Some(ref dir) = local_dir {
         match std::fs::File::create(dir.join(CACHED_DATA)) {
             Ok(file) => {

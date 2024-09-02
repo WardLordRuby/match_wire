@@ -2,13 +2,18 @@ use crate::{
     commands::{
         filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
         launch_h2m::HostName,
+        reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
-    utils::json_data::{CacheFile, ServerCache, ServerInfo},
+    utils::{
+        input_line::LineReader,
+        json_data::{CacheFile, ServerCache, ServerInfo},
+    },
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use std::{
     collections::HashMap,
+    fmt::Display,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -161,22 +166,62 @@ pub async fn build_cache(connection_history: Option<&[HostName]>) -> reqwest::Re
     })
 }
 
+pub struct ReadCacheErr {
+    pub err: io::Error,
+    pub connection_history: Option<Vec<HostName>>,
+}
+
+impl From<io::Error> for ReadCacheErr {
+    fn from(value: io::Error) -> Self {
+        ReadCacheErr {
+            err: value,
+            connection_history: None,
+        }
+    }
+}
+
+impl From<serde_json::Error> for ReadCacheErr {
+    fn from(value: serde_json::Error) -> Self {
+        ReadCacheErr {
+            err: io::Error::other(value.to_string()),
+            connection_history: None,
+        }
+    }
+}
+
+impl Display for ReadCacheErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.err)
+    }
+}
+
 #[instrument(level = "trace", skip_all)]
-pub fn read_cache(local_env_dir: &Path) -> io::Result<ReadCache> {
+pub fn read_cache(local_env_dir: &Path) -> Result<ReadCache, ReadCacheErr> {
     match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
         Ok(OperationResult::Bool(true)) => {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
             let reader = io::BufReader::new(file);
             let data = serde_json::from_reader::<_, CacheFile>(reader)?;
             if data.version != env!("CARGO_PKG_VERSION") {
-                return new_io_error!(io::ErrorKind::InvalidData, "version mismatch");
+                return Err(ReadCacheErr {
+                    err: io::Error::new(io::ErrorKind::InvalidData, "version mismatch"),
+                    connection_history: Some(data.connection_history),
+                });
             }
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(data.created) {
                 Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
-                    return new_io_error!(io::ErrorKind::InvalidData, "cache is too old")
+                    return Err(ReadCacheErr {
+                        err: io::Error::new(io::ErrorKind::InvalidData, "cache is too old"),
+                        connection_history: Some(data.connection_history),
+                    })
                 }
-                Err(err) => return new_io_error!(io::ErrorKind::Other, err),
+                Err(err) => {
+                    return Err(ReadCacheErr {
+                        err: io::Error::other(err),
+                        connection_history: Some(data.connection_history),
+                    })
+                }
                 _ => (),
             }
             trace!("Cache read from file");
@@ -186,18 +231,19 @@ pub fn read_cache(local_env_dir: &Path) -> io::Result<ReadCache> {
             })
         }
         Ok(OperationResult::Bool(false)) => {
-            new_io_error!(io::ErrorKind::NotFound, format!("{CACHED_DATA} not found"))
+            Err(io::Error::new(io::ErrorKind::NotFound, format!("{CACHED_DATA} not found")).into())
         }
-        Err(err) => Err(err),
+        Err(err) => Err(err.into()),
         _ => unreachable!(),
     }
 }
 
-#[instrument(skip_all)]
-pub async fn update_cache(
+#[instrument(level = "trace", skip_all)]
+pub async fn update_cache<'a>(
     connection_history: Arc<Mutex<Vec<HostName>>>,
     server_cache: Arc<Mutex<Cache>>,
     local_env_dir: Option<Arc<PathBuf>>,
+    line_handle: &mut LineReader<'a>,
 ) -> io::Result<()> {
     let Some(ref local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
@@ -210,10 +256,18 @@ pub async fn update_cache(
             version: env!("CARGO_PKG_VERSION").to_string(),
             created: cache.created,
             cache: cache.servers.clone(),
-            connection_history: connection_history.iter().rev().take(6).cloned().collect(),
+            connection_history: connection_history
+                .iter()
+                .rev()
+                .take(HISTORY_MAX as usize)
+                .cloned()
+                .collect(),
         }
     };
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
+    line_handle
+        .move_to_beginning(line_handle.get_curr_len())
+        .unwrap();
     info!("Cache updated locally");
     Ok(())
 }

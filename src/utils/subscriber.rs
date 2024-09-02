@@ -67,6 +67,17 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
 
     let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != crate::LOG_ONLY);
 
+    // let custom_writer = || -> std::io::Stdout {
+    //     use crossterm::{
+    //         cursor, execute,
+    //         terminal::{Clear, ClearType::CurrentLine},
+    //     };
+    //     let mut stdout = std::io::stdout();
+    //     execute!(stdout, Clear(CurrentLine)).unwrap(); // cursor::MoveToColumn(0),
+
+    //     stdout
+    // };
+
     let stdout_layer = fmt::layer()
         .with_target(false)
         .without_time()

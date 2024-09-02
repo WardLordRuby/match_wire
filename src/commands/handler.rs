@@ -6,7 +6,7 @@ use crate::{
         reconnect::reconnect,
     },
     utils::caching::{build_cache, Cache},
-    CACHED_DATA,
+    CACHED_DATA, LOG_ONLY,
 };
 use clap::Parser;
 use std::{
@@ -17,7 +17,11 @@ use std::{
         Arc,
     },
 };
-use tokio::{runtime, sync::Mutex, task::JoinHandle};
+use tokio::{
+    runtime,
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+};
 use tracing::error;
 use winptyrs::PTY;
 
@@ -26,10 +30,9 @@ pub struct CommandContext<'a> {
     exe_dir: Arc<PathBuf>,
     cache_needs_update: Arc<AtomicBool>,
     command_runtime: &'a runtime::Handle,
-    connected_to_pseudoterminal: Arc<AtomicBool>,
     h2m_console_history: Arc<Mutex<Vec<String>>>,
     h2m_server_connection_history: Arc<Mutex<Vec<HostName>>>,
-    h2m_handle: Option<Arc<PTY>>,
+    pty_handle: Option<Arc<RwLock<PTY>>>,
     command_entered: bool,
     local_dir: Option<Arc<PathBuf>>,
 }
@@ -47,15 +50,23 @@ impl<'a> CommandContext<'a> {
     pub fn command_runtime(&self) -> &runtime::Handle {
         self.command_runtime
     }
-    pub fn check_h2m_connection(&mut self) -> Result<(), &'static str> {
-        if !self.connected_to_pseudoterminal.load(Ordering::Relaxed) {
-            self.h2m_disconnected();
-            return Err("H2M connection closed, restart H2M using the 'launch' command");
+    pub async fn check_h2m_connection(&mut self) -> Result<(), &'static str> {
+        let mut is_err = false;
+        if let Some(ref lock) = self.pty_handle {
+            let handle = lock.read().await;
+            match handle.is_alive() {
+                Ok(true) => return Ok(()),
+                Ok(false) => (),
+                Err(err) => {
+                    error!(name: LOG_ONLY, "{}", err.to_string_lossy());
+                    is_err = true;
+                }
+            }
         }
-        Ok(())
-    }
-    pub fn connected_to_pseudoterminal(&self) -> Arc<AtomicBool> {
-        self.connected_to_pseudoterminal.clone()
+        if is_err {
+            self.pty_handle = None;
+        }
+        Err("No connection to H2M is active, use 'launch' command to start H2M")
     }
     pub fn local_dir(&self) -> Option<Arc<PathBuf>> {
         self.local_dir.as_ref().map(Arc::clone)
@@ -69,17 +80,12 @@ impl<'a> CommandContext<'a> {
     pub fn h2m_server_connection_history(&self) -> Arc<Mutex<Vec<HostName>>> {
         self.h2m_server_connection_history.clone()
     }
-    pub fn h2m_handle(&self) -> Option<Arc<PTY>> {
-        self.h2m_handle.as_ref().map(Arc::clone)
+    pub fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
+        self.pty_handle.clone()
     }
-    pub fn h2m_disconnected(&mut self) {
-        self.h2m_handle = None
-    }
-    /// NOTE: Only intended to be called by `initalize_listener(..)`
-    pub fn set_listener(&mut self, handle: PTY) {
-        self.connected_to_pseudoterminal
-            .store(true, Ordering::SeqCst);
-        self.h2m_handle = Some(Arc::new(handle))
+    /// NOTE: Only intended to be called by `launch_h2m_pseudo(..)`
+    pub fn init_pty(&mut self, pty: PTY) {
+        self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
     pub fn was_command_entered(&self) -> bool {
         self.command_entered
@@ -141,9 +147,8 @@ impl<'a> CommandContextBuilder<'a> {
                 .unwrap_or_else(|| Arc::new(Mutex::new(Vec::new()))),
             cache_needs_update: Arc::new(AtomicBool::new(false)),
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
-            connected_to_pseudoterminal: Arc::new(AtomicBool::new(false)),
             local_dir: self.local_dir,
-            h2m_handle: None,
+            pty_handle: None,
             command_entered: false,
         })
     }
@@ -182,7 +187,7 @@ pub async fn try_execute_command<'a>(
         Ok(cli) => match cli.command {
             Command::Filter { args } => new_favorites_with(args, context),
             Command::Reconnect { args } => reconnect(args, context).await,
-            Command::Launch => launch_handler(context),
+            Command::Launch => launch_handler(context).await,
             Command::UpdateCache => reset_cache(context).await,
             Command::DisplayLogs => h2m_console_history(&context.h2m_console_history()).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
@@ -247,9 +252,9 @@ async fn reset_cache<'a>(context: &CommandContext<'a>) -> CommandHandle {
     CommandHandle::default()
 }
 
-fn launch_handler(context: &mut CommandContext) -> CommandHandle {
-    match launch_h2m_pseudo(&context.exe_dir) {
-        Ok(handle) => initalize_listener(handle, context),
+async fn launch_handler<'a>(context: &mut CommandContext<'a>) -> CommandHandle {
+    match launch_h2m_pseudo(context).await {
+        Ok(_) => initalize_listener(context).await,
         Err(err) => error!("{err}"),
     }
     CommandHandle::default()
