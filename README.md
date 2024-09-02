@@ -57,6 +57,9 @@ Examples:
 - Arguments can be shortened to a single character for example `--includes` can be shortened to `-i`
 - To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
+## Launch options
+Launching h2m_favorites.exe from the command line and passing in the argument `-s` or `--single-thread` will force the app to run on a single thread. Note that I designed this app to have very low overhead, since the process must stay open while you are playing H2M. By default the app runs on a single thread but apon running a filter command that task will execute on a multi-thread runtime in order to produce a favorites.json as quickly as possible.
+
 ## Query help
 ![help][filter-help]
 
