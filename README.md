@@ -11,6 +11,7 @@
 [![GitHub License](https://img.shields.io/github/license/WardLordRuby/H2M_favorites?label=License&labelColor=%2323282e)](LICENSE)  
 
 H2M Favorites (name-change-pending) is a launcher that aims to provide quality of life improvements to the base H2M experience.  
+
 It provides a server scraper that supports writing your own queries of H2M servers running [IW4Admin][iw4m-server-master], and a reconnect command to connect you to your last joined server.  
 
 The server scraper fixes the H2M server browser! By limiting favorites.json to 100 entries you will no longer join random servers when trying to connect using the in game browser.
