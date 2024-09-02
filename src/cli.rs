@@ -1,9 +1,77 @@
-use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
-use clap::{value_parser, Parser, ValueEnum};
+use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
+use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Parser, Debug)]
+pub struct Cli {
+    /// Force app to run on a single thread
+    #[arg(short, long, action = ArgAction::SetTrue)]
+    pub single_thread: bool,
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-pub struct Cli {
+pub struct UserCommand {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Create a new favorites.json using various filter options
+    /// {n}  Using no arguments will take the top 100 servers with highest playercounts
+    #[command(alias = "Filter")]
+    Filter {
+        #[command(flatten)]
+        args: Option<Filters>,
+    },
+
+    /// Reconnect to last server joined
+    #[command(alias = "Reconnect")]
+    Reconnect {
+        #[clap(flatten)]
+        args: HistoryArgs,
+    },
+
+    /// Launch H2M-Mod
+    #[command(alias = "Launch")]
+    Launch,
+
+    /// Clear and rebuild the internal server cache list
+    /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
+    #[command(aliases(["Reset", "update", "Update"]))]
+    UpdateCache,
+
+    /// Print H2M console logs
+    #[command(aliases(["Display", "logs", "Logs"]))]
+    DisplayLogs,
+
+    /// Open MWR(2017) directory
+    #[command(aliases(["gamedir", "Gamedir", "GameDir"]))]
+    GameDir,
+
+    /// Quit the program
+    #[command(alias = "Quit")]
+    Quit,
+
+    /// Open the current local data directory
+    #[command(aliases(["localenv", "Localenv", "LocalEnv"]), hide = true)]
+    LocalEnv,
+}
+
+#[derive(Args, Debug)]
+#[group(multiple = false)]
+pub struct HistoryArgs {
+    /// Display previously connected servers
+    #[arg(short = 'H', long, action = ArgAction::SetTrue)]
+    pub history: bool,
+
+    /// Connect to numbered entry in history
+    #[arg(short, long, value_parser = value_parser!(u8).range(1..=HISTORY_MAX))]
+    pub connect: Option<u8>,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct Filters {
     /// Specify the maximum number of servers added to favorites.json
     /// {n}  [Note: current server-browser gets buggy after 100] [Default: 100]
     #[arg(short, long)]

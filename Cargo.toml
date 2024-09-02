@@ -1,16 +1,18 @@
 [package]
 name = "h2m_favorites"
-version = "0.2.9"
+version = "0.4.0"
 authors = ["WardLordRuby"]
 description = """
-A CLI Server Scraper that compiles a valid favorites.json for H2M-mod. Supports custom server queries
-By: WardLordRuby <@7thWardLord Discord>"""
+This launcher provides quality of life improvements to the base H2M experience. Provides a Server Scraper
+that creates a valid favorites.json, supporting custom server queries, making the in game server browser
+function as it was intended to. Adds functionality to easily reconnect to previously joined servers.
+Created by: WardLordRuby <@7thWardLord Discord>"""
 edition = "2021"
 
 [package.metadata.winresource]
 ProductName = "H2M Favorites"
-FileDescription = "H2M-mod server scraper"
-ProductVersion = "0.2.9"
+FileDescription = "H2M-mod launcher"
+ProductVersion = "0.4.0"
 
 [profile.release]
 strip = "debuginfo"
@@ -21,7 +23,16 @@ reqwest = { version = "0.12.7", features = ["blocking", "json"] }
 serde = { version = "1.0.209", features = ["derive"] }
 serde_json = "1.0.125"
 clap = { version = "4.5.16", features = ["derive"] }
-tokio = { version = "1.39.3", features = ["rt-multi-thread", "macros"]}
+tokio = { version = "1.40.0", features = ["full"]}
+tracing = { version = "0.1.40", features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-appender = "0.2.3"
+shellwords = "1.1.0"
+tokio-stream = "0.1.15"
+crossterm = { version = "0.28.1", features = ["event-stream"]}
+winpty-rs = "0.3.16"
+winapi = "0.3.9"
+regex = "1.10.6"
 
 [build-dependencies]
 winresource = "0.1.17"
