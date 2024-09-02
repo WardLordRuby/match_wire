@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[help-img]: https://i.imgur.com/vjiBSp1.png "query arguments"
-[step-2]: https://i.imgur.com/0ynEJ4e.png "open command prompt in MWR directory"
-[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.2.9/h2m_favorites.exe
+[filter-help]: https://i.imgur.com/13Ni21N.png "query arguments"
+[reconnect-help]: https://i.imgur.com/bKSbsBL.png "history arguments"
+[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.4.0/h2m_favorites.exe
 <div align="center">
     <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
 </div>
@@ -10,42 +10,54 @@
 [![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/H2M_favorites/total?label=Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
 [![GitHub License](https://img.shields.io/github/license/WardLordRuby/H2M_favorites?label=License&labelColor=%2323282e)](LICENSE)  
 
-A command line interface for writing your own queries of servers running [IW4Admin][iw4m-server-master]
+H2M Favorites (name-change-pending) is a launcher that aims to provide quality of life improvements to the base H2M experience.  
+It provides a server scraper that supports writing your own queries of H2M servers running [IW4Admin][iw4m-server-master], and a reconnect command to connect you to your last joined server.  
 
-This tool fixes the H2M server browser! It fixes that annoying bug where the browser connects you to a random server, by limiting the amount of servers listed in your favorites.json.
+The server scraper fixes the H2M server browser! By limiting favorites.json to 100 entries you will no longer join random servers when trying to connect using the in game browser.
+The launcher keeps track of the previous 6 joined servers allowing you to use the reconnect command to easily join back if you happen to not make it into the server during a map change.  
 
 ## Installation
 1. Download [h2m_favorites.exe][latest-dl]
 2. Place h2m_favorites.exe in your MWR(2017) game directory
 
 ## Usage
-Double clicking h2m_favorites.exe will compile your favorites list with the top 100 servers that have the highest player-counts.
+Launch h2m_favorites.exe once it is inside your game directory and it will automatically start H2M-Mod for you. The terminal window will provide you a place to enter commands.
 
-#### Custom queries:
-Filtering H2M servers is easy by adding your own arguments. We can do this with a few simple steps.
-1. Navagate to your installation of MWR(2017)
-2. Right click inside the folder (or shift right click) and select 'Open in Terminal'
-   
-   ![tutorial-1][step-2]
-4. In the terminal window we will be using an example query for deminstration pupropses  
-   Examples:
+### Commands  
+| Commands                     | Alias     | Description                                                                   |
+| ---------------------------- | --------- | ----------------------------------------------------------------------------- |
+| [filter](#query-help)        | Filter    | Create a new favorites.json using various filter options                      |
+| [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)               |
+| launch                       | Launch    | Launch H2M-Mod (reconnect only works if H2M is spawned by this app)           |
+| update-cache                 | Reset     | Force cache to reset (useful if reconnect can not find server name in cache)  |
+| display-logs                 | Logs      | Display H2M console output                                                    |
+| game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                     |
+| local-env                    | Localenv  | Opens the local environment directory (where logs and cache is saved)         |
+| quit                         | Quit      | Closes game and launcher                                                      |
+| help                         | -         | Displays a list of commands use: `<COMMAND> --help` for command usage options |
+
+### Custom queries:
+Filtering H2M servers is easy by adding your own arguments.  
+The filter command with no added arguments will give you the top 100 most populated servers  
+
+Examples:
      
-   WindowsPowerShell:  
    ```
-   .\h2m_favorites.exe --region na --player-min 2
+   filter --team-size-max 6 --exclude trick shot 
    ```
-   Cmd:
+   This query will filter all H2M servers to only include servers with a max team size of 6 and exclude all servers with trick or shot in their title.
    ```
-   h2m_favorites.exe --region na --player-min 2
+   filter --region na --player-min 2
    ```
    This query will filter all H2M servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered results to your favorites.json.
 
 #### Tips:
-- For help with available filters you can run the command: `h2m_favorites.exe --help`
-- To add spaces to your search term surround it in quotations e.g. `h2m_favorites.exe -i "long search term"`
-- Commonly used queries can be automated by creating a new txt file and entering your desired query formatted for Cmd. Then save-as "your-custom-query.bat" and place inside your game directory.
+- A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
+- Arguments can be shortened to a single character for example `--includes` can be shortened to `-i`
+- To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
 ## Query help
-![help][help-img]
+![help][filter-help]
 
-
+## Reconnect help
+![help][reconnect-help]
