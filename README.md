@@ -35,7 +35,7 @@ Launch h2m_favorites.exe once it is inside your game directory and it will autom
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                     |
 | local-env                    | Localenv  | Opens the local environment directory (where logs and cache is saved)         |
 | quit                         | Quit      | Closes game and launcher                                                      |
-| help                         | -         | Displays a list of commands use: `<COMMAND> --help` for command usage options |
+| help                         | -         | Displays helpful information                                                  |
 
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
 
