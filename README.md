@@ -37,6 +37,17 @@ Launch h2m_favorites.exe once it is inside your game directory and it will autom
 | quit                         | Quit      | Closes game and launcher                                                      |
 | help                         | -         | Displays a list of commands use: `<COMMAND> --help` for command usage options |
 
+#### Tips:
+- A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
+- Arguments can be shortened to a single character for example `--includes` can be shortened to `-i`
+- To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
+
+## Launch options
+Launching h2m_favorites.exe from the command line and passing in the argument `-s` or `--single-thread` will force the app to run on a single thread. Note that I designed this app to have very low overhead, since the process must stay open while you are playing H2M. By default the app runs on a single thread but upon running a filter command that task will execute on a multi-thread runtime in order to produce a favorites.json as quickly as possible.
+
+## Query help
+![help][filter-help]
+
 ### Custom queries:
 Filtering H2M servers is easy by adding your own arguments.  
 The filter command with no added arguments will give you the top 100 most populated servers  
@@ -52,16 +63,18 @@ Examples:
    ```
    This query will filter all H2M servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered results to your favorites.json.
 
-#### Tips:
-- A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
-- Arguments can be shortened to a single character for example `--includes` can be shortened to `-i`
-- To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
-
-## Launch options
-Launching h2m_favorites.exe from the command line and passing in the argument `-s` or `--single-thread` will force the app to run on a single thread. Note that I designed this app to have very low overhead, since the process must stay open while you are playing H2M. By default the app runs on a single thread but apon running a filter command that task will execute on a multi-thread runtime in order to produce a favorites.json as quickly as possible.
-
-## Query help
-![help][filter-help]
-
 ## Reconnect help
 ![help][reconnect-help]
+
+By default the reconnect command will connect you to the most recently connected server.  
+
+Arguments:  
+
+```
+reconnect --history
+```
+This will display a numbered list of recently connected servers, 1 being most recent.  
+```
+reconnect --connect <NUM>
+```
+Using reconnect with the connect argument or `-c` for short will connect you back to the specified entry in your history.  
