@@ -265,6 +265,9 @@ pub async fn update_cache<'a>(
         }
     };
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
+    // MARK: FIXME
+    // find better way to get background tasks to print on their own line
+    // passing in the linehandle just for this is sad
     line_handle
         .move_to_beginning(line_handle.get_curr_len())
         .unwrap();

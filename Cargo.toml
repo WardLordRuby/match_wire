@@ -3,15 +3,15 @@ name = "h2m_favorites"
 version = "0.4.0"
 authors = ["WardLordRuby"]
 description = """
-A launcher that provides quality of life improvements to the base H2M experience. Provides a Server Scraper
-that compiles a valid favorites.json, supporting custom server queries, making the in game server browser
-fuction as it was intended to. Adds functionality to easily reconnect to previously joined servers.
+This launcher provides quality of life improvements to the base H2M experience. Provides a Server Scraper
+that creates a valid favorites.json, supporting custom server queries, making the in game server browser
+function as it was intended to. Adds functionality to easily reconnect to previously joined servers.
 Created by: WardLordRuby <@7thWardLord Discord>"""
 edition = "2021"
 
 [package.metadata.winresource]
 ProductName = "H2M Favorites"
-FileDescription = "H2M-mod server scraper"
+FileDescription = "H2M-mod launcher"
 ProductVersion = "0.4.0"
 
 [profile.release]

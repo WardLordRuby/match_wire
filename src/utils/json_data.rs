@@ -42,6 +42,7 @@ pub struct Continent {
 #[derive(Deserialize, Debug)]
 pub struct Version {
     pub latest: String,
+    pub message: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

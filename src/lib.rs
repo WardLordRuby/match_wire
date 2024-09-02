@@ -19,12 +19,13 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tracing::info;
 use utils::json_data::Version;
 
 pub const LOG_ONLY: &str = "log_only";
 
 pub const VERSION_URL: &str =
-    "https://gist.githubusercontent.com/WardLordRuby/324d7c1fb454aed5f5155a790bd028f0/raw/";
+    "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -59,11 +60,7 @@ pub async fn get_latest_version() -> reqwest::Result<()> {
         .json::<Version>()
         .await?;
     if current_version != version.latest {
-        println!(
-            "New version available for download at: \n\
-            https://github.com/WardLordRuby/H2M_favorites/releases/download/v{}/h2m_favorites.exe",
-            version.latest
-        )
+        info!("{}", version.message)
     }
     Ok(())
 }
