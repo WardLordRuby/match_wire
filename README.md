@@ -61,7 +61,8 @@ Examples:
    This query will filter all H2M servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered results to your favorites.json.
 
 #### Tips:
-- After running the filter command make sure to hit refresh in the bottom right of the H2M server browser
+- After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list  
+  (bottom right of the H2M server browser)
 - Argmuents can be shortened to a single character for example `--includes` can be shortened to `-i`
 - To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
