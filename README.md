@@ -45,8 +45,8 @@ Launching h2m_favorites.exe from the command line and passing in the argument `-
 ## Query help
 ![help][filter-help]
 
-### Custom queries:
-Filtering H2M servers is easy by adding your own arguments.  
+### Custom queries
+Filtering H2M servers is easy by adding your own arguments. Any combination of filters is valid  
 The filter command with no added arguments will give you the top 100 most populated servers  
 
 Examples:
