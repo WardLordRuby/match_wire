@@ -15,17 +15,12 @@ use crate::{
 use std::{
     collections::HashMap,
     fmt::Display,
-    io,
+    io::{self, ErrorKind},
     path::Path,
     time::{Duration, SystemTime},
 };
 
 use tracing::{error, info, instrument, trace};
-
-pub struct ReadCache {
-    pub cache: Cache,
-    pub connection_history: Vec<HostName>,
-}
 
 #[derive(Debug)]
 pub struct Cache {
@@ -166,9 +161,42 @@ pub async fn build_cache(connection_history: Option<&[HostName]>) -> reqwest::Re
     })
 }
 
+pub struct ReadCache {
+    pub cache: Cache,
+    pub connection_history: Vec<HostName>,
+}
+
+impl From<CacheFile> for ReadCache {
+    fn from(value: CacheFile) -> Self {
+        ReadCache {
+            cache: Cache::from(value.cache, value.created),
+            connection_history: value.connection_history,
+        }
+    }
+}
+
 pub struct ReadCacheErr {
     pub err: io::Error,
     pub connection_history: Option<Vec<HostName>>,
+}
+
+impl ReadCacheErr {
+    fn new(kind: ErrorKind, err: String) -> Self {
+        ReadCacheErr {
+            err: io::Error::new(kind, err),
+            connection_history: None,
+        }
+    }
+
+    fn with_history<E>(kind: ErrorKind, err: E, history: Vec<HostName>) -> Self
+    where
+        E: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        ReadCacheErr {
+            err: io::Error::new(kind, err),
+            connection_history: Some(history),
+        }
+    }
 }
 
 impl From<io::Error> for ReadCacheErr {
@@ -211,28 +239,28 @@ pub fn read_cache(local_env_dir: &Path) -> Result<ReadCache, ReadCacheErr> {
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(data.created) {
                 Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
-                    return Err(ReadCacheErr {
-                        err: io::Error::new(io::ErrorKind::InvalidData, "cache is too old"),
-                        connection_history: Some(data.connection_history),
-                    })
+                    return Err(ReadCacheErr::with_history(
+                        ErrorKind::InvalidData,
+                        "cache is too old",
+                        data.connection_history,
+                    ))
                 }
                 Err(err) => {
-                    return Err(ReadCacheErr {
-                        err: io::Error::other(err),
-                        connection_history: Some(data.connection_history),
-                    })
+                    return Err(ReadCacheErr::with_history(
+                        ErrorKind::Other,
+                        err,
+                        data.connection_history,
+                    ))
                 }
                 _ => (),
             }
             trace!("Cache read from file");
-            Ok(ReadCache {
-                cache: Cache::from(data.cache, data.created),
-                connection_history: data.connection_history,
-            })
+            Ok(ReadCache::from(data))
         }
-        Ok(OperationResult::Bool(false)) => {
-            Err(io::Error::new(io::ErrorKind::NotFound, format!("{CACHED_DATA} not found")).into())
-        }
+        Ok(OperationResult::Bool(false)) => Err(ReadCacheErr::new(
+            ErrorKind::NotFound,
+            format!("{CACHED_DATA} not found"),
+        )),
         Err(err) => Err(err.into()),
         _ => unreachable!(),
     }
@@ -257,12 +285,11 @@ pub async fn update_cache<'a>(
             version: env!("CARGO_PKG_VERSION").to_string(),
             created: cache.created,
             cache: cache.servers.clone(),
-            connection_history: connection_history
-                .iter()
-                .rev()
-                .take(HISTORY_MAX as usize)
-                .cloned()
-                .collect(),
+            connection_history: if connection_history.len() > HISTORY_MAX as usize {
+                connection_history[connection_history.len() - HISTORY_MAX as usize..].to_vec()
+            } else {
+                connection_history.clone()
+            },
         }
     };
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
