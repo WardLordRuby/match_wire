@@ -37,11 +37,17 @@ impl From<&[u16]> for HostName {
 }
 
 fn strip_ansi_codes(input: &str) -> String {
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
+    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
     re.replace_all(input, "")
         .trim_start()
         .trim_start_matches(JOIN_CHARS)
         .trim_end_matches('.')
+        .to_string()
+}
+
+fn strip_cursor_visibility_commands(input: &[u16]) -> String {
+    let re = regex::Regex::new(r"\[(\?25[hl])(\])?").unwrap();
+    re.replace_all(&String::from_utf16_lossy(input), "")
         .to_string()
 }
 
@@ -85,27 +91,24 @@ pub async fn initalize_listener<'a>(context: &mut CommandContext<'a>) {
                     }
                     buffer.push(os_string);
                     let mut wide_encode_buf = Vec::new();
-                    let mut wide_encode = buffer.encode_wide().peekable();
-                    while let Some(byte) = wide_encode.next() {
+                    for byte in buffer.encode_wide() {
                         if byte == NEW_LINE {
                             continue;
                         }
                         if byte == CARRIAGE_RETURN {
-                            if wide_encode.peek().is_some() {
-                                wide_encode.next();
-                            }
                             if !wide_encode_buf.is_empty() {
-                                let mut console_history = h2m_console_history.lock().await;
                                 if wide_encode_buf
                                     .windows(JOIN_BYTES.len())
                                     .any(|window| window == JOIN_BYTES)
                                 {
                                     let mut connection_history =
                                         h2m_server_connection_history.lock().await;
-                                    add_to_history(&mut connection_history, &wide_encode_buf[..]);
+                                    add_to_history(&mut connection_history, &wide_encode_buf);
                                     cache_needs_update.store(true, Ordering::Relaxed);
                                 }
-                                console_history.push(String::from_utf16_lossy(&wide_encode_buf));
+                                let mut console_history = h2m_console_history.lock().await;
+                                console_history
+                                    .push(strip_cursor_visibility_commands(&wide_encode_buf));
                                 wide_encode_buf.clear();
                             }
                             continue;
@@ -133,7 +136,7 @@ pub async fn launch_h2m_pseudo<'a>(context: &mut CommandContext<'a>) -> Result<(
         cols: 100,
         rows: 50,
         mouse_mode: MouseMode::WINPTY_MOUSE_MODE_NONE,
-        timeout: 10000,
+        timeout: 20000,
         agent_config: AgentConfig::WINPTY_FLAG_PLAIN_OUTPUT,
     };
 

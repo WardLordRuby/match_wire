@@ -173,11 +173,6 @@ impl<'a> LineReader<'a> {
                 Ok(EventLoop::Continue)
             }
             Event::Key(KeyEvent {
-                code: KeyCode::Esc,
-                kind: KeyEventKind::Press,
-                ..
-            }) => Ok(EventLoop::Break),
-            Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
                 kind: KeyEventKind::Press,
                 ..
