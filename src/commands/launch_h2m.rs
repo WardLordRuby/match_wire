@@ -64,7 +64,7 @@ fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16]) {
     }
 }
 
-pub async fn initalize_listener<'a>(context: &mut CommandContext<'a>) {
+pub async fn initalize_listener(context: &mut CommandContext) {
     if let Err(err) = context.check_h2m_connection().await {
         error!("{err}");
         return;
@@ -123,7 +123,7 @@ pub async fn initalize_listener<'a>(context: &mut CommandContext<'a>) {
     });
 }
 
-pub async fn launch_h2m_pseudo<'a>(context: &mut CommandContext<'a>) -> Result<(), String> {
+pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<(), String> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
     if h2m_running() {

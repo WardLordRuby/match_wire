@@ -268,7 +268,7 @@ pub fn read_cache(local_env_dir: &Path) -> Result<ReadCache, ReadCacheErr> {
 
 #[instrument(level = "trace", skip_all)]
 pub async fn update_cache<'a>(
-    context: &CommandContext<'a>,
+    context: &CommandContext,
     line_handle: &mut LineReader<'a>,
 ) -> io::Result<()> {
     let local_env_dir = context.local_dir();

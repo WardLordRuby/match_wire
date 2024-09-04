@@ -2,13 +2,6 @@ use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_S
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
-pub struct Cli {
-    /// Force app to run on a single thread
-    #[arg(short, long, action = ArgAction::SetTrue)]
-    pub single_thread: bool,
-}
-
-#[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct UserCommand {
     #[command(subcommand)]

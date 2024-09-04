@@ -75,7 +75,7 @@ impl Display for DisplayHistoryErr {
     }
 }
 
-pub async fn reconnect<'a>(args: HistoryArgs, context: &mut CommandContext<'a>) -> CommandHandle {
+pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> CommandHandle {
     let server_history_arc = context.h2m_server_connection_history();
     let mut server_history = server_history_arc.lock().await;
     if server_history.is_empty() {

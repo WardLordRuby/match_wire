@@ -1,5 +1,5 @@
-use clap::{CommandFactory, Parser};
-use cli::{Cli, UserCommand};
+use clap::CommandFactory;
+use cli::UserCommand;
 use commands::{
     handler::{try_execute_command, CommandContextBuilder},
     launch_h2m::{initalize_listener, launch_h2m_pseudo},
@@ -7,7 +7,6 @@ use commands::{
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
 use std::{
-    io::ErrorKind,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
 };
@@ -41,58 +40,24 @@ fn main() {
         .build()
         .expect("Failed to create single-threaded runtime");
 
-    let cli = Cli::parse();
-    let command_runtime = if cli.single_thread {
-        new_io_error!(
-            ErrorKind::PermissionDenied,
-            "User chose to run on a single thread"
-        )
-    } else {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-    };
-
-    let command_handle = command_runtime
-        .as_ref()
-        .map(|rt| rt.handle())
-        .unwrap_or_else(|err| {
-            if err.kind() != ErrorKind::PermissionDenied {
-                error!("{err}");
-            }
-            main_runtime.handle()
-        });
-
     main_runtime.block_on(async {
-        let app_startup = command_handle.spawn(async move {
-            app_startup().await
-        });
+        let startup_data = match app_startup().await {
+            Ok(data) => data,
+            Err(err) => {
+                eprintln!("{err}");
+                await_user_for_end().await;
+                return;
+            }
+        };
 
         get_latest_version()
             .await
             .unwrap_or_else(|err| error!("{err}"));
 
-        let startup_data = match app_startup.await {
-            Ok(startup_result) => match startup_result {
-                Ok(data) => data,
-                Err(err) => {
-                    eprintln!("{err}");
-                    await_user_for_end().await;
-                    return;
-                }
-            },
-            Err(err) => {
-                error!("{err}");
-                await_user_for_end().await;
-                return
-            }
-        };
-
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.read.cache)
             .exe_dir(startup_data.exe_dir)
             .h2m_server_connection_history(startup_data.read.connection_history)
-            .command_runtime(command_handle)
             .local_dir(startup_data.local_dir)
             .build()
             .unwrap();
@@ -220,12 +185,12 @@ async fn app_startup() -> std::io::Result<StartupData> {
         OperationResult::Count((_, files)) => {
             if !files.contains(REQUIRED_FILES[0]) {
                 return new_io_error!(
-                    ErrorKind::Other,
+                    std::io::ErrorKind::Other,
                     "Move h2m_favorites.exe into your 'Call of Duty Modern Warfare Remastered' directory"
                 );
             } else if !files.contains(REQUIRED_FILES[1]) {
                 return new_io_error!(
-                    ErrorKind::Other,
+                    std::io::ErrorKind::Other,
                     "H2M mod files not found, h2m_favorites.exe must be placed in 'Call of Duty Modern Warfare Remastered' directory"
                 );
             }

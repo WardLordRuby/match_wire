@@ -18,18 +18,16 @@ use std::{
     },
 };
 use tokio::{
-    runtime,
     sync::{Mutex, RwLock},
     task::JoinHandle,
 };
 use tracing::error;
 use winptyrs::PTY;
 
-pub struct CommandContext<'a> {
+pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
     exe_dir: Arc<PathBuf>,
     cache_needs_update: Arc<AtomicBool>,
-    command_runtime: &'a runtime::Handle,
     h2m_console_history: Arc<Mutex<Vec<String>>>,
     h2m_server_connection_history: Arc<Mutex<Vec<HostName>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
@@ -37,7 +35,7 @@ pub struct CommandContext<'a> {
     local_dir: Option<Arc<PathBuf>>,
 }
 
-impl<'a> CommandContext<'a> {
+impl CommandContext {
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
         self.cache.clone()
     }
@@ -46,9 +44,6 @@ impl<'a> CommandContext<'a> {
     }
     pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
         self.cache_needs_update.clone()
-    }
-    pub fn command_runtime(&self) -> &runtime::Handle {
-        self.command_runtime
     }
     pub async fn check_h2m_connection(&mut self) -> Result<(), &'static str> {
         let mut is_err = false;
@@ -99,15 +94,14 @@ impl<'a> CommandContext<'a> {
 }
 
 #[derive(Default)]
-pub struct CommandContextBuilder<'a> {
+pub struct CommandContextBuilder {
     cache: Option<Arc<Mutex<Cache>>>,
     exe_dir: Option<Arc<PathBuf>>,
-    command_runtime: Option<&'a runtime::Handle>,
     local_dir: Option<Arc<PathBuf>>,
     h2m_server_connection_history: Option<Arc<Mutex<Vec<HostName>>>>,
 }
 
-impl<'a> CommandContextBuilder<'a> {
+impl CommandContextBuilder {
     pub fn new() -> Self {
         CommandContextBuilder::default()
     }
@@ -118,10 +112,6 @@ impl<'a> CommandContextBuilder<'a> {
     }
     pub fn exe_dir(mut self, exe_dir: PathBuf) -> Self {
         self.exe_dir = Some(Arc::new(exe_dir));
-        self
-    }
-    pub fn command_runtime(mut self, command_runtime: &'a runtime::Handle) -> Self {
-        self.command_runtime = Some(command_runtime);
         self
     }
     pub fn local_dir(mut self, local_dir: Option<PathBuf>) -> Self {
@@ -137,11 +127,10 @@ impl<'a> CommandContextBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> Result<CommandContext<'a>, &'static str> {
+    pub fn build(self) -> Result<CommandContext, &'static str> {
         Ok(CommandContext {
             cache: self.cache.ok_or("cache is required")?,
             exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
-            command_runtime: self.command_runtime.ok_or("command_runtime is required")?,
             h2m_server_connection_history: self
                 .h2m_server_connection_history
                 .unwrap_or_else(|| Arc::new(Mutex::new(Vec::new()))),
@@ -176,9 +165,9 @@ impl CommandHandle {
     }
 }
 
-pub async fn try_execute_command<'a>(
+pub async fn try_execute_command(
     mut user_args: Vec<String>,
-    context: &mut CommandContext<'a>,
+    context: &mut CommandContext,
 ) -> CommandHandle {
     let mut input_tokens = vec![String::new()];
     input_tokens.append(&mut user_args);
@@ -207,7 +196,7 @@ fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> Comman
     let cache = context.cache();
     let exe_dir = context.exe_dir();
     let cache_needs_update = context.cache_needs_update();
-    let task_join = context.command_runtime.spawn(async move {
+    let task_join = tokio::spawn(async move {
         let result = build_favorites(exe_dir, &args.unwrap_or_default(), cache)
             .await
             .unwrap_or_else(|err| {
@@ -221,7 +210,7 @@ fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> Comman
     CommandHandle::with_handle(task_join)
 }
 
-async fn reset_cache<'a>(context: &CommandContext<'a>) -> CommandHandle {
+async fn reset_cache(context: &CommandContext) -> CommandHandle {
     let Some(ref local_dir) = context.local_dir else {
         error!("Can not create cache with out a valid save directory");
         return CommandHandle::default();
@@ -254,7 +243,7 @@ async fn reset_cache<'a>(context: &CommandContext<'a>) -> CommandHandle {
     CommandHandle::default()
 }
 
-async fn launch_handler<'a>(context: &mut CommandContext<'a>) -> CommandHandle {
+async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     match launch_h2m_pseudo(context).await {
         Ok(_) => initalize_listener(context).await,
         Err(err) => error!("{err}"),
