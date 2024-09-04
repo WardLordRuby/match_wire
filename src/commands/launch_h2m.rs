@@ -50,7 +50,8 @@ fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16]) {
     if let Some(index) = history.iter().position(|prev| prev.raw == host_name.raw) {
         let history_last = history.len() - 1;
         if index != history_last {
-            history.swap(index, history_last);
+            let entry = history.remove(index);
+            history.push(entry);
         }
     } else {
         history.push(host_name);
