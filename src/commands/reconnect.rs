@@ -13,43 +13,32 @@ use winptyrs::PTY;
 
 pub const HISTORY_MAX: i64 = 6;
 
-struct DisplayHistory<'a>(&'a [HostName], &'a [&'a str]);
+struct DisplayHistory<'a>(&'a [HostName], &'a [String]);
 
 impl<'a> Display for DisplayHistory<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        debug_assert!(self.0.len() >= self.1.len());
-        let longest_host_len = self
+        let mut longest_host_len = 0;
+        let mut longest_connect_len = 0;
+        let set = self
             .0
             .iter()
             .rev()
             .take(HISTORY_MAX as usize)
-            .map(|entry| entry.parsed.chars().count())
-            .max()
-            .unwrap_or_default();
-        let longest_connect_len = self
-            .1
-            .iter()
-            .rev()
-            .take(HISTORY_MAX as usize)
-            .map(|entry| entry.chars().count())
-            .max()
-            .unwrap_or_default();
-        let width = longest_connect_len + longest_host_len + 15;
-        let connect_len = self.1.len() - 1;
+            .enumerate()
+            .map(|(i, host)| {
+                let host_ip = self.1[i].as_str();
+                let name_len = host.parsed.chars().count();
+                let ip_len = host_ip.chars().count();
+                longest_host_len = longest_host_len.max(name_len);
+                longest_connect_len = longest_connect_len.max(ip_len);
+                (i + 1, host.parsed.as_str(), name_len, ip_len, host_ip)
+            })
+            .collect::<Vec<_>>();
+        let width = longest_connect_len + longest_host_len + 8;
         writeln!(f, "{}", "-".repeat(width))?;
-        for (i, host_name) in self.0.iter().rev().enumerate() {
-            let curr_ip = self.1[connect_len - i];
-            let spacing = width - 15 - host_name.parsed.chars().count() - curr_ip.chars().count();
-            writeln!(
-                f,
-                "| {}. {}{}connect {curr_ip} |",
-                i + 1,
-                host_name.parsed,
-                " ".repeat(spacing)
-            )?;
-            if i == HISTORY_MAX as usize - 1 {
-                break;
-            }
+        for (num, host_name, host_len, ip_len, ip) in set {
+            let spacing = width - 7 - host_len - ip_len;
+            writeln!(f, "| {num}.{host_name}{} {ip} |", " ".repeat(spacing))?;
         }
         writeln!(f, "{}", "-".repeat(width))?;
         Ok(())
@@ -58,19 +47,18 @@ impl<'a> Display for DisplayHistory<'a> {
 
 async fn display_history<'a>(history: &'a [HostName], cache: &'a Mutex<Cache>) {
     let cache = cache.lock().await;
-    let ips = history.iter().rev().fold(
-        Vec::with_capacity(HISTORY_MAX as usize),
-        |mut connections, entry| {
-            connections.push(
-                cache
-                    .host_to_connect
-                    .get(&entry.raw)
-                    .map(|ip| ip.as_str())
-                    .unwrap_or("Server not found in cache"),
-            );
-            connections
-        },
-    );
+    let ips = history
+        .iter()
+        .rev()
+        .take(HISTORY_MAX as usize)
+        .map(|entry| {
+            cache
+                .host_to_connect
+                .get(&entry.raw)
+                .map(|ip| format!("connect {ip}"))
+                .unwrap_or(String::from("Server not found in cache"))
+        })
+        .collect::<Vec<_>>();
     println!("{}", DisplayHistory(history, &ips));
 }
 
