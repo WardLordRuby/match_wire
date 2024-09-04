@@ -1,6 +1,7 @@
 use crate::{
     commands::{
         filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
+        handler::CommandContext,
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
     },
@@ -15,11 +16,10 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io,
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::Path,
     time::{Duration, SystemTime},
 };
-use tokio::sync::Mutex;
+
 use tracing::{error, info, instrument, trace};
 
 pub struct ReadCache {
@@ -240,18 +240,19 @@ pub fn read_cache(local_env_dir: &Path) -> Result<ReadCache, ReadCacheErr> {
 
 #[instrument(level = "trace", skip_all)]
 pub async fn update_cache<'a>(
-    connection_history: Arc<Mutex<Vec<HostName>>>,
-    server_cache: Arc<Mutex<Cache>>,
-    local_env_dir: Option<Arc<PathBuf>>,
+    context: &CommandContext<'a>,
     line_handle: &mut LineReader<'a>,
 ) -> io::Result<()> {
+    let local_env_dir = context.local_dir();
     let Some(ref local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
     let data = {
-        let cache = server_cache.lock().await;
-        let connection_history = connection_history.lock().await;
+        let cache_lock = context.cache();
+        let history_lock = context.h2m_server_connection_history();
+        let cache = cache_lock.lock().await;
+        let connection_history = history_lock.lock().await;
         CacheFile {
             version: env!("CARGO_PKG_VERSION").to_string(),
             created: cache.created,

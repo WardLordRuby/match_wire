@@ -226,17 +226,19 @@ async fn reset_cache<'a>(context: &CommandContext<'a>) -> CommandHandle {
         error!("Can not create cache with out a valid save directory");
         return CommandHandle::default();
     };
-    let connection_history = context.h2m_server_connection_history();
-    let connection_history = connection_history.lock().await;
 
-    let cache_file = match build_cache(Some(&connection_history)).await {
-        Ok(data) => data,
-        Err(err) => {
-            error!("{err}");
-            return CommandHandle::default();
+    let cache_file = {
+        let connection_history = context.h2m_server_connection_history();
+        let connection_history = connection_history.lock().await;
+
+        match build_cache(Some(&connection_history)).await {
+            Ok(data) => data,
+            Err(err) => {
+                error!("{err}");
+                return CommandHandle::default();
+            }
         }
     };
-    drop(connection_history);
 
     match std::fs::File::create(local_dir.join(CACHED_DATA)) {
         Ok(file) => {

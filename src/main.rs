@@ -143,12 +143,8 @@ fn main() {
             let event = reader.next();
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
-                    update_cache(
-                        command_context.h2m_server_connection_history(),
-                        command_context.cache(),
-                        command_context.local_dir(),
-                        &mut line_handle
-                    ).await.unwrap_or_else(|err| error!("{err}"));
+                    update_cache(&command_context, &mut line_handle).await
+                        .unwrap_or_else(|err| error!("{err}"));
                     continue;
                 }
                 _ = close_listener.recv() => {
@@ -197,12 +193,8 @@ fn main() {
             }
         }
         if command_context.cache_needs_update().load(Ordering::SeqCst) {
-            update_cache(
-                command_context.h2m_server_connection_history(),
-                command_context.cache(),
-                command_context.local_dir(),
-                &mut line_handle
-        ).await.unwrap_or_else(|err| error!("{err}"));
+            update_cache(&command_context, &mut line_handle).await
+                .unwrap_or_else(|err| error!("{err}"));
         }
         info!(name: LOG_ONLY, "app shutdown");
         terminal::disable_raw_mode().unwrap();
