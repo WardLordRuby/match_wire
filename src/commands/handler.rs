@@ -138,7 +138,7 @@ impl CommandContextBuilder {
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
             local_dir: self.local_dir,
             pty_handle: None,
-            command_entered: false,
+            command_entered: true,
         })
     }
 }
