@@ -1,6 +1,6 @@
 [package]
 name = "h2m_favorites"
-version = "0.4.0"
+version = "0.4.2"
 authors = ["WardLordRuby"]
 description = """
 This launcher provides quality of life improvements to the base H2M experience. Provides a Server Scraper
@@ -12,7 +12,7 @@ edition = "2021"
 [package.metadata.winresource]
 ProductName = "H2M Favorites"
 FileDescription = "H2M-mod launcher"
-ProductVersion = "0.4.0"
+ProductVersion = "0.4.2"
 
 [profile.release]
 strip = "debuginfo"
