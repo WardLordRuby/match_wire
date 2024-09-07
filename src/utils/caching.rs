@@ -297,7 +297,7 @@ pub async fn update_cache<'a>(
     // find better way to get background tasks to print on their own line
     // passing in the linehandle just for this is sad
     line_handle
-        .move_to_beginning(line_handle.get_curr_len())
+        .move_to_beginning(line_handle.line_len())
         .unwrap();
     info!("Cache updated locally");
     Ok(())
