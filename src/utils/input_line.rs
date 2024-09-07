@@ -18,6 +18,7 @@ pub struct LineReader<'a> {
     term_size: (u16, u16),
     uneventful: bool,
     cursor_at_start: bool,
+    command_entered: bool,
 }
 
 #[derive(Default, Debug)]
@@ -51,6 +52,7 @@ impl<'a> LineReader<'a> {
             term_size,
             uneventful: false,
             cursor_at_start: false,
+            command_entered: true,
         };
         new.term.queue(cursor::EnableBlinking)?;
         Ok(new)
@@ -72,6 +74,10 @@ impl<'a> LineReader<'a> {
 
     pub fn uneventful(&mut self) -> bool {
         std::mem::take(&mut self.uneventful)
+    }
+
+    pub fn command_entered(&mut self) -> bool {
+        std::mem::take(&mut self.command_entered)
     }
 
     /// gets the number of lines wrapped
@@ -162,6 +168,7 @@ impl<'a> LineReader<'a> {
         self.history.curr_index = self.history.prev_entries.len();
         self.new_line()?;
         self.term.queue(cursor::Hide)?;
+        self.command_entered = true;
         Ok(())
     }
 

@@ -31,7 +31,6 @@ pub struct CommandContext {
     h2m_console_history: Arc<Mutex<Vec<String>>>,
     h2m_server_connection_history: Arc<Mutex<Vec<HostName>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
-    command_entered: bool,
     local_dir: Option<Arc<PathBuf>>,
 }
 
@@ -82,15 +81,6 @@ impl CommandContext {
     pub fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
-    pub fn was_command_entered(&self) -> bool {
-        self.command_entered
-    }
-    fn command_entered(&mut self) {
-        self.command_entered = true
-    }
-    pub fn command_handled(&mut self) {
-        self.command_entered = false
-    }
 }
 
 #[derive(Default)]
@@ -138,7 +128,6 @@ impl CommandContextBuilder {
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
             local_dir: self.local_dir,
             pty_handle: None,
-            command_entered: true,
         })
     }
 }
@@ -171,7 +160,6 @@ pub async fn try_execute_command(
 ) -> CommandHandle {
     let mut input_tokens = vec![String::new()];
     input_tokens.append(&mut user_args);
-    context.command_entered();
     match UserCommand::try_parse_from(input_tokens) {
         Ok(cli) => match cli.command {
             Command::Filter { args } => new_favorites_with(args, context),

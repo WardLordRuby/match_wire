@@ -99,11 +99,12 @@ fn main() {
         terminal::enable_raw_mode().unwrap();
 
         loop {
-            if command_context.was_command_entered() {
+            if line_handle.command_entered() {
                 line_handle.clear_unwanted_inputs(&mut reader).await.unwrap();
-                command_context.command_handled()
             }
-            line_handle.render().unwrap();
+            if !line_handle.uneventful() {
+                line_handle.render().unwrap();
+            }
             let mut processing_taks = Vec::new();
             let event = reader.next();
             tokio::select! {
