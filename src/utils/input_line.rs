@@ -110,7 +110,7 @@ impl<'a> LineReader<'a> {
     fn move_to_line_end(&mut self, line_len: u16) -> io::Result<()> {
         let line_remaining_len = self.line_remainder(line_len);
         if line_remaining_len == 0 {
-            self.term.queue(cursor::MoveDown(1))?;
+            writeln!(self.term)?;
         }
         self.term.queue(cursor::MoveToColumn(line_remaining_len))?;
         self.cursor_at_start = false;
