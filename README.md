@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [filter-help]: https://i.imgur.com/13Ni21N.png "query arguments"
 [reconnect-help]: https://i.imgur.com/bKSbsBL.png "history arguments"
-[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.4.0/h2m_favorites.exe
+[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.4.2/h2m_favorites.exe
 <div align="center">
     <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
 </div>
@@ -38,9 +38,6 @@ Launch h2m_favorites.exe once it is inside your game directory and it will autom
 | help                         | -         | Displays helpful information                                                  |
 
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
-
-## Launch options
-Launching h2m_favorites.exe from the command line and passing in the argument `-s` or `--single-thread` will force the app to run on a single thread. Note that I designed this app to have very low overhead, since the process must stay open while you are playing H2M. By default the app runs on a single thread but upon running a filter command that task will execute on a multi-thread runtime in order to produce a favorites.json as quickly as possible.
 
 ## Query help
 ![help][filter-help]
