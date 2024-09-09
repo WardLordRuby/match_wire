@@ -2,7 +2,7 @@ use crossterm::{
     cursor,
     event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     style,
-    terminal::{Clear, ClearType::*},
+    terminal::{Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
 use std::io::{self, Stdout, Write};
@@ -10,9 +10,9 @@ use std::io::{self, Stdout, Write};
 pub struct LineReader<'a> {
     prompt: String,
     prompt_len: u16,
-    pub line: String,
+    line: String,
     line_len: u16,
-    pub history: History,
+    history: History,
     term: &'a mut Stdout,
     /// (columns, rows)
     term_size: (u16, u16),
@@ -26,12 +26,6 @@ pub struct History {
     temp_top: String,
     prev_entries: Vec<String>,
     curr_index: usize,
-}
-
-impl History {
-    pub fn last(&self) -> &str {
-        self.prev_entries.last().unwrap()
-    }
 }
 
 pub enum EventLoop {
@@ -70,6 +64,13 @@ impl<'a> LineReader<'a> {
         .await;
         self.term.queue(cursor::Show)?;
         Ok(())
+    }
+
+    pub fn last_line(&self) -> &str {
+        self.history
+            .prev_entries
+            .last()
+            .expect("only called after `self.enter_command()`")
     }
 
     pub fn uneventful(&mut self) -> bool {
@@ -117,9 +118,11 @@ impl<'a> LineReader<'a> {
         Ok(())
     }
 
-    fn change_line(&mut self, line: String) {
+    fn change_line(&mut self, line: String) -> io::Result<()> {
+        self.move_to_beginning(self.line_len())?;
         self.line = line;
         self.line_len = self.line.chars().count() as u16;
+        Ok(())
     }
 
     pub fn render(&mut self) -> io::Result<()> {
@@ -156,7 +159,7 @@ impl<'a> LineReader<'a> {
     fn clear(&mut self) -> io::Result<()> {
         self.line.clear();
         self.move_to_beginning(self.line_len())?;
-        self.reset_history();
+        self.reset_history_idx();
         self.line_len = 0;
         Ok(())
     }
@@ -165,14 +168,14 @@ impl<'a> LineReader<'a> {
         self.history
             .prev_entries
             .push(std::mem::take(&mut self.line));
-        self.history.curr_index = self.history.prev_entries.len();
+        self.reset_history_idx();
         self.new_line()?;
         self.term.queue(cursor::Hide)?;
         self.command_entered = true;
         Ok(())
     }
 
-    fn reset_history(&mut self) {
+    fn reset_history_idx(&mut self) {
         self.history.curr_index = self.history.prev_entries.len();
     }
 
@@ -186,10 +189,8 @@ impl<'a> LineReader<'a> {
         {
             self.history.temp_top = std::mem::take(&mut self.line);
         }
-        self.move_to_beginning(self.line_len())?;
         self.history.curr_index -= 1;
-        self.change_line(self.history.prev_entries[self.history.curr_index].clone());
-        Ok(())
+        self.change_line(self.history.prev_entries[self.history.curr_index].clone())
     }
 
     fn history_forward(&mut self) -> io::Result<()> {
@@ -197,16 +198,14 @@ impl<'a> LineReader<'a> {
         if self.history.curr_index == prev_entries_len {
             return Ok(());
         }
-        self.move_to_beginning(self.line_len())?;
-        if self.history.curr_index == prev_entries_len - 1 {
+        let new_line = if self.history.curr_index == prev_entries_len - 1 {
             self.history.curr_index = prev_entries_len;
-            let new_line = std::mem::take(&mut self.history.temp_top);
-            self.change_line(new_line);
-            return Ok(());
-        }
-        self.history.curr_index += 1;
-        self.change_line(self.history.prev_entries[self.history.curr_index].clone());
-        Ok(())
+            std::mem::take(&mut self.history.temp_top)
+        } else {
+            self.history.curr_index += 1;
+            self.history.prev_entries[self.history.curr_index].clone()
+        };
+        self.change_line(new_line)
     }
 
     pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop> {
