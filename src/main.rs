@@ -125,7 +125,7 @@ fn main() {
                                 Ok(EventLoop::Continue) => continue,
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
-                                    let command_handle = match shellwords::split(line_handle.history.last()) {
+                                    let command_handle = match shellwords::split(line_handle.last_line()) {
                                         Ok(user_args) => try_execute_command(user_args, &mut command_context).await,
                                         Err(err) => {
                                             error!("{err}");

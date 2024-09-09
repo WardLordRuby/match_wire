@@ -52,11 +52,10 @@ async fn display_history<'a>(history: &'a [HostName], cache: &'a Mutex<Cache>) {
         .rev()
         .take(HISTORY_MAX as usize)
         .map(|entry| {
-            cache
-                .host_to_connect
-                .get(&entry.raw)
-                .map(|ip| format!("connect {ip}"))
-                .unwrap_or(String::from("Server not found in cache"))
+            cache.host_to_connect.get(&entry.raw).map_or_else(
+                || String::from("Server not found in cache"),
+                |ip| format!("connect {ip}"),
+            )
         })
         .collect::<Vec<_>>();
     println!("{}", DisplayHistory(history, &ips));
