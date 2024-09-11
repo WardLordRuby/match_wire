@@ -39,9 +39,6 @@ pub struct History {
 //   - quoted strings
 // 2. Add support for a movable cursor
 
-// would be nice if curr_command and user_input could be refs into LineReader.line
-// without using unsafe raw pointers
-
 struct Completion {
     recomendations: Vec<&'static str>,
     rec_i: i8,
@@ -343,17 +340,23 @@ impl<'a> LineReader<'a> {
                 self.completion.curr_command = Some(pre.to_string())
             }
         }
-        let last_word = line_trim_start.rsplit_once(' ').map_or_else(
-            || {
-                self.completion.curr_command = None;
-                line_trim_start
-            },
-            |split| split.1,
-        );
-        self.completion.user_input = last_word.trim_start_matches('-').to_string();
+        let last_word = line_trim_start
+            .rsplit_once(' ')
+            .map_or_else(
+                || {
+                    self.completion.curr_command = None;
+                    line_trim_start
+                },
+                |split| split.1,
+            )
+            .trim_start_matches('-');
+        self.completion.user_input = last_word.to_string();
         let input_lower = self.completion.user_input.to_lowercase();
         let mut recomendations = if let Some(ref command) = self.completion.curr_command {
-            let Some(Some(command_args)) = self.completion.argument_map.get(command.as_str())
+            let Some(Some(command_args)) = self
+                .completion
+                .argument_map
+                .get(command.to_lowercase().as_str())
             else {
                 self.completion.recomendations = Vec::new();
                 return;
