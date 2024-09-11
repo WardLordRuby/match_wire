@@ -3,7 +3,7 @@
 [reconnect-help]: https://i.imgur.com/bKSbsBL.png "history arguments"
 [latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.4.2/h2m_favorites.exe
 <div align="center">
-    <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
+    <img src="https://i.imgur.com/VAxzjQZ.png" width="50%" height="50%">
 </div>
 
 # H2M Favorites
