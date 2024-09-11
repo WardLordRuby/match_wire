@@ -31,15 +31,15 @@ pub enum Command {
 
     /// Clear and rebuild the internal server cache list
     /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
-    #[command(aliases(["Reset", "update", "Update"]))]
+    #[command(aliases(["Reset", "reset", "update", "Update"]))]
     UpdateCache,
 
     /// Print H2M console logs
-    #[command(aliases(["Display", "logs", "Logs"]))]
+    #[command(aliases(["Display", "display", "logs", "Logs"]))]
     DisplayLogs,
 
     /// Open MWR(2017) directory
-    #[command(aliases(["gamedir", "Gamedir", "GameDir"]))]
+    #[command(aliases(["Gamedir", "gamedir", "GameDir"]))]
     GameDir,
 
     /// Quit the program
@@ -47,7 +47,7 @@ pub enum Command {
     Quit,
 
     /// Open the current local data directory
-    #[command(aliases(["localenv", "Localenv", "LocalEnv"]), hide = true)]
+    #[command(aliases(["Localenv", "localenv", "LocalEnv"]), hide = true)]
     LocalEnv,
 }
 

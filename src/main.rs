@@ -8,7 +8,7 @@ use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
 use std::{
     path::{Path, PathBuf},
-    sync::atomic::Ordering,
+    sync::{atomic::Ordering, LazyLock},
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -19,6 +19,8 @@ use utils::{
     subscriber::init_subscriber,
 };
 
+static COMPLETION: LazyLock<Vec<NameScheme>> = LazyLock::new(init_completion);
+
 fn main() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -27,7 +29,7 @@ fn main() {
     }));
 
     let mut term = std::io::stdout();
-    let term_size = terminal::size().unwrap();
+
     execute!(
         term,
         cursor::Hide,
@@ -94,7 +96,7 @@ fn main() {
         execute!(term, cursor::Show).unwrap();
 
         let mut reader = EventStream::new();
-        let mut line_handle = LineReader::new("h2m_favorites.exe> ", &mut term, term_size).unwrap();
+        let mut line_handle = LineReader::new("h2m_favorites.exe> ", &mut term, &COMPLETION).unwrap();
 
         terminal::enable_raw_mode().unwrap();
 
