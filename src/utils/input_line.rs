@@ -337,20 +337,24 @@ impl<'a> LineReader<'a> {
             return;
         }
         self.completion.rec_i = USER_INPUT;
-        self.completion.user_input = if self.line.ends_with(' ') {
-            if self.completion.curr_command.is_none() {
-                self.completion.curr_command =
-                    Some(self.line.split_once(' ').expect("outer if").0.to_string())
-            }
-            String::new()
-        } else if let Some(i) = self.line.rfind(' ') {
-            self.line[i + ' '.len_utf8()..]
-                .trim_start_matches('-')
-                .to_string()
-        } else {
-            self.completion.curr_command = None;
-            self.line.trim_start_matches('-').to_string()
-        };
+        let line_trim_start = self.line.trim_start();
+        if self.completion.curr_command.is_none() && line_trim_start.contains(' ') {
+            self.completion.curr_command = Some(
+                line_trim_start
+                    .split_once(' ')
+                    .expect("outer if")
+                    .0
+                    .to_string(),
+            )
+        }
+        let last_word = line_trim_start.rsplit_once(' ').map_or_else(
+            || {
+                self.completion.curr_command = None;
+                line_trim_start
+            },
+            |split| split.1,
+        );
+        self.completion.user_input = last_word.trim_start_matches('-').to_string();
         let mut recomendations = if let Some(ref command) = self.completion.curr_command {
             let Some(Some(command_args)) = self.completion.argument_map.get(command.as_str())
             else {
@@ -409,7 +413,10 @@ impl<'a> LineReader<'a> {
                     self.line.trim_end_matches(last).trim_end_matches('-')
                 )
             } else {
-                recomendation.to_string()
+                self.line.rsplit_once(' ').map_or_else(
+                    || recomendation.to_string(),
+                    |split| format!("{} {recomendation}", split.0),
+                )
             }
         };
         self.change_line(new_line)
@@ -438,6 +445,8 @@ impl<'a> LineReader<'a> {
                 ..
             }) => {
                 if self.line.is_empty() {
+                    // MARK: TODO
+                    // if H2M is is child_process ask to confirm app close
                     return Ok(EventLoop::Break);
                 }
                 self.ctrl_c_line()?;

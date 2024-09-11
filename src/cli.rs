@@ -31,11 +31,11 @@ pub enum Command {
 
     /// Clear and rebuild the internal server cache list
     /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
-    #[command(aliases(["Reset", "reset", "update", "Update"]))]
+    #[command(aliases(["Reset", "reset", "Update", "update"]))]
     UpdateCache,
 
     /// Print H2M console logs
-    #[command(aliases(["Display", "display", "logs", "Logs"]))]
+    #[command(aliases(["Display", "display", "Logs", "logs"]))]
     DisplayLogs,
 
     /// Open MWR(2017) directory
