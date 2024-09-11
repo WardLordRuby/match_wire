@@ -338,14 +338,10 @@ impl<'a> LineReader<'a> {
         }
         self.completion.rec_i = USER_INPUT;
         let line_trim_start = self.line.trim_start();
-        if self.completion.curr_command.is_none() && line_trim_start.contains(' ') {
-            self.completion.curr_command = Some(
-                line_trim_start
-                    .split_once(' ')
-                    .expect("outer if")
-                    .0
-                    .to_string(),
-            )
+        if self.completion.curr_command.is_none() {
+            if let Some((pre, _)) = line_trim_start.split_once(' ') {
+                self.completion.curr_command = Some(pre.to_string())
+            }
         }
         let last_word = line_trim_start.rsplit_once(' ').map_or_else(
             || {
@@ -355,6 +351,7 @@ impl<'a> LineReader<'a> {
             |split| split.1,
         );
         self.completion.user_input = last_word.trim_start_matches('-').to_string();
+        let input_lower = self.completion.user_input.to_lowercase();
         let mut recomendations = if let Some(ref command) = self.completion.curr_command {
             let Some(Some(command_args)) = self.completion.argument_map.get(command.as_str())
             else {
@@ -367,20 +364,20 @@ impl<'a> LineReader<'a> {
             }
             command_args
                 .iter()
-                .filter(|argument| argument.contains(&self.completion.user_input))
+                .filter(|argument| argument.contains(&input_lower))
                 .copied()
                 .collect::<Vec<_>>()
         } else {
             self.completion
                 .commands
                 .iter()
-                .filter(|command| command.contains(&self.completion.user_input))
+                .filter(|command| command.contains(&input_lower))
                 .copied()
                 .collect::<Vec<_>>()
         };
         recomendations.sort_unstable_by(|a, b| {
-            let a_starts = a.starts_with(&self.completion.user_input);
-            let b_starts = b.starts_with(&self.completion.user_input);
+            let a_starts = a.starts_with(&input_lower);
+            let b_starts = b.starts_with(&input_lower);
             b_starts.cmp(&a_starts)
         });
         self.completion.recomendations = recomendations;
