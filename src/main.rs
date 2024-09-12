@@ -96,7 +96,7 @@ fn main() {
         execute!(term, cursor::Show).unwrap();
 
         let mut reader = EventStream::new();
-        let mut line_handle = LineReader::new("h2m_favorites.exe> ", &mut term, &COMPLETION).unwrap();
+        let mut line_handle = LineReader::new("h2m_favorites.exe", &mut term, &COMPLETION).unwrap();
 
         terminal::enable_raw_mode().unwrap();
 

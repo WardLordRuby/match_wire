@@ -1,20 +1,18 @@
 use crossterm::{
     cursor,
     event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    style::{self, Stylize},
+    style::{Color, Stylize},
     terminal::{self, Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
 use std::{
     collections::HashMap,
+    fmt::Display,
     io::{self, Stdout, Write},
 };
 
 pub struct LineReader<'a> {
-    prompt: String,
-    prompt_len: u16,
-    line: String,
-    line_len: u16,
+    line: LineData,
     history: History,
     term: &'a mut Stdout,
     /// (columns, rows)
@@ -25,6 +23,104 @@ pub struct LineReader<'a> {
     completion: Completion,
 }
 
+#[derive(Default)]
+struct LineData {
+    prompt: String,
+    prompt_len: u16,
+    input: String,
+    len: u16,
+}
+
+const PROMPT_END: &str = "> ";
+const YELLOW: &str = "\x1b[0;33m";
+const BLUE: &str = "\x1b[38;5;38m";
+const GREY: &str = "\x1b[38;5;238m";
+const WHITE: &str = "\x1b[0m";
+
+impl LineData {
+    fn new(prompt: &str) -> Self {
+        LineData {
+            prompt_len: prompt.chars().count() as u16 + PROMPT_END.chars().count() as u16,
+            prompt: String::from(prompt),
+            ..Default::default()
+        }
+    }
+}
+
+impl Display for LineData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (line_out, err) = stylize_input(&self.input);
+        write!(
+            f,
+            "{}{}{}",
+            self.prompt.as_str().bold(),
+            PROMPT_END
+                .bold()
+                .stylize()
+                .with(if err { Color::Red } else { Color::Reset }),
+            line_out
+        )
+    }
+}
+
+fn stylize_input(input: &str) -> (String, bool) {
+    let mut err = false;
+    let mut open_quote: Option<char> = None;
+    let mut white_space_start = 0;
+    let mut curr = WHITE;
+    let mut output = String::new();
+
+    for token in input.split_whitespace() {
+        let i = input[white_space_start..]
+            .find(token)
+            .expect("already found");
+
+        output += &input[white_space_start..white_space_start + i];
+        white_space_start += i + token.len();
+
+        if output.trim_start().is_empty() {
+            output += YELLOW;
+            curr = YELLOW;
+        }
+        match curr {
+            WHITE => {
+                if token.starts_with('-') {
+                    output += GREY;
+                    output += token;
+                    output += WHITE;
+                } else if token.starts_with('\'') || token.starts_with('\"') {
+                    output += BLUE;
+                    curr = BLUE;
+                    output += token;
+                    open_quote = Some(token.chars().next().expect("found above"));
+                } else {
+                    output += token;
+                }
+            }
+            YELLOW => {
+                output += token;
+                output += WHITE;
+                curr = WHITE;
+            }
+            BLUE => {
+                output += token;
+                if token.ends_with(open_quote.expect("color is blue")) {
+                    open_quote = None;
+                    output += WHITE;
+                    curr = WHITE;
+                }
+            }
+            _ => (),
+        }
+    }
+
+    if curr != WHITE {
+        err = true;
+        output += WHITE;
+    }
+    (output, err)
+}
+
 #[derive(Default, Debug)]
 pub struct History {
     temp_top: String,
@@ -33,10 +129,9 @@ pub struct History {
 }
 
 // MARK: TODO
-// 1. Add colors for:
-//   - commands
-//   - arguments
-//   - quoted strings
+// 1. Add error checks for
+//   - arg before command
+//   - arg with no value
 // 2. Add support for a movable cursor
 
 struct Completion {
@@ -147,12 +242,9 @@ impl<'a> LineReader<'a> {
         name_ctx: &'static [NameScheme],
     ) -> io::Result<Self> {
         let new = LineReader {
-            prompt: String::from(prompt),
-            prompt_len: prompt.chars().count() as u16,
-            term,
-            line: String::new(),
-            line_len: 0,
+            line: LineData::new(prompt),
             history: History::default(),
+            term,
             term_size: terminal::size().unwrap(),
             uneventful: false,
             cursor_at_start: false,
@@ -200,7 +292,7 @@ impl<'a> LineReader<'a> {
 
     /// gets the total length of the line (prompt + user input)
     pub fn line_len(&self) -> u16 {
-        self.prompt_len.saturating_add(self.line_len)
+        self.line.prompt_len.saturating_add(self.line.len)
     }
 
     fn line_remainder(&self, line_len: u16) -> u16 {
@@ -236,24 +328,22 @@ impl<'a> LineReader<'a> {
             self.move_to_beginning(line_len.saturating_sub(1))?;
         }
 
-        self.term.queue(style::ResetColor)?;
-
-        write!(self.term, "{}{}", self.prompt, self.line)?;
+        write!(self.term, "{}", self.line)?;
 
         self.move_to_line_end(line_len)?;
         self.term.flush()
     }
 
     fn insert_char(&mut self, c: char) {
-        self.line.push(c);
-        self.line_len = self.line_len.saturating_add(1);
+        self.line.input.push(c);
+        self.line.len = self.line.len.saturating_add(1);
         self.update_completeion();
     }
 
     fn remove_char(&mut self) -> io::Result<()> {
-        self.line.pop();
+        self.line.input.pop();
         self.move_to_beginning(self.line_len())?;
-        self.line_len = self.line_len.saturating_sub(1);
+        self.line.len = self.line.len.saturating_sub(1);
         self.update_completeion();
         Ok(())
     }
@@ -269,25 +359,29 @@ impl<'a> LineReader<'a> {
     }
 
     fn clear_line(&mut self) -> io::Result<()> {
-        self.line.clear();
+        self.move_to_beginning(self.line_len())?;
+        self.reset_line_data();
         self.reset_completion();
         self.reset_history_idx();
-        self.move_to_beginning(self.line_len())?;
-        self.line_len = 0;
         Ok(())
+    }
+
+    fn reset_line_data(&mut self) {
+        self.line.input.clear();
+        self.line.len = 0;
     }
 
     fn change_line(&mut self, line: String) -> io::Result<()> {
         self.move_to_beginning(self.line_len())?;
-        self.line = line;
-        self.line_len = self.line.chars().count() as u16;
+        self.line.len = line.chars().count() as u16;
+        self.line.input = line;
         Ok(())
     }
 
     fn enter_command(&mut self) -> io::Result<()> {
         self.history
             .prev_entries
-            .push(std::mem::take(&mut self.line));
+            .push(std::mem::take(&mut self.line.input));
         self.reset_history_idx();
         self.new_line()?;
         self.term.queue(cursor::Hide)?;
@@ -304,10 +398,10 @@ impl<'a> LineReader<'a> {
         if self.history.curr_index == 0 || prev_entries_len == 0 {
             return Ok(());
         }
-        if !self.history.prev_entries.contains(&self.line)
+        if !self.history.prev_entries.contains(&self.line.input)
             && self.history.curr_index == prev_entries_len
         {
-            self.history.temp_top = std::mem::take(&mut self.line);
+            self.history.temp_top = std::mem::take(&mut self.line.input);
         }
         self.history.curr_index -= 1;
         self.change_line(self.history.prev_entries[self.history.curr_index].clone())
@@ -329,18 +423,18 @@ impl<'a> LineReader<'a> {
     }
 
     fn update_completeion(&mut self) {
-        if self.line.is_empty() {
+        if self.line.input.is_empty() {
             self.reset_completion();
             return;
         }
         self.completion.rec_i = USER_INPUT;
-        let line_trim_start = self.line.trim_start();
+        let line_trim_start = self.line.input.trim_start();
         if self.completion.curr_command.is_none() {
             if let Some((pre, _)) = line_trim_start.split_once(' ') {
                 self.completion.curr_command = Some(pre.to_string())
             }
         }
-        let last_word = line_trim_start
+        self.completion.user_input = line_trim_start
             .rsplit_once(' ')
             .map_or_else(
                 || {
@@ -349,8 +443,8 @@ impl<'a> LineReader<'a> {
                 },
                 |split| split.1,
             )
-            .trim_start_matches('-');
-        self.completion.user_input = last_word.to_string();
+            .trim_start_matches('-')
+            .to_string();
         let input_lower = self.completion.user_input.to_lowercase();
         let mut recomendations = if let Some(ref command) = self.completion.curr_command {
             let Some(Some(command_args)) = self
@@ -410,10 +504,10 @@ impl<'a> LineReader<'a> {
             if self.completion.curr_command.is_some() {
                 format!(
                     "{}--{recomendation}",
-                    self.line.trim_end_matches(last).trim_end_matches('-')
+                    self.line.input.trim_end_matches(last).trim_end_matches('-')
                 )
             } else {
-                self.line.rsplit_once(' ').map_or_else(
+                self.line.input.rsplit_once(' ').map_or_else(
                     || recomendation.to_string(),
                     |split| format!("{} {recomendation}", split.0),
                 )
@@ -444,7 +538,7 @@ impl<'a> LineReader<'a> {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             }) => {
-                if self.line.is_empty() {
+                if self.line.input.is_empty() {
                     // MARK: TODO
                     // if H2M is is child_process ask to confirm app close
                     return Ok(EventLoop::Break);
@@ -505,7 +599,7 @@ impl<'a> LineReader<'a> {
                 kind: KeyEventKind::Press,
                 ..
             }) => {
-                if self.line.trim().is_empty() {
+                if self.line.input.trim().is_empty() {
                     self.new_line()?;
                     return Ok(EventLoop::Continue);
                 }
