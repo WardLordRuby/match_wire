@@ -7,7 +7,7 @@ use crate::{
     },
     does_dir_contain, new_io_error,
     utils::{
-        input_line::LineReader,
+        input::line::LineReader,
         json_data::{CacheFile, ServerCache, ServerInfo},
     },
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,

@@ -15,7 +15,7 @@ use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
     caching::{build_cache, read_cache, update_cache, Cache, ReadCache},
-    input_line::*,
+    input::line::{init_completion, EventLoop, LineReader, NameScheme},
     subscriber::init_subscriber,
 };
 

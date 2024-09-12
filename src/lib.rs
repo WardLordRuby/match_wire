@@ -7,8 +7,11 @@ pub mod commands {
     pub mod reconnect;
 }
 pub mod utils {
+    pub mod input {
+        pub mod line;
+        pub mod style;
+    }
     pub mod caching;
-    pub mod input_line;
     pub mod json_data;
     pub mod subscriber;
 }

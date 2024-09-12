@@ -1,15 +1,16 @@
 use crossterm::{
     cursor,
     event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    style::{Color, Stylize},
+    style::Stylize,
     terminal::{self, Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
 use std::{
     collections::HashMap,
-    fmt::Display,
     io::{self, Stdout, Write},
 };
+
+use crate::utils::input::style::PROMPT_END;
 
 pub struct LineReader<'a> {
     line: LineData,
@@ -24,18 +25,12 @@ pub struct LineReader<'a> {
 }
 
 #[derive(Default)]
-struct LineData {
+pub struct LineData {
     prompt: String,
     prompt_len: u16,
     input: String,
     len: u16,
 }
-
-const PROMPT_END: &str = "> ";
-const YELLOW: &str = "\x1b[0;33m";
-const BLUE: &str = "\x1b[38;5;38m";
-const GREY: &str = "\x1b[38;5;238m";
-const WHITE: &str = "\x1b[0m";
 
 impl LineData {
     fn new(prompt: &str) -> Self {
@@ -45,80 +40,16 @@ impl LineData {
             ..Default::default()
         }
     }
-}
 
-impl Display for LineData {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (line_out, err) = stylize_input(&self.input);
-        write!(
-            f,
-            "{}{}{}",
-            self.prompt.as_str().bold(),
-            PROMPT_END
-                .bold()
-                .stylize()
-                .with(if err { Color::Red } else { Color::Reset }),
-            line_out
-        )
-    }
-}
-
-fn stylize_input(input: &str) -> (String, bool) {
-    let mut err = false;
-    let mut open_quote: Option<char> = None;
-    let mut white_space_start = 0;
-    let mut curr = WHITE;
-    let mut output = String::new();
-
-    for token in input.split_whitespace() {
-        let i = input[white_space_start..]
-            .find(token)
-            .expect("already found");
-
-        output += &input[white_space_start..white_space_start + i];
-        white_space_start += i + token.len();
-
-        if output.trim_start().is_empty() {
-            output += YELLOW;
-            curr = YELLOW;
-        }
-        match curr {
-            WHITE => {
-                if token.starts_with('-') {
-                    output += GREY;
-                    output += token;
-                    output += WHITE;
-                } else if token.starts_with('\'') || token.starts_with('\"') {
-                    output += BLUE;
-                    curr = BLUE;
-                    output += token;
-                    open_quote = Some(token.chars().next().expect("found above"));
-                } else {
-                    output += token;
-                }
-            }
-            YELLOW => {
-                output += token;
-                output += WHITE;
-                curr = WHITE;
-            }
-            BLUE => {
-                output += token;
-                if token.ends_with(open_quote.expect("color is blue")) {
-                    open_quote = None;
-                    output += WHITE;
-                    curr = WHITE;
-                }
-            }
-            _ => (),
-        }
+    #[inline]
+    pub fn input(&self) -> &str {
+        &self.input
     }
 
-    if curr != WHITE {
-        err = true;
-        output += WHITE;
+    #[inline]
+    pub fn prompt(&self) -> &str {
+        &self.prompt
     }
-    (output, err)
 }
 
 #[derive(Default, Debug)]
@@ -129,11 +60,13 @@ pub struct History {
 }
 
 // MARK: TODO
-// 1. Add error checks for
-//   - arg before command
-//   - arg with no value
+// 1. Add regions to auto-complete
 // 2. Add support for a movable cursor
 
+// we need an enum for positon
+// we need to know when we are in a value position
+// have a struct that stores state and a method that returns the current pos with key for building a rec list
+// if value can be list only treat as value if inside quote
 struct Completion {
     recomendations: Vec<&'static str>,
     rec_i: i8,
