@@ -292,8 +292,8 @@ impl<'a> LineReader<'a> {
     }
 
     fn clear_line(&mut self) -> io::Result<()> {
-        self.move_to_beginning(self.line_len())?;
         self.reset_line_data();
+        self.move_to_beginning(self.line_len())?;
         self.reset_completion();
         self.reset_history_idx();
         Ok(())
