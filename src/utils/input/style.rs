@@ -74,6 +74,9 @@ impl FormatState {
         self.set_color(TextColor::Blue);
         self.push(str);
         self.open_quote = quote;
+        if str.chars().nth(1).is_some() && str.ends_with(quote.expect("color is blue")) {
+            self.close_quote();
+        }
     }
 
     #[inline]
