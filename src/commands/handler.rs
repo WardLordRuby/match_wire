@@ -169,6 +169,7 @@ pub async fn try_execute_command(
             Command::DisplayLogs => h2m_console_history(&context.h2m_console_history()).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
             Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
+            Command::Version => print_version(),
             Command::Quit => CommandHandle::exit(),
         },
         Err(err) => {
@@ -264,5 +265,10 @@ fn open_dir(path: Option<&Path>) -> CommandHandle {
     } else {
         error!("Could not find local dir");
     }
+    CommandHandle::default()
+}
+
+fn print_version() -> CommandHandle {
+    println!("{} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
     CommandHandle::default()
 }

@@ -2,7 +2,7 @@ use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_S
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(about, long_about = None)]
 pub struct UserCommand {
     #[command(subcommand)]
     pub command: Command,
@@ -45,6 +45,9 @@ pub enum Command {
     /// Quit the program
     #[command(alias = "Quit")]
     Quit,
+
+    /// Print version
+    Version,
 
     /// Open the current local data directory
     #[command(aliases(["Localenv", "localenv", "LocalEnv"]), hide = true)]
