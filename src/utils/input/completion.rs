@@ -12,6 +12,7 @@ pub struct CommandScheme {
     inner: Vec<InnerScheme>,
 }
 
+/// `inner` must contain the same number of elements as `RecData.starting_alias` if kind is set as `Kind::Argument`
 #[derive(Clone)]
 struct InnerScheme {
     data: Option<RecData>,
@@ -20,7 +21,7 @@ struct InnerScheme {
     inner: Option<Vec<InnerScheme>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RecData {
     /// the starting index of aliases
     starting_alias: usize,
@@ -32,7 +33,7 @@ pub struct RecData {
     end: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum RecKind {
     Command,
     Argument,
@@ -183,11 +184,11 @@ pub struct Completion {
     rec_i: i8,
     input: CompletionState,
     curr_val: usize,
-    pub rec_map: HashMap<&'static str, usize>,
-    pub rec_list: Vec<Option<&'static RecData>>,
+    rec_map: HashMap<&'static str, usize>,
+    rec_list: Vec<Option<&'static RecData>>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct CompletionState {
     curr_command: Option<String>,
     curr_argument: Option<String>,
@@ -257,6 +258,10 @@ impl From<&'static CommandScheme> for Completion {
     }
 }
 
+// MARK: TODO
+// move error calculation from style.rs into below methods
+// store error bool in `LineData`
+
 impl LineReader<'_> {
     pub fn update_completeion(&mut self) {
         let line_trim_start = self.line.input().trim_start();
@@ -312,7 +317,6 @@ impl LineReader<'_> {
                     self.completion.curr_val = i;
                     self.completion.recomendations =
                         rec_data.recs[..rec_data.starting_alias].to_vec();
-                    dbg!(&self.completion.recomendations);
                     return;
                 }
                 i
@@ -335,7 +339,6 @@ impl LineReader<'_> {
             b_starts.cmp(&a_starts)
         });
         self.completion.recomendations = recomendations;
-        dbg!(&self.completion.recomendations);
     }
 
     pub fn try_completion(&mut self, by: i8) -> io::Result<()> {
@@ -367,11 +370,12 @@ impl LineReader<'_> {
                     ..
                 } => {
                     format!(
-                        "{}--{recomendation}",
+                        "{}{}{recomendation}",
                         self.line
                             .input()
                             .trim_end_matches(last)
-                            .trim_end_matches('-')
+                            .trim_end_matches('-'),
+                        if recomendation.is_empty() { "" } else { "--" }
                     )
                 }
                 RecData {

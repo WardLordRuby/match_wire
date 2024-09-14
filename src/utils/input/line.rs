@@ -52,7 +52,7 @@ impl LineData {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct History {
     temp_top: String,
     prev_entries: Vec<String>,
@@ -84,8 +84,6 @@ impl<'a> LineReader<'a> {
             command_entered: true,
             completion: Completion::from(name_ctx),
         };
-        dbg!(&new.completion.rec_map);
-        dbg!(&new.completion.rec_list);
         new.term.queue(cursor::EnableBlinking)?;
         Ok(new)
     }

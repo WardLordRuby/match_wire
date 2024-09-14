@@ -22,7 +22,6 @@ use std::{
 
 use tracing::{error, info, instrument, trace};
 
-#[derive(Debug)]
 pub struct Cache {
     pub host_to_connect: HashMap<String, String>,
     pub ip_to_region: HashMap<String, String>,
