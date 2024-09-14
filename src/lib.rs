@@ -8,6 +8,7 @@ pub mod commands {
 }
 pub mod utils {
     pub mod input {
+        pub mod completion;
         pub mod line;
         pub mod style;
     }

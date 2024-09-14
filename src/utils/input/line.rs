@@ -5,15 +5,16 @@ use crossterm::{
     terminal::{self, Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
-use std::{
-    collections::HashMap,
-    io::{self, Stdout, Write},
+use std::io::{self, Stdout, Write};
+
+use crate::utils::input::{
+    completion::{CommandScheme, Completion},
+    style::PROMPT_END,
 };
 
-use crate::utils::input::style::PROMPT_END;
-
 pub struct LineReader<'a> {
-    line: LineData,
+    pub completion: Completion,
+    pub line: LineData,
     history: History,
     term: &'a mut Stdout,
     /// (columns, rows)
@@ -21,7 +22,6 @@ pub struct LineReader<'a> {
     uneventful: bool,
     cursor_at_start: bool,
     command_entered: bool,
-    completion: Completion,
 }
 
 #[derive(Default)]
@@ -60,51 +60,7 @@ pub struct History {
 }
 
 // MARK: TODO
-// 1. Add regions to auto-complete
-// 2. Add support for a movable cursor
-
-// we need an enum for positon
-// we need to know when we are in a value position
-// have a struct that stores state and a method that returns the current pos with key for building a rec list
-// if value can be list only treat as value if inside quote
-struct Completion {
-    recomendations: Vec<&'static str>,
-    rec_i: i8,
-    commands: Vec<&'static str>,
-    commands_short: Vec<&'static str>,
-    curr_command: Option<String>,
-    user_input: String,
-    argument_map: HashMap<&'static str, Option<&'static Vec<&'static str>>>,
-}
-
-const USER_INPUT: i8 = -1;
-
-impl From<&'static [NameScheme]> for Completion {
-    fn from(value: &'static [NameScheme]) -> Self {
-        let (commands_short, commands, argument_map) = value.iter().fold(
-            (Vec::with_capacity(value.len()), Vec::new(), HashMap::new()),
-            |(mut commands_short, mut commands, mut argument_map), scheme| {
-                for (i, &command) in scheme.command.iter().enumerate() {
-                    if i == 0 {
-                        commands_short.push(command)
-                    }
-                    commands.push(command);
-                    argument_map.insert(command, scheme.arguments.as_ref());
-                }
-                (commands_short, commands, argument_map)
-            },
-        );
-        Completion {
-            recomendations: commands_short.clone(),
-            rec_i: USER_INPUT,
-            curr_command: None,
-            user_input: String::new(),
-            argument_map,
-            commands,
-            commands_short,
-        }
-    }
-}
+// 1. Add support for a movable cursor
 
 pub enum EventLoop {
     Continue,
@@ -112,67 +68,11 @@ pub enum EventLoop {
     TryProcessCommand,
 }
 
-pub struct NameScheme {
-    command: Vec<&'static str>,
-    arguments: Option<Vec<&'static str>>,
-}
-
-// MARK: IMPROVE
-// HARD: this ideally should be done by a proc-macro
-pub fn init_completion() -> Vec<NameScheme> {
-    vec![
-        NameScheme {
-            command: vec!["filter"],
-            arguments: Some(vec![
-                "limit",
-                "player-min",
-                "team-size-max",
-                "region",
-                "includes",
-                "excludes",
-                "help",
-            ]),
-        },
-        NameScheme {
-            command: vec!["reconnect"],
-            arguments: Some(vec!["history", "connect", "help"]),
-        },
-        NameScheme {
-            command: vec!["launch"],
-            arguments: None,
-        },
-        NameScheme {
-            command: vec!["update-cache", "update", "reset"],
-            arguments: None,
-        },
-        NameScheme {
-            command: vec!["display-logs", "display", "logs"],
-            arguments: None,
-        },
-        NameScheme {
-            command: vec!["game-dir", "gamedir"],
-            arguments: None,
-        },
-        NameScheme {
-            command: vec!["quit"],
-            arguments: None,
-        },
-        NameScheme {
-            command: vec!["local-env", "localenv"],
-            arguments: None,
-        },
-        NameScheme {
-            command: vec!["help"],
-            arguments: None,
-        },
-    ]
-}
-
 impl<'a> LineReader<'a> {
     pub fn new(
         prompt: &str,
         term: &'a mut Stdout,
-        name_ctx: &'static [NameScheme],
+        name_ctx: &'static CommandScheme,
     ) -> io::Result<Self> {
         let new = LineReader {
             line: LineData::new(prompt),
@@ -184,6 +84,8 @@ impl<'a> LineReader<'a> {
             command_entered: true,
             completion: Completion::from(name_ctx),
         };
+        dbg!(&new.completion.rec_map);
+        dbg!(&new.completion.rec_list);
         new.term.queue(cursor::EnableBlinking)?;
         Ok(new)
     }
@@ -304,7 +206,7 @@ impl<'a> LineReader<'a> {
         self.line.len = 0;
     }
 
-    fn change_line(&mut self, line: String) -> io::Result<()> {
+    pub fn change_line(&mut self, line: String) -> io::Result<()> {
         self.move_to_beginning(self.line_len())?;
         self.line.len = line.chars().count() as u16;
         self.line.input = line;
@@ -353,107 +255,6 @@ impl<'a> LineReader<'a> {
             self.history.prev_entries[self.history.curr_index].clone()
         };
         self.change_line(new_line)
-    }
-
-    fn update_completeion(&mut self) {
-        if self.line.input.is_empty() {
-            self.reset_completion();
-            return;
-        }
-        self.completion.rec_i = USER_INPUT;
-        let line_trim_start = self.line.input.trim_start();
-        if self.completion.curr_command.is_none() {
-            if let Some((pre, _)) = line_trim_start.split_once(' ') {
-                self.completion.curr_command = Some(pre.to_string())
-            }
-        }
-        self.completion.user_input = line_trim_start
-            .rsplit_once(' ')
-            .map_or_else(
-                || {
-                    self.completion.curr_command = None;
-                    line_trim_start
-                },
-                |split| split.1,
-            )
-            .trim_start_matches('-')
-            .to_string();
-        let input_lower = self.completion.user_input.to_lowercase();
-        let mut recomendations = if let Some(ref command) = self.completion.curr_command {
-            let Some(Some(command_args)) = self
-                .completion
-                .argument_map
-                .get(command.to_lowercase().as_str())
-            else {
-                self.completion.recomendations = Vec::new();
-                return;
-            };
-            if self.completion.user_input.is_empty() {
-                self.completion.recomendations = command_args.to_vec();
-                return;
-            }
-            command_args
-                .iter()
-                .filter(|argument| argument.contains(&input_lower))
-                .copied()
-                .collect::<Vec<_>>()
-        } else {
-            self.completion
-                .commands
-                .iter()
-                .filter(|command| command.contains(&input_lower))
-                .copied()
-                .collect::<Vec<_>>()
-        };
-        recomendations.sort_unstable_by(|a, b| {
-            let a_starts = a.starts_with(&input_lower);
-            let b_starts = b.starts_with(&input_lower);
-            b_starts.cmp(&a_starts)
-        });
-        self.completion.recomendations = recomendations;
-    }
-
-    fn try_completion(&mut self, by: i8) -> io::Result<()> {
-        if self.completion.recomendations.is_empty() {
-            return Ok(());
-        }
-        let last = if self.completion.rec_i == USER_INPUT {
-            &self.completion.user_input
-        } else {
-            self.completion.recomendations[self.completion.rec_i as usize]
-        };
-        self.completion.rec_i += by;
-        match self.completion.rec_i {
-            i if i >= USER_INPUT && i < self.completion.recomendations.len() as i8 => (),
-            ..USER_INPUT => self.completion.rec_i = self.completion.recomendations.len() as i8 - 1,
-            _ => self.completion.rec_i = USER_INPUT,
-        }
-        let new_line = {
-            let recomendation = if self.completion.rec_i == USER_INPUT {
-                &self.completion.user_input
-            } else {
-                self.completion.recomendations[self.completion.rec_i as usize]
-            };
-            if self.completion.curr_command.is_some() {
-                format!(
-                    "{}--{recomendation}",
-                    self.line.input.trim_end_matches(last).trim_end_matches('-')
-                )
-            } else {
-                self.line.input.rsplit_once(' ').map_or_else(
-                    || recomendation.to_string(),
-                    |split| format!("{} {recomendation}", split.0),
-                )
-            }
-        };
-        self.change_line(new_line)
-    }
-
-    fn reset_completion(&mut self) {
-        self.completion.curr_command = None;
-        self.completion.recomendations = self.completion.commands_short.clone();
-        self.completion.user_input = String::new();
-        self.completion.rec_i = USER_INPUT;
     }
 
     pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop> {

@@ -97,9 +97,9 @@ pub struct Filters {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum Region {
-    #[value(aliases(["na", "Na", "nA", "NorthAmerica", "northAmerica", "northamerica"]))]
+    #[value(aliases(["Na", "nA", "NorthAmerica", "northAmerica", "northamerica"]))]
     NA,
-    #[value(aliases(["eu", "Eu", "eU", "Europe", "europe"]))]
+    #[value(aliases(["Eu", "eU", "Europe", "europe"]))]
     EU,
     #[value(aliases(["APAC", "Asia", "AsiaPacific", "asia", "pacific"]))]
     Apac,

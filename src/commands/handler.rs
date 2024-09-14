@@ -172,8 +172,8 @@ pub async fn try_execute_command(
             Command::Quit => CommandHandle::exit(),
         },
         Err(err) => {
-            if let Err(err) = err.print() {
-                error!("{err}");
+            if let Err(prt_err) = err.print() {
+                error!("{err} {prt_err}");
             }
             CommandHandle::default()
         }

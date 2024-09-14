@@ -15,11 +15,14 @@ use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
     caching::{build_cache, read_cache, update_cache, Cache, ReadCache},
-    input::line::{init_completion, EventLoop, LineReader, NameScheme},
+    input::{
+        completion::{init_completion, CommandScheme},
+        line::{EventLoop, LineReader},
+    },
     subscriber::init_subscriber,
 };
 
-static COMPLETION: LazyLock<Vec<NameScheme>> = LazyLock::new(init_completion);
+static COMPLETION: LazyLock<CommandScheme> = LazyLock::new(init_completion);
 
 fn main() {
     let prev = std::panic::take_hook();
