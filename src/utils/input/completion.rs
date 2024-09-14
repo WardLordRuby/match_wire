@@ -284,25 +284,26 @@ impl LineReader<'_> {
             .split_once(' ')
             .map(|split| split.0.to_lowercase());
 
-        let mut tokens_rev = line_trim_start.rsplit(' ');
-        self.completion.input.user_input = if let Some(ending_token) = tokens_rev.next() {
-            if let Some(ref command) = self.completion.input.curr_command {
-                self.completion.input.curr_argument = tokens_rev
-                    .next()
-                    .and_then(|arg| {
-                        arg.starts_with('-').then(|| {
-                            let arg = arg.trim_start_matches('-').to_lowercase();
-                            (command != &arg).then_some(arg)
+        self.completion.input.user_input =
+            if let Some((beginning, ending_token)) = line_trim_start.rsplit_once(' ') {
+                if let Some(ref command) = self.completion.input.curr_command {
+                    self.completion.input.curr_argument = beginning
+                        .split_whitespace()
+                        .next_back()
+                        .and_then(|arg| {
+                            arg.starts_with('-').then(|| {
+                                let arg = arg.trim_start_matches('-').to_lowercase();
+                                (command != &arg).then_some(arg)
+                            })
                         })
-                    })
-                    .flatten();
+                        .flatten();
+                }
+                ending_token
+            } else {
+                line_trim_start
             }
-            ending_token
-        } else {
-            line_trim_start
-        }
-        .trim_start_matches('-')
-        .to_string();
+            .trim_start_matches('-')
+            .to_string();
 
         self.completion.curr_val = {
             let data_i = self
