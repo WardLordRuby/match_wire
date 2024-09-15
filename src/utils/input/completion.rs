@@ -9,7 +9,7 @@ const COMMANDS: usize = 0;
 const INVALID: usize = 1;
 
 // MARK: IMPROVE
-// we could solve name-space collisions by making the data structure into a tree
+// we could solve name-space collisions by making the data structure into a prefix-tree
 
 /// The current implementation only works when the name-space of commands, arguments, and fixed values do not overlap  
 /// overlaping names must return the exact same `RecData`, help is special cased to work as both a command and argument  
@@ -479,12 +479,6 @@ impl LineReader<'_> {
             return Ok(());
         }
 
-        let last = if self.completion.rec_i == USER_INPUT {
-            &self.completion.input.user_input
-        } else {
-            self.completion.recomendations[self.completion.rec_i as usize]
-        };
-
         self.completion.rec_i += by;
         match self.completion.rec_i {
             i if i >= USER_INPUT && i < self.completion.recomendations.len() as i8 => (),
@@ -499,47 +493,27 @@ impl LineReader<'_> {
                 self.completion.recomendations[self.completion.rec_i as usize]
             };
 
-            let format_arg = |last: &str, recomendation: &str| -> String {
-                format!(
-                    "{}{}{recomendation}",
-                    self.line
-                        .input()
-                        .trim_end_matches(last)
-                        .trim_end_matches('-'),
-                    if recomendation.is_empty() { "" } else { "--" }
-                )
-            };
-
-            let format_value = |recomendation: &str| -> String {
+            let format_line = |rec_is_arg: bool| -> String {
                 self.line.input().rsplit_once(' ').map_or_else(
                     || recomendation.to_string(),
-                    |split| format!("{} {recomendation}", split.0),
+                    |(pre, _)| {
+                        format!(
+                            "{pre} {}{recomendation}",
+                            if rec_is_arg && !recomendation.is_empty() {
+                                "--"
+                            } else {
+                                ""
+                            }
+                        )
+                    },
                 )
             };
 
-            match self.completion.rec_list[self.completion.curr_val] {
-                RecData {
-                    kind: RecKind::Argument,
-                    ..
-                } => format_arg(last, recomendation),
-                RecData {
-                    kind: RecKind::Value | RecKind::Command,
-                    ..
-                } => format_value(recomendation),
-                RecData {
-                    kind: RecKind::Help,
-                    ..
-                } => {
-                    if self.completion.input.curr_command.is_some() {
-                        format_arg(last, recomendation)
-                    } else {
-                        format_value(recomendation)
-                    }
-                }
-                RecData {
-                    kind: RecKind::UserDefined | RecKind::ValidInput | RecKind::Null,
-                    ..
-                } => unreachable!(),
+            match self.completion.rec_list[self.completion.curr_val].kind {
+                RecKind::Argument => format_line(true),
+                RecKind::Value | RecKind::Command => format_line(false),
+                RecKind::Help => format_line(self.completion.input.curr_command.is_some()),
+                RecKind::UserDefined | RecKind::ValidInput | RecKind::Null => unreachable!(),
             }
         };
         self.change_line(new_line)
