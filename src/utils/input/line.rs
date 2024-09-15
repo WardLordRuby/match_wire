@@ -30,6 +30,7 @@ pub struct LineData {
     prompt_len: u16,
     input: String,
     len: u16,
+    err: bool,
 }
 
 impl LineData {
@@ -49,6 +50,16 @@ impl LineData {
     #[inline]
     pub fn prompt(&self) -> &str {
         &self.prompt
+    }
+
+    #[inline]
+    pub fn found_err(&mut self, found: bool) {
+        self.err = found
+    }
+
+    #[inline]
+    pub fn err(&self) -> bool {
+        self.err
     }
 }
 
@@ -202,6 +213,7 @@ impl<'a> LineReader<'a> {
     fn reset_line_data(&mut self) {
         self.line.input.clear();
         self.line.len = 0;
+        self.line.err = false;
     }
 
     pub fn change_line(&mut self, line: String) -> io::Result<()> {

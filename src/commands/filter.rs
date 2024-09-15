@@ -40,6 +40,10 @@ fn populate_apac_cont_codes() -> HashSet<&'static str> {
     HashSet::from(APAC_CONT_CODES_ARR)
 }
 
+// MARK: TODO
+// walk through filter and makes sure that basic filter options still work in the event of can not
+// connect to the master server list
+
 fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
     let ips = if from.ends_with(COMMA) {

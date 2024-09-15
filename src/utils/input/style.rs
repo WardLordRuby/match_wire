@@ -88,7 +88,7 @@ impl FormatState {
 
 impl Display for LineData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (line_out, err) = stylize_input(self.input());
+        let (line_out, _) = stylize_input(self.input());
         write!(
             f,
             "{}{}{}",
@@ -96,7 +96,7 @@ impl Display for LineData {
             PROMPT_END
                 .bold()
                 .stylize()
-                .with(if err { Color::Red } else { Color::Reset }),
+                .with(if self.err() { Color::Red } else { Color::Reset }),
             line_out
         )
     }
