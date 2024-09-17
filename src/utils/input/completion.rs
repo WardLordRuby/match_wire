@@ -2,6 +2,7 @@ use crate::utils::input::line::LineReader;
 use std::{
     collections::{HashMap, HashSet},
     io,
+    ops::Range,
 };
 
 const NO_PARENT: &str = "NULL";
@@ -41,7 +42,6 @@ pub struct CommandScheme {
 /// `inner` must adhere to the following
 ///  - if `data.kind` is `Kind::Argument` `inner` must contain the same number of elements as `data.starting_alias`  
 ///  - for all other kinds `inner` must be `None`
-#[derive(Clone)]
 struct InnerScheme {
     /// data that describes recomendations context
     data: RecData,
@@ -50,7 +50,7 @@ struct InnerScheme {
     inner: Option<Vec<InnerScheme>>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct RecData {
     /// name of the parent entry
     parent: &'static str,
@@ -76,14 +76,29 @@ impl RecData {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 enum RecKind {
     Command,
     Argument,
-    Value,
-    UserDefined,
+    Value(Range<usize>),
+    UserDefined(Range<usize>),
     Help,
     Null,
+}
+
+impl RecKind {
+    fn user_defined_with_num_args(max: usize) -> Self {
+        RecKind::UserDefined(Range {
+            start: 1,
+            end: max.saturating_add(1),
+        })
+    }
+    fn value_with_num_args(max: usize) -> Self {
+        RecKind::Value(Range {
+            start: 1,
+            end: max.saturating_add(1),
+        })
+    }
 }
 
 impl InnerScheme {
@@ -174,11 +189,23 @@ pub fn init_completion() -> CommandScheme {
                 },
                 inner: Some(vec![
                     // limit
-                    InnerScheme::empty_with("filter", RecKind::UserDefined, false),
+                    InnerScheme::empty_with(
+                        "filter",
+                        RecKind::user_defined_with_num_args(1),
+                        false,
+                    ),
                     // player-min
-                    InnerScheme::empty_with("filter", RecKind::UserDefined, false),
+                    InnerScheme::empty_with(
+                        "filter",
+                        RecKind::user_defined_with_num_args(1),
+                        false,
+                    ),
                     // team-size-max
-                    InnerScheme::empty_with("filter", RecKind::UserDefined, false),
+                    InnerScheme::empty_with(
+                        "filter",
+                        RecKind::user_defined_with_num_args(1),
+                        false,
+                    ),
                     // region
                     InnerScheme {
                         data: RecData {
@@ -194,15 +221,23 @@ pub fn init_completion() -> CommandScheme {
                                 "pacific",
                                 "asiapacific",
                             ],
-                            kind: RecKind::Value,
+                            kind: RecKind::value_with_num_args(1),
                             end: false,
                         },
                         inner: None,
                     },
                     // includes
-                    InnerScheme::empty_with("filter", RecKind::UserDefined, false),
+                    InnerScheme::empty_with(
+                        "filter",
+                        RecKind::user_defined_with_num_args(usize::MAX),
+                        false,
+                    ),
                     // excludes
-                    InnerScheme::empty_with("filter", RecKind::UserDefined, false),
+                    InnerScheme::empty_with(
+                        "filter",
+                        RecKind::user_defined_with_num_args(usize::MAX),
+                        false,
+                    ),
                     // help
                     InnerScheme::help(),
                 ]),
@@ -220,7 +255,11 @@ pub fn init_completion() -> CommandScheme {
                     // history
                     InnerScheme::ending_rec("reconnect"),
                     // connect
-                    InnerScheme::empty_with("reconnect", RecKind::UserDefined, true),
+                    InnerScheme::empty_with(
+                        "reconnect",
+                        RecKind::user_defined_with_num_args(1),
+                        true,
+                    ),
                     // help
                     InnerScheme::help(),
                 ]),
@@ -292,7 +331,7 @@ impl From<&'static CommandScheme> for Completion {
                     {
                         list.push(&inner.data);
                         insert_index(map, argument, &inner.data, list);
-                        if let RecKind::Value = inner.data.kind {
+                        if let RecKind::Value(_) = inner.data.kind {
                             insert_rec_set(value_sets, &inner.data.recs, list.len() - 1);
                         }
                         walk_inner(inner, list, map, value_sets);
@@ -317,7 +356,7 @@ impl From<&'static CommandScheme> for Completion {
         {
             rec_list.push(&inner.data);
             insert_index(&mut rec_map, command, &inner.data, &rec_list);
-            if let RecKind::Value = inner.data.kind {
+            if let RecKind::Value(_) = inner.data.kind {
                 insert_rec_set(&mut value_sets, &inner.data.recs, rec_list.len() - 1);
             }
             walk_inner(inner, &mut rec_list, &mut rec_map, &mut value_sets);
@@ -427,26 +466,83 @@ impl Validity for Option<&SliceData> {
 }
 
 impl SliceData {
-    fn from_raw(byte_start: usize, slice_len: usize) -> Self {
-        SliceData {
+    fn from_raw(
+        byte_start: usize,
+        slice_len: usize,
+        expected: RecKind,
+        line: &str,
+        completion: &Completion,
+    ) -> Self {
+        let mut data = SliceData {
             byte_start,
             slice_len,
             hash_i: INVALID,
+        };
+        match expected {
+            RecKind::Command => data.hash_command(line, completion),
+            RecKind::Argument => data.hash_arg(line, completion),
+            _ => (),
         }
+        data
     }
 
-    fn try_parse_token_from_end(line: &str) -> Option<Self> {
+    fn try_parse_token_from_end(
+        line: &str,
+        expected: RecKind,
+        completion: &Completion,
+    ) -> Option<Self> {
         line.rfind(|c: char| !c.is_whitespace())
             .and_then(|token_end| {
                 let end = line.len() - (line.len() - token_end);
-                line[..=end]
-                    .rfind(char::is_whitespace)
-                    .map(|start| SliceData::from_raw(start + ' '.len_utf8(), end - start))
+                line[..=end].rfind(char::is_whitespace).map(|start| {
+                    SliceData::from_raw(
+                        start + ' '.len_utf8(),
+                        end - start,
+                        expected,
+                        line,
+                        completion,
+                    )
+                })
             })
     }
 
     fn to_slice<'a>(&self, line: &'a str) -> &'a str {
         &line[self.byte_start..self.byte_start + self.slice_len]
+    }
+
+    fn hash_command(&mut self, line: &str, completion: &Completion) {
+        let command_str = self.to_slice(line);
+        if command_str.starts_with('-') {
+            self.hash_i = INVALID;
+            return;
+        }
+        if let Some(&i) = completion.rec_map.get(command_str) {
+            if completion.rec_list[i].parent == ROOT {
+                self.hash_i = i;
+                return;
+            }
+        }
+        self.hash_i = INVALID
+    }
+
+    fn hash_arg(&mut self, line: &str, completion: &Completion) {
+        let command = completion
+            .curr_command()
+            .expect("can only set arg if command is valid")
+            .to_slice(line);
+        let arg_str = self.to_slice(line);
+        if !arg_str.starts_with('-') {
+            self.hash_i = INVALID;
+            return;
+        }
+        let arg_str = arg_str.trim_start_matches('-');
+        if let Some(&i) = completion.rec_map.get(arg_str) {
+            if completion.rec_list[i].parent == command {
+                self.hash_i = i;
+                return;
+            }
+        }
+        self.hash_i = INVALID
     }
 }
 
@@ -469,55 +565,6 @@ impl Completion {
     #[inline]
     fn curr_value(&self) -> Option<&SliceData> {
         self.input.curr_value.as_ref()
-    }
-
-    fn try_hash_command(&mut self, line: &str) -> bool {
-        if let Some(ref mut command) = self.input.curr_command {
-            if self.rec_list[command.hash_i].parent == ROOT {
-                return true;
-            }
-            let command_str = command.to_slice(line);
-            if command_str.starts_with('-') {
-                command.hash_i = INVALID;
-                return false;
-            }
-            if let Some(&i) = self.rec_map.get(command_str) {
-                if self.rec_list[i].parent == ROOT {
-                    command.hash_i = i;
-                    return true;
-                }
-            }
-            command.hash_i = INVALID;
-        }
-        false
-    }
-
-    fn try_hash_arg(&mut self, line: &str) -> bool {
-        if let Some(ref mut arg) = self.input.curr_argument {
-            let command = self
-                .input
-                .curr_command
-                .as_ref()
-                .expect("can only set arg if command is valid")
-                .to_slice(line);
-            if self.rec_list[arg.hash_i].parent == command {
-                return true;
-            }
-            let arg_str = arg.to_slice(line);
-            if !arg_str.starts_with('-') {
-                arg.hash_i = INVALID;
-                return false;
-            }
-            let arg_str = arg_str.trim_start_matches('-');
-            if let Some(&i) = self.rec_map.get(arg_str) {
-                if self.rec_list[i].parent == command {
-                    arg.hash_i = i;
-                    return true;
-                }
-            }
-            arg.hash_i = INVALID;
-        }
-        false
     }
 
     fn value_valid(&self, value: &str, i: usize) -> bool {
@@ -559,66 +606,87 @@ impl LineReader<'_> {
 
         self.completion.rec_i = USER_INPUT;
 
-        if self.user_input().is_empty() && !self.completion.try_hash_command(line_trim_start) {
+        if self.completion.curr_command().is_none()
+            && line_trim_start.ends_with(char::is_whitespace)
+        {
             self.completion.input.curr_command = line_trim_start
                 .split_once(char::is_whitespace)
-                .map(|(pre, _)| SliceData::from_raw(0, pre.len()));
-        }
-
-        if self.completion.curr_command().is_some_and_invalid() {
-            self.completion.try_hash_command(line_trim_start);
+                .map(|(pre, _)| {
+                    SliceData::from_raw(
+                        0,
+                        pre.len(),
+                        RecKind::Command,
+                        line_trim_start,
+                        &self.completion,
+                    )
+                });
         }
 
         if self.completion.curr_command().is_some_and_valid()
-            && !self.completion.try_hash_arg(line_trim_start)
-            && !self.completion.curr_arg().is_some_and_invalid()
-            && {
-                let command = self.completion.curr_command().expect("previous check");
-                line_trim_start[command.byte_start + command.slice_len..]
-                    .trim_start()
-                    .ends_with(char::is_whitespace)
-            }
+            && self.completion.curr_arg().is_none()
         {
-            // MARK: TODO
-            // debug and simplify this block
-            // still not correct need to restore arg state properly when token moves into the user input buffer
-            let mut last_token =
-                SliceData::try_parse_token_from_end(line_trim_start).expect("outer if");
-            last_token.hash_i = self
-                .completion
-                .rec_map
-                .get(last_token.to_slice(line_trim_start).trim_start_matches('-'))
-                .copied()
-                .unwrap_or(INVALID);
-            self.completion.input.curr_argument = if last_token.hash_i == INVALID {
-                if let Some(mut next_token) =
-                    SliceData::try_parse_token_from_end(&line_trim_start[..last_token.byte_start])
+            let command = self.completion.curr_command().expect("outer if");
+            self.completion.input.curr_argument = if line_trim_start[command.slice_len..]
+                .trim_start()
+                .ends_with(char::is_whitespace)
+            {
+                let mut prev_num_vals = 0;
+                let mut prev_arg = None;
+
+                for token in line_trim_start
+                    [command.slice_len..line_trim_start.len() - self.user_input().len()]
+                    .split_whitespace()
+                    .rev()
                 {
-                    next_token.hash_i = self
+                    if !token.starts_with('-') {
+                        prev_num_vals += 1
+                    } else {
+                        prev_arg = Some(token);
+                        break;
+                    }
+                }
+
+                let mut take_end = true;
+
+                if let (Some(arg), true) = (prev_arg, prev_num_vals > 0) {
+                    let hash = self
                         .completion
                         .rec_map
-                        .get(next_token.to_slice(line_trim_start).trim_start_matches('-'))
-                        .copied()
-                        .unwrap_or(INVALID);
-                    // dbg!(&next_token, self.completion.rec_list[next_token.hash_i]);
-                    match self.completion.rec_list[next_token.hash_i].kind {
-                        RecKind::UserDefined | RecKind::Value => Some(next_token),
+                        .get(arg.trim_start_matches('-'))
+                        .expect("curr_arg moved on to None so this previous arg was valid");
+
+                    match self.completion.rec_list[*hash].kind {
+                        RecKind::Value(ref r) | RecKind::UserDefined(ref r) => {
+                            if r.contains(&prev_num_vals) {
+                                take_end = false;
+                            }
+                        }
                         _ => unreachable!(),
                     }
+                }
+
+                if take_end {
+                    SliceData::try_parse_token_from_end(
+                        line_trim_start,
+                        RecKind::Argument,
+                        &self.completion,
+                    )
                 } else {
-                    Some(last_token)
+                    None
                 }
             } else {
-                Some(last_token)
-            }
+                SliceData::try_parse_token_from_end(
+                    &line_trim_start[..line_trim_start.len() - self.user_input().len()],
+                    RecKind::Argument,
+                    &self.completion,
+                )
+                .filter(|arg| {
+                    arg.hash_i != INVALID && arg.to_slice(line_trim_start).starts_with('-')
+                })
+            };
         }
 
-        if self.completion.curr_arg().is_some_and_invalid() {
-            self.completion.try_hash_arg(line_trim_start);
-        }
-
-        if self.completion.curr_arg().is_some_and_valid()
-            && !self.completion.curr_value().is_some_and_invalid()
+        if self.completion.curr_arg().is_some_and_valid() && self.completion.curr_value().is_none()
         {
             let arg = self.completion.curr_arg().expect("outer if");
             if line_trim_start[arg.byte_start + arg.slice_len..]
@@ -626,14 +694,16 @@ impl LineReader<'_> {
                 .ends_with(char::is_whitespace)
             {
                 match self.completion.rec_list[arg.hash_i].kind {
-                    RecKind::Value => {
-                        if let Some(value) = SliceData::try_parse_token_from_end(line_trim_start) {
+                    RecKind::Value(_) => {
+                        if let Some(value) = SliceData::try_parse_token_from_end(
+                            line_trim_start,
+                            // we expect Value but passing in value does nothing in try_parse
+                            RecKind::Null,
+                            &self.completion,
+                        ) {
                             if self
                                 .completion
-                                .value_sets
-                                .get(&arg.hash_i)
-                                .expect("kind value")
-                                .contains(value.to_slice(line_trim_start))
+                                .value_valid(value.to_slice(line_trim_start), arg.hash_i)
                             {
                                 self.completion.input.curr_argument = None;
                             } else {
@@ -641,7 +711,7 @@ impl LineReader<'_> {
                             }
                         };
                     }
-                    RecKind::UserDefined => {
+                    RecKind::UserDefined(_) => {
                         if line_trim_start[arg.byte_start + arg.slice_len..]
                             .trim_start()
                             .ends_with(char::is_whitespace)
@@ -755,9 +825,9 @@ impl LineReader<'_> {
 
             match self.completion.rec_list[self.completion.curr_i].kind {
                 RecKind::Argument => format_line(true),
-                RecKind::Value | RecKind::Command => format_line(false),
+                RecKind::Value(_) | RecKind::Command => format_line(false),
                 RecKind::Help => format_line(self.completion.input.curr_command.is_some()),
-                RecKind::UserDefined | RecKind::Null => unreachable!(),
+                RecKind::UserDefined(_) | RecKind::Null => unreachable!(),
             }
         };
 
@@ -773,25 +843,23 @@ impl LineReader<'_> {
 
     fn check_line_err(&self, user_input: &str) -> bool {
         match self.completion.rec_list[self.completion.curr_i].kind {
-            RecKind::Value
+            RecKind::Value(_)
                 if !self
                     .completion
                     .value_valid(user_input, self.completion.curr_i) =>
             {
                 true
             }
-            RecKind::UserDefined if self.completion.input.user_input.is_empty() => true,
+            RecKind::UserDefined(_) if self.completion.input.user_input.is_empty() => true,
             _ => false,
         }
     }
 
     pub fn reset_completion(&mut self) {
-        self.completion.input.curr_command = None;
-        self.completion.input.curr_argument = None;
+        self.completion.input = CompletionState::default();
         self.completion.curr_i = COMMANDS;
         let commands = self.completion.rec_list[COMMANDS];
         self.completion.recomendations = commands.recs[..commands.starting_alias].to_vec();
-        self.completion.input.user_input.clear();
         self.completion.rec_i = USER_INPUT;
     }
 }
