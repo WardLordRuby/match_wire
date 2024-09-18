@@ -388,19 +388,96 @@ struct CompletionState {
     curr_command: Option<SliceData>,
     curr_argument: Option<SliceData>,
     curr_value: Option<SliceData>,
-    user_input: String,
+    ending: LineEnd,
 }
 
 #[derive(Default, Debug)]
-/// representes a String slice entry into `Self.line().trim_start()`
+/// representes a String slice entry into `LineData.line().trim_start()`
 struct SliceData {
     byte_start: usize,
     slice_len: usize,
     hash_i: usize,
 }
 
+#[derive(Default, Debug)]
+struct LineEnd {
+    token: String,
+    open_quote: Option<(usize, char)>,
+}
+
 impl CompletionState {
-    /* ----------------------------------- Debug --------------------------------------- */
+    fn check_state(&mut self, line: &str) {
+        if let Some(ref command) = self.curr_command {
+            if self.ending.token == command.to_slice(line) {
+                (self.curr_command, self.curr_argument, self.curr_value) = (None, None, None);
+                return;
+            }
+        }
+        if let Some(ref arg) = self.curr_argument {
+            if self.ending.token == arg.to_slice(line) {
+                (self.curr_argument, self.curr_value) = (None, None);
+                return;
+            }
+        }
+        if let Some(ref value) = self.curr_value {
+            if self.ending.token == value.to_slice(line) {
+                self.curr_value = None;
+            }
+        }
+    }
+
+    fn update_curr_token(&mut self, line: &str) {
+        let curr_token = line
+            .rsplit_once(char::is_whitespace)
+            .map_or(line, |(_, suf)| suf);
+        self.ending.token = if let Some((l_i, quote)) = self.ending.open_quote {
+            if let Some(r_i) = line.rfind(quote) {
+                if r_i > l_i {
+                    self.ending.open_quote = None;
+                    &line[l_i..=r_i]
+                } else {
+                    let str = &line[l_i..];
+                    if !str.starts_with(quote) {
+                        self.ending.open_quote = None;
+                    }
+                    str
+                }
+            } else {
+                self.ending.open_quote = None;
+                curr_token
+            }
+        } else {
+            let char = self
+                .ending
+                .token
+                .starts_with(['\'', '\"'])
+                .then(|| self.ending.token.chars().next().expect("starts with quote"));
+
+            let r_find_result = match char {
+                Some(quote) => line.char_indices().rfind(|&(_, c)| c == quote),
+                None => line.char_indices().rfind(|&(_, c)| c == '\'' || c == '\"'),
+            };
+
+            if let Some((r_i, quote)) = r_find_result {
+                let quote_num = line.chars().filter(|&c| c == quote).count();
+                if quote_num & 1 == 0 {
+                    if curr_token.ends_with(quote) {
+                        let l_i = line[..r_i].rfind(quote).expect("quote num even");
+                        &line[l_i..=r_i]
+                    } else {
+                        curr_token
+                    }
+                } else {
+                    self.ending.open_quote = Some((r_i, quote));
+                    &line[r_i..]
+                }
+            } else {
+                curr_token
+            }
+        }
+        .to_string();
+    }
+    /* -------------------------------- Debug tool --------------------------------------- */
     // fn display(&self, line: &str) -> String {
     //     let inner_fmt = |slice_data: &SliceData| -> String {
     //         format!(
@@ -423,29 +500,10 @@ impl CompletionState {
     //         "    curr_value: {:?}\n",
     //         self.curr_value.as_ref().map(inner_fmt)
     //     ));
-    //     output.push_str(&format!("    user_input: {}\n", self.user_input));
+    //     output.push_str(&format!("    user_input: {:?}\n", self.ending));
     //     output
     // }
-
-    fn check_state(&mut self, line: &str) {
-        if let Some(ref command) = self.curr_command {
-            if self.user_input == command.to_slice(line) {
-                (self.curr_command, self.curr_argument, self.curr_value) = (None, None, None);
-                return;
-            }
-        }
-        if let Some(ref arg) = self.curr_argument {
-            if self.user_input == arg.to_slice(line) {
-                (self.curr_argument, self.curr_value) = (None, None);
-                return;
-            }
-        }
-        if let Some(ref value) = self.curr_value {
-            if self.user_input == value.to_slice(line) {
-                self.curr_value = None;
-            }
-        }
-    }
+    /* --------------------------------------------------------------------------------- */
 }
 
 trait Validity {
@@ -574,11 +632,18 @@ impl Completion {
 
 // MARK: TODO
 // port in open quote error from style
+// verify following error conditions are checked
+//   - arg before command
+//   - arg with no value
 
 impl LineReader<'_> {
     #[inline]
-    fn user_input(&self) -> &str {
-        &self.completion.input.user_input
+    fn curr_token(&self) -> &str {
+        &self.completion.input.ending.token
+    }
+    #[inline]
+    fn open_quote(&self) -> Option<&(usize, char)> {
+        self.completion.input.ending.open_quote.as_ref()
     }
 
     pub fn update_completeion(&mut self) {
@@ -588,11 +653,7 @@ impl LineReader<'_> {
             return;
         }
 
-        self.completion.input.user_input = line_trim_start
-            .rsplit_once(char::is_whitespace)
-            .map_or(line_trim_start, |(_, suf)| suf)
-            .to_string();
-
+        self.completion.input.update_curr_token(line_trim_start);
         self.completion.input.check_state(line_trim_start);
 
         if self.completion.rec_list[self.completion.curr_i].end
@@ -608,6 +669,7 @@ impl LineReader<'_> {
 
         if self.completion.curr_command().is_none()
             && line_trim_start.ends_with(char::is_whitespace)
+            && self.open_quote().is_none()
         {
             self.completion.input.curr_command = line_trim_start
                 .split_once(char::is_whitespace)
@@ -624,6 +686,7 @@ impl LineReader<'_> {
 
         if self.completion.curr_command().is_some_and_valid()
             && self.completion.curr_arg().is_none()
+            && self.open_quote().is_none()
         {
             let command = self.completion.curr_command().expect("outer if");
             self.completion.input.curr_argument = if line_trim_start[command.slice_len..]
@@ -633,8 +696,12 @@ impl LineReader<'_> {
                 let mut prev_num_vals = 0;
                 let mut prev_arg = None;
 
+                // MARK: IMPROVE
+                // quoted strings should be treated as one value
+                // in our case it doesn't affect our desired behavior since the only filters
+                // that take in strings have no upper limit on how many arguments can be entered
                 for token in line_trim_start
-                    [command.slice_len..line_trim_start.len() - self.user_input().len()]
+                    [command.slice_len..line_trim_start.len() - self.curr_token().len()]
                     .split_whitespace()
                     .rev()
                 {
@@ -676,7 +743,7 @@ impl LineReader<'_> {
                 }
             } else {
                 SliceData::try_parse_token_from_end(
-                    &line_trim_start[..line_trim_start.len() - self.user_input().len()],
+                    &line_trim_start[..line_trim_start.len() - self.curr_token().len()],
                     RecKind::Argument,
                     &self.completion,
                 )
@@ -686,7 +753,9 @@ impl LineReader<'_> {
             };
         }
 
-        if self.completion.curr_arg().is_some_and_valid() && self.completion.curr_value().is_none()
+        if self.completion.curr_arg().is_some_and_valid()
+            && self.completion.curr_value().is_none()
+            && self.open_quote().is_none()
         {
             let arg = self.completion.curr_arg().expect("outer if");
             if line_trim_start[arg.byte_start + arg.slice_len..]
@@ -761,12 +830,12 @@ impl LineReader<'_> {
             return;
         }
 
-        if self.completion.input.user_input.is_empty() {
+        if self.curr_token().is_empty() {
             self.completion.recomendations = rec_data.recs[..rec_data.starting_alias].to_vec();
             return;
         }
 
-        let input_lower = self.user_input().trim_start_matches('-').to_lowercase();
+        let input_lower = self.curr_token().trim_start_matches('-').to_lowercase();
 
         let mut recomendations = rec_data
             .recs
@@ -796,7 +865,7 @@ impl LineReader<'_> {
 
         let new_line = {
             let recomendation = if self.completion.rec_i == USER_INPUT {
-                &self.completion.input.user_input
+                self.curr_token()
             } else {
                 self.completion.recomendations[self.completion.rec_i as usize]
             };
@@ -850,7 +919,7 @@ impl LineReader<'_> {
             {
                 true
             }
-            RecKind::UserDefined(_) if self.completion.input.user_input.is_empty() => true,
+            RecKind::UserDefined(_) if self.curr_token().is_empty() => true,
             _ => false,
         }
     }
