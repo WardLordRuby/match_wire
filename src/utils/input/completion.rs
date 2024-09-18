@@ -575,7 +575,7 @@ impl SliceData {
             return;
         }
         if let Some(&i) = completion.rec_map.get(command_str) {
-            if completion.rec_list[i].parent == ROOT {
+            if completion.rec_list[i].parent == ROOT || completion.rec_list[i].parent == UNIVERSAL {
                 self.hash_i = i;
                 return;
             }
@@ -584,18 +584,20 @@ impl SliceData {
     }
 
     fn hash_arg(&mut self, line: &str, completion: &Completion) {
-        let command = completion
-            .curr_command()
-            .expect("can only set arg if command is valid")
-            .to_slice(line);
         let arg_str = self.to_slice(line);
         if !arg_str.starts_with('-') {
             self.hash_i = INVALID;
             return;
         }
+        let command = completion
+            .curr_command()
+            .expect("can only set arg if command is valid")
+            .to_slice(line);
         let arg_str = arg_str.trim_start_matches('-');
         if let Some(&i) = completion.rec_map.get(arg_str) {
-            if completion.rec_list[i].parent == command {
+            if completion.rec_list[i].parent == command
+                || completion.rec_list[i].parent == UNIVERSAL
+            {
                 self.hash_i = i;
                 return;
             }
@@ -629,12 +631,6 @@ impl Completion {
         self.value_sets.get(&i).expect("kind value").contains(value)
     }
 }
-
-// MARK: TODO
-// port in open quote error from style
-// verify following error conditions are checked
-//   - arg before command
-//   - arg with no value
 
 impl LineReader<'_> {
     #[inline]
@@ -757,6 +753,8 @@ impl LineReader<'_> {
             && self.completion.curr_value().is_none()
             && self.open_quote().is_none()
         {
+            // MARK: TODO
+            // quoted strings need to get moved into value position to avoid panic
             let arg = self.completion.curr_arg().expect("outer if");
             if line_trim_start[arg.byte_start + arg.slice_len..]
                 .trim_start()
@@ -817,12 +815,12 @@ impl LineReader<'_> {
 
         let rec_data = self.completion.rec_list[self.completion.curr_i];
 
-        // let err = self.check_line_err(self.completion.curr_value().unwrap_or_default());
-
         self.line.found_err(any_true!(
             self.completion.curr_command().is_some_and_invalid(),
             self.completion.curr_arg().is_some_and_invalid(),
-            // err
+            self.completion.curr_value().is_some(),
+            self.open_quote().is_some(),
+            self.check_line_err(self.curr_token())
         ));
 
         if rec_data.recs.is_empty() {

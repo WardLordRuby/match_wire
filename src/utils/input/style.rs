@@ -8,11 +8,6 @@ const BLUE: &str = "\x1b[38;5;38m";
 const GREY: &str = "\x1b[38;5;238m";
 const WHITE: &str = "\x1b[0m";
 
-// MARK: TODO
-// 1. Add error checks for
-//   - arg before command
-//   - arg with no value
-
 enum TextColor {
     Yellow,
     Blue,
@@ -36,7 +31,6 @@ struct FormatState {
     open_quote: Option<char>,
     white_space_start: usize,
     output: String,
-    err: bool,
 }
 
 impl FormatState {
@@ -46,7 +40,6 @@ impl FormatState {
             output: String::from(TextColor::Yellow.to_str()),
             white_space_start: 0,
             open_quote: None,
-            err: false,
         }
     }
 
@@ -88,7 +81,6 @@ impl FormatState {
 
 impl Display for LineData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (line_out, _) = stylize_input(self.input());
         write!(
             f,
             "{}{}{}",
@@ -97,12 +89,12 @@ impl Display for LineData {
                 .bold()
                 .stylize()
                 .with(if self.err() { Color::Red } else { Color::Reset }),
-            line_out
+            stylize_input(self.input())
         )
     }
 }
 
-fn stylize_input(input: &str) -> (String, bool) {
+fn stylize_input(input: &str) -> String {
     let mut ctx = FormatState::new();
 
     for token in input.split_whitespace() {
@@ -138,10 +130,7 @@ fn stylize_input(input: &str) -> (String, bool) {
     }
 
     if !matches!(ctx.curr_color, TextColor::White) {
-        if let TextColor::Blue = ctx.curr_color {
-            ctx.err = true;
-        }
         ctx.set_color(TextColor::White);
     }
-    (ctx.output, ctx.err)
+    ctx.output
 }

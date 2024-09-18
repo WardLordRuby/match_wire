@@ -71,7 +71,9 @@ pub struct History {
 }
 
 // MARK: TODO
-// 1. Add support for a movable cursor
+// Add support for a movable cursor
+// currently `CompletionState` only supports char events at line end
+// `CompletionState` will have to be carefully mannaged if cursor is moveable
 
 pub enum EventLoop {
     Continue,
