@@ -583,43 +583,36 @@ impl Completion {
         self.value_sets.get(&i).expect("kind value").contains(value)
     }
 
+    /// This function contains unchecked behavior if it is asked to also include a call to hash the `SliceData`  
+    /// `SliceData` is hashed when `RecKind::Command` or `RecKind::Argument` is passed in  
     fn try_parse_token_from_end(&self, line: &str, expected: RecKind) -> Option<SliceData> {
-        self.input
-            .ending
-            .open_quote
-            .is_none()
-            .then(|| {
-                let line_trim_end = line.trim_end();
-                if line_trim_end.ends_with(['\'', '\"']) {
-                    let quote = line_trim_end.chars().next_back().expect("outer if");
-                    let l_i = line_trim_end[..line_trim_end.len() - quote.len_utf8()].rfind(quote);
-                    debug_assert!(l_i.is_some(), "open quote is none yet still ends in quote");
-                    l_i.map(|l_i| {
-                        SliceData::from_raw_unchecked(
-                            l_i,
-                            line_trim_end.len() - l_i,
-                            expected,
-                            line,
-                            self,
-                        )
-                    })
-                } else {
-                    line.rfind(|c: char| !c.is_whitespace())
-                        .and_then(|token_end| {
-                            let end = line.len() - (line.len() - token_end);
-                            line[..=end].rfind(char::is_whitespace).map(|start| {
-                                SliceData::from_raw_unchecked(
-                                    start + ' '.len_utf8(),
-                                    end - start,
-                                    expected,
-                                    line,
-                                    self,
-                                )
-                            })
-                        })
+        if self.input.ending.open_quote.is_none() {
+            let line_trim_end = line.trim_end();
+            let start = if line_trim_end.ends_with(['\'', '\"']) {
+                let quote = line_trim_end.chars().next_back().expect("outer if");
+                line_trim_end[..line_trim_end.len() - quote.len_utf8()].rfind(quote)
+            } else {
+                let mut last = 0;
+                let mut chars = line_trim_end.char_indices();
+                while let Some((i, ch)) = chars.next_back() {
+                    if ch.is_whitespace() {
+                        break;
+                    }
+                    last = i
                 }
-            })
-            .flatten()
+                Some(last)
+            };
+            return start.map(|start| {
+                SliceData::from_raw_unchecked(
+                    start,
+                    line_trim_end.len() - start,
+                    expected,
+                    line,
+                    self,
+                )
+            });
+        }
+        None
     }
 
     fn hash_command_unchecked(&self, line: &str, command: &mut SliceData) {
@@ -669,6 +662,8 @@ impl LineReader<'_> {
     }
 
     fn check_value_err(&self, user_input: &str) -> bool {
+        // MARK: TODO
+        // check for if end and has trailing text
         match self.completion.rec_list[self.completion.curr_i].kind {
             RecKind::Value(_)
                 if !self
@@ -732,20 +727,20 @@ impl LineReader<'_> {
                 let mut prev_num_vals = 0;
                 let mut prev_arg = None;
 
-                // MARK: IMPROVE
-                // quoted strings should be treated as one value
-                // in our case it doesn't affect our desired behavior since the only arguments
-                // that take in strings have no upper limit on how many values can be entered
-                for token in line_trim_start
-                    [command.slice_len..line_trim_start.len() - self.curr_token().len()]
-                    .split_whitespace()
-                    .rev()
+                let search_slice = &line_trim_start
+                    [command.slice_len..line_trim_start.len() - self.curr_token().len()];
+                let mut end = search_slice.len();
+                while let Some(token) = self
+                    .completion
+                    .try_parse_token_from_end(&search_slice[..end], RecKind::Null)
                 {
-                    if !token.starts_with('-') {
-                        prev_num_vals += 1
-                    } else {
-                        prev_arg = Some(token);
+                    let str = token.to_slice_unchecked(search_slice);
+                    if str.starts_with('-') {
+                        prev_arg = Some(str);
                         break;
+                    } else {
+                        prev_num_vals += 1;
+                        end = token.byte_start;
                     }
                 }
 
@@ -759,13 +754,12 @@ impl LineReader<'_> {
                         .copied()
                         .unwrap_or(INVALID);
 
-                    match self.completion.rec_list[hash].kind {
-                        RecKind::Value(ref r) | RecKind::UserDefined(ref r) => {
-                            if r.contains(&prev_num_vals) {
-                                take_end = false;
-                            }
+                    if let RecKind::Value(ref r) | RecKind::UserDefined(ref r) =
+                        self.completion.rec_list[hash].kind
+                    {
+                        if r.contains(&prev_num_vals) {
+                            take_end = false;
                         }
-                        _ => (),
                     }
                 }
 
@@ -834,11 +828,7 @@ impl LineReader<'_> {
             self.completion.curr_arg(),
             self.completion.curr_value(),
         ) {
-            (Some(&SliceData { hash_i: i, .. }), Some(&SliceData { hash_i: j, .. }), Some(_))
-                if i != INVALID && j != INVALID =>
-            {
-                INVALID
-            }
+            (Some(_), Some(_), Some(_)) => INVALID,
             (Some(&SliceData { hash_i: i, .. }), Some(&SliceData { hash_i: j, .. }), None)
                 if i != INVALID && j != INVALID =>
             {
