@@ -5,12 +5,18 @@ use crossterm::{
     terminal::{self, Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
-use std::io::{self, Stdout, Write};
+use std::{
+    collections::VecDeque,
+    io::{self, Stdout, Write},
+};
 
 use crate::utils::input::{
     completion::{CommandScheme, Completion},
     style::PROMPT_END,
 };
+
+pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> (io::Result<EventLoop>, bool);
+pub type InitCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
 
 pub struct LineReader<'a> {
     pub completion: Completion,
@@ -22,6 +28,7 @@ pub struct LineReader<'a> {
     uneventful: bool,
     cursor_at_start: bool,
     command_entered: bool,
+    callback: VecDeque<Box<InputEventHook>>,
 }
 
 #[derive(Default)]
@@ -34,12 +41,25 @@ pub struct LineData {
 }
 
 impl LineData {
-    fn new(prompt: &str) -> Self {
+    fn new(mut prompt: String) -> Self {
+        if prompt.is_empty() {
+            prompt = LineData::default_prompt();
+        }
         LineData {
-            prompt_len: prompt.chars().count() as u16 + PROMPT_END.chars().count() as u16,
-            prompt: String::from(prompt),
+            prompt_len: LineData::prompt_len(&prompt),
+            prompt,
             ..Default::default()
         }
+    }
+
+    #[inline]
+    fn prompt_len(prompt: &str) -> u16 {
+        prompt.chars().count() as u16 + PROMPT_END.chars().count() as u16
+    }
+
+    #[inline]
+    pub fn default_prompt() -> String {
+        format!("{}.exe", env!("CARGO_PKG_NAME"))
     }
 
     #[inline]
@@ -83,7 +103,7 @@ pub enum EventLoop {
 
 impl<'a> LineReader<'a> {
     pub fn new(
-        prompt: &str,
+        prompt: String,
         term: &'a mut Stdout,
         name_ctx: &'static CommandScheme,
     ) -> io::Result<Self> {
@@ -96,6 +116,7 @@ impl<'a> LineReader<'a> {
             cursor_at_start: false,
             command_entered: true,
             completion: Completion::from(name_ctx),
+            callback: VecDeque::new(),
         };
         new.term.queue(cursor::EnableBlinking)?;
         Ok(new)
@@ -123,24 +144,39 @@ impl<'a> LineReader<'a> {
             .expect("only called after `self.enter_command()`")
     }
 
+    pub fn set_prompt(&mut self, prompt: String) {
+        self.line.prompt_len = LineData::prompt_len(&prompt);
+        self.line.prompt = prompt;
+    }
+
+    #[inline]
+    pub fn register_callback(&mut self, f: Box<InputEventHook>) {
+        self.callback.push_back(f);
+    }
+
+    #[inline]
     pub fn uneventful(&mut self) -> bool {
         std::mem::take(&mut self.uneventful)
     }
 
+    #[inline]
     pub fn command_entered(&mut self) -> bool {
         std::mem::take(&mut self.command_entered)
     }
 
+    #[inline]
     /// gets the number of lines wrapped
     pub fn line_height(&self, line_len: u16) -> u16 {
         line_len / self.term_size.0
     }
 
+    #[inline]
     /// gets the total length of the line (prompt + user input)
     pub fn line_len(&self) -> u16 {
         self.line.prompt_len.saturating_add(self.line.len)
     }
 
+    #[inline]
     fn line_remainder(&self, line_len: u16) -> u16 {
         line_len % self.term_size.0
     }
@@ -270,14 +306,21 @@ impl<'a> LineReader<'a> {
     }
 
     pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop> {
-        match event {
-            Event::Key(KeyEvent {
-                kind: KeyEventKind::Release,
+        if !self.callback.is_empty() {
+            if let Event::Key(KeyEvent {
+                kind: KeyEventKind::Press,
                 ..
-            }) => {
-                self.uneventful = true;
-                Ok(EventLoop::Continue)
+            }) = event
+            {
+                let callback = self.callback.pop_front().expect("outer if");
+                let (result, finished) = callback(self, event);
+                if !finished {
+                    self.callback.push_front(callback);
+                }
+                return result;
             }
+        }
+        match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
                 kind: KeyEventKind::Press,
@@ -285,9 +328,9 @@ impl<'a> LineReader<'a> {
                 ..
             }) => {
                 if self.line.input.is_empty() {
-                    // MARK: TODO
-                    // if H2M is is child_process ask to confirm app close
-                    return Ok(EventLoop::Break);
+                    self.line.input.push_str("quit");
+                    self.enter_command()?;
+                    return Ok(EventLoop::TryProcessCommand);
                 }
                 self.ctrl_c_line()?;
                 Ok(EventLoop::Continue)
@@ -356,7 +399,10 @@ impl<'a> LineReader<'a> {
                 self.term_size = (x, y);
                 Ok(EventLoop::Continue)
             }
-            _ => Ok(EventLoop::Continue),
+            _ => {
+                self.uneventful = true;
+                Ok(EventLoop::Continue)
+            }
         }
     }
 }

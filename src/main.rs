@@ -1,7 +1,7 @@
 use clap::CommandFactory;
 use cli::UserCommand;
 use commands::{
-    handler::{try_execute_command, CommandContextBuilder},
+    handler::{try_execute_command, CommandContextBuilder, CommandHandle},
     launch_h2m::{initalize_listener, launch_h2m_pseudo},
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
@@ -99,7 +99,7 @@ fn main() {
         execute!(term, cursor::Show).unwrap();
 
         let mut reader = EventStream::new();
-        let mut line_handle = LineReader::new("h2m_favorites.exe", &mut term, &COMPLETION).unwrap();
+        let mut line_handle = LineReader::new(String::new(), &mut term, &COMPLETION).unwrap();
 
         terminal::enable_raw_mode().unwrap();
 
@@ -110,8 +110,6 @@ fn main() {
             if !line_handle.uneventful() {
                 line_handle.render().unwrap();
             }
-            let mut processing_taks = Vec::new();
-            let event = reader.next();
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
                     update_cache(&command_context, &mut line_handle).await
@@ -123,7 +121,7 @@ fn main() {
                     terminal::disable_raw_mode().unwrap();
                     return;
                 }
-                Some(event_result) = event => {
+                Some(event_result) = reader.next() => {
                     match event_result {
                         Ok(event) => {
                             match line_handle.process_input_event(event) {
@@ -137,11 +135,16 @@ fn main() {
                                             continue;
                                         }
                                     };
-                                    if command_handle.exit {
-                                        break;
-                                    }
-                                    if let Some(join_handle) = command_handle.handle {
-                                        processing_taks.push(join_handle);
+                                    match command_handle {
+                                        CommandHandle::Processed => (),
+                                        CommandHandle::Callback((init_callback, input_hook)) => {
+                                            if let Err(err) = init_callback(&mut line_handle) {
+                                                error!("{err}");
+                                                break;
+                                            }
+                                            line_handle.register_callback(input_hook);
+                                        },
+                                        CommandHandle::Exit => break,
                                     }
                                 }
                                 Err(err) => {
@@ -155,11 +158,6 @@ fn main() {
                             break;
                         },
                     }
-                }
-            }
-            for task in processing_taks {
-                if let Err(err) = task.await {
-                    error!("{err}");
                 }
             }
         }

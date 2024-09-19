@@ -79,16 +79,16 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     let mut server_history = server_history_arc.lock().await;
     if server_history.is_empty() {
         error!("No joined servers in history, connect to a server to add it to history");
-        return CommandHandle::default();
+        return CommandHandle::Processed;
     }
     let cache_arc = context.cache();
     if args.history {
         display_history(&server_history, &cache_arc).await;
-        return CommandHandle::default();
+        return CommandHandle::Processed;
     }
     if let Err(err) = context.check_h2m_connection().await {
         error!("{err}");
-        return CommandHandle::default();
+        return CommandHandle::Processed;
     }
     let history_len = server_history.len();
     let cache = cache_arc.lock().await;
@@ -96,7 +96,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
         if num > 1 {
             if num as usize > history_len {
                 error!("{}", DisplayHistoryErr(history_len));
-                return CommandHandle::default();
+                return CommandHandle::Processed;
             }
             let entry = server_history.remove(history_len - num as usize);
             server_history.push(entry);
@@ -113,7 +113,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     } else {
         error!("Could not find server in cache")
     }
-    CommandHandle::default()
+    CommandHandle::Processed
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`

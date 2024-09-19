@@ -161,7 +161,7 @@ pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<(), Strin
     Ok(())
 }
 
-fn h2m_running() -> bool {
+pub fn h2m_running() -> bool {
     let mut result: bool = false;
     unsafe {
         EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize);
