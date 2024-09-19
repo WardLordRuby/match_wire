@@ -22,8 +22,8 @@ macro_rules! any_true {
 // MARK: IMPROVE
 // we could solve name-space collisions by making the data structure into a prefix-tree
 
-/// The current implementation only works when the name-space of commands and arguments do not overlap, overlaping  
-/// names must return the exact same `RecData`, help is special cased to work as both a command and argument  
+/// The current implementation only works when the name-space of commands, arguments, and their aliases do not overlap,  
+/// overlaping names must return the exact same `RecData`, help is special cased to work as both a command and argument  
 /// `inner` must ALWAYS contain the same number of elements as `commands.starting_alias`  
 pub struct CommandScheme {
     /// command names followed by aliases
@@ -40,7 +40,7 @@ pub struct CommandScheme {
 /// - Recomendations within `data` set as `Kind::Value` will be flattened into a HashSet.  
 ///   Access to the set is provided through a seprate map `value_sets` where the lookup key  
 ///   is the index you get back from `rec_map` when hasing the parent node  
-/// - `RecKinds` `Value` and `UserInput` must provide a `Range<usize>` of inputs that are expected to follow  
+/// - `RecKinds`: `Value` and `UserInput` must provide a `Range<usize>` of inputs that are expected to follow  
 ///
 /// field `data` must adhere to the following  
 ///  - kind can not be `Kind::Command` commands are only supported at the top level  
@@ -57,11 +57,11 @@ struct InnerScheme {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub struct RecData {
+struct RecData {
     /// name of the parent entry
     parent: &'static str,
-    /// the starting index of aliases
-    starting_alias: usize,
+    /// required data if this node contains any aliases
+    alias: Option<AliasData>,
     /// recomendations followed by recomendation aliases
     recs: Vec<&'static str>,
     /// kind of data stored
@@ -70,15 +70,26 @@ pub struct RecData {
     end: bool,
 }
 
+#[derive(PartialEq, Eq, Debug)]
+struct AliasData {
+    /// index of rec in `recs` -> index of alias in `recs`
+    rec_mapping: Vec<(usize, usize)>,
+}
+
 impl RecData {
     fn empty() -> Self {
         RecData {
             parent: NO_PARENT,
-            starting_alias: 0,
+            alias: None,
             recs: Vec::new(),
             kind: RecKind::Null,
             end: true,
         }
+    }
+    fn unique_rec_end(&self) -> usize {
+        self.alias.as_ref().map_or(self.recs.len(), |data| {
+            self.recs.len() - data.rec_mapping.len()
+        })
     }
 }
 
@@ -114,7 +125,7 @@ impl InnerScheme {
         InnerScheme {
             data: RecData {
                 parent,
-                starting_alias: 0,
+                alias: None,
                 recs: Vec::new(),
                 kind,
                 end,
@@ -126,7 +137,7 @@ impl InnerScheme {
         InnerScheme {
             data: RecData {
                 parent: UNIVERSAL,
-                starting_alias: 0,
+                alias: None,
                 recs: Vec::new(),
                 kind: RecKind::Help,
                 end: true,
@@ -138,7 +149,7 @@ impl InnerScheme {
         InnerScheme {
             data: RecData {
                 parent,
-                starting_alias: 0,
+                alias: None,
                 recs: Vec::new(),
                 kind: RecKind::Null,
                 end: true,
@@ -154,7 +165,9 @@ pub fn init_completion() -> CommandScheme {
     CommandScheme {
         commands: RecData {
             parent: NO_PARENT,
-            starting_alias: 10,
+            alias: Some(AliasData {
+                rec_mapping: vec![(3, 10), (3, 11), (4, 12), (4, 13), (5, 14), (6, 15)],
+            }),
             recs: vec![
                 "filter",
                 "reconnect",
@@ -182,7 +195,7 @@ pub fn init_completion() -> CommandScheme {
             InnerScheme {
                 data: RecData {
                     parent: ROOT,
-                    starting_alias: 7,
+                    alias: None,
                     recs: vec![
                         "limit",
                         "player-min",
@@ -218,7 +231,9 @@ pub fn init_completion() -> CommandScheme {
                     InnerScheme {
                         data: RecData {
                             parent: "filter",
-                            starting_alias: 3,
+                            alias: Some(AliasData {
+                                rec_mapping: vec![(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)],
+                            }),
                             recs: vec![
                                 "na",
                                 "eu",
@@ -254,7 +269,7 @@ pub fn init_completion() -> CommandScheme {
             InnerScheme {
                 data: RecData {
                     parent: ROOT,
-                    starting_alias: 3,
+                    alias: None,
                     recs: vec!["history", "connect", "help"],
                     kind: RecKind::Argument,
                     end: false,
@@ -309,10 +324,11 @@ impl From<&'static CommandScheme> for Completion {
         fn insert_index(
             map: &mut HashMap<&'static str, usize>,
             key: &'static str,
+            val: usize,
             data: &'static RecData,
             list: &[&'static RecData],
         ) {
-            assert!(match map.insert(key, list.len() - 1) {
+            assert!(match map.insert(key, val) {
                 None => true,
                 Some(j) => list[j] == data,
             });
@@ -326,21 +342,33 @@ impl From<&'static CommandScheme> for Completion {
         ) {
             match inner.data {
                 RecData {
-                    starting_alias,
+                    ref alias,
                     ref recs,
                     kind: RecKind::Argument,
                     ..
                 } => {
-                    assert_eq!(starting_alias, inner.inner.as_ref().unwrap().len());
-                    for (&argument, inner) in recs
+                    let expected_len = inner.data.unique_rec_end();
+                    assert_eq!(expected_len, inner.inner.as_ref().unwrap().len());
+                    for (i, (&argument, inner)) in recs
                         .iter()
                         .zip(inner.inner.as_ref().expect("is some"))
-                        .take(starting_alias)
+                        .enumerate()
+                        .take(expected_len)
                     {
                         list.push(&inner.data);
-                        insert_index(map, argument, &inner.data, list);
+                        let l_i = list.len() - 1;
+                        insert_index(map, argument, l_i, &inner.data, list);
+                        if let Some(ref data) = alias {
+                            data.rec_mapping
+                                .iter()
+                                .filter(|(rec_i, _)| *rec_i == i)
+                                .map(|&(_, alias_i)| recs[alias_i])
+                                .for_each(|alias| {
+                                    insert_index(map, alias, l_i, &inner.data, list);
+                                });
+                        }
                         if let RecKind::Value(_) = inner.data.kind {
-                            insert_rec_set(value_sets, &inner.data.recs, list.len() - 1);
+                            insert_rec_set(value_sets, &inner.data.recs, l_i);
                         }
                         walk_inner(inner, list, map, value_sets);
                     }
@@ -349,28 +377,40 @@ impl From<&'static CommandScheme> for Completion {
             }
         }
 
-        assert_eq!(value.commands.starting_alias, value.inner.len());
+        let expected_len = value.commands.unique_rec_end();
+        assert_eq!(expected_len, value.inner.len());
         let mut rec_map = HashMap::new();
         let mut value_sets = HashMap::new();
         let mut rec_list = Vec::new();
         rec_list.push(&value.commands);
         rec_list.push(&value.empty);
-        for (&command, inner) in value
+        for (i, (&command, inner)) in value
             .commands
             .recs
             .iter()
             .zip(value.inner.iter())
-            .take(value.commands.starting_alias)
+            .enumerate()
+            .take(expected_len)
         {
             rec_list.push(&inner.data);
-            insert_index(&mut rec_map, command, &inner.data, &rec_list);
+            let l_i = rec_list.len() - 1;
+            insert_index(&mut rec_map, command, l_i, &inner.data, &rec_list);
+            if let Some(ref data) = value.commands.alias {
+                data.rec_mapping
+                    .iter()
+                    .filter(|(rec_i, _)| *rec_i == i)
+                    .map(|&(_, alias_i)| value.commands.recs[alias_i])
+                    .for_each(|alias| {
+                        insert_index(&mut rec_map, alias, l_i, &inner.data, &rec_list);
+                    });
+            }
             if let RecKind::Value(_) = inner.data.kind {
-                insert_rec_set(&mut value_sets, &inner.data.recs, rec_list.len() - 1);
+                insert_rec_set(&mut value_sets, &inner.data.recs, l_i);
             }
             walk_inner(inner, &mut rec_list, &mut rec_map, &mut value_sets);
         }
         Completion {
-            recomendations: value.commands.recs[..value.commands.starting_alias].to_vec(),
+            recomendations: value.commands.recs[..expected_len].to_vec(),
             rec_i: USER_INPUT,
             input: CompletionState::default(),
             rec_map,
@@ -443,7 +483,7 @@ impl CompletionState {
             .map_or(line, |(_, suf)| suf);
         self.ending.token = if let Some((l_i, quote)) = self.ending.open_quote {
             if let Some(r_i) = line.rfind(quote) {
-                if r_i > l_i {
+                if l_i < r_i {
                     self.ending.open_quote = None;
                     &line[l_i..=r_i]
                 } else {
@@ -585,8 +625,6 @@ impl Completion {
         self.value_sets.get(&i).expect("kind value").contains(value)
     }
 
-    /// This function contains unchecked behavior if it is asked to also include a call to hash the `SliceData`  
-    /// `SliceData` is hashed when `RecKind::Command` or `RecKind::Argument` is passed in  
     fn try_parse_token_from_end(&self, line: &str, expected: RecKind) -> Option<SliceData> {
         if self.input.ending.open_quote.is_none() {
             let line_trim_end = line.trim_end();
@@ -614,12 +652,13 @@ impl Completion {
     }
 
     /// only counts values that follow the last argument
-    fn count_args_in_slice_unchecked<'a>(&self, slice: &'a str) -> (Option<&'a str>, usize) {
+    fn count_args_in_slice<'a>(&self, slice: &'a str) -> (Option<&'a str>, usize) {
         let mut prev_num_vals = 0;
         let mut prev_arg = None;
         let mut end = slice.len();
 
         while let Some(token) = self.try_parse_token_from_end(&slice[..end], RecKind::Null) {
+            // the input slice never gets modified so we know it will always be safe to turn back into a slice
             let str = token.to_slice_unchecked(slice);
             if str.starts_with('-') {
                 prev_arg = Some(str);
@@ -697,7 +736,7 @@ impl LineReader<'_> {
             }
             RecKind::UserDefined(_) if trailing.is_empty() => true,
             RecKind::UserDefined(ref r)
-                if !r.contains(&self.completion.count_args_in_slice_unchecked(trailing).1) =>
+                if !r.contains(&self.completion.count_args_in_slice(trailing).1) =>
             {
                 true
             }
@@ -759,8 +798,7 @@ impl LineReader<'_> {
 
                 let mut take_end = true;
 
-                let (prev_arg, prev_num_vals) =
-                    self.completion.count_args_in_slice_unchecked(search_slice);
+                let (prev_arg, prev_num_vals) = self.completion.count_args_in_slice(search_slice);
 
                 if let (Some(arg), true) = (prev_arg, prev_num_vals > 0) {
                     let hash = self
@@ -871,7 +909,8 @@ impl LineReader<'_> {
         }
 
         if self.curr_token().is_empty() {
-            self.completion.recomendations = rec_data.recs[..rec_data.starting_alias].to_vec();
+            let end = rec_data.unique_rec_end();
+            self.completion.recomendations = rec_data.recs[..end].to_vec();
             return;
         }
 
@@ -955,7 +994,8 @@ impl LineReader<'_> {
         self.completion.input = CompletionState::default();
         self.completion.curr_i = COMMANDS;
         let commands = self.completion.rec_list[COMMANDS];
-        self.completion.recomendations = commands.recs[..commands.starting_alias].to_vec();
+        let end = commands.unique_rec_end();
+        self.completion.recomendations = commands.recs[..end].to_vec();
         self.completion.rec_i = USER_INPUT;
     }
 }
