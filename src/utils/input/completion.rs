@@ -77,7 +77,7 @@ impl RecData {
             starting_alias: 0,
             recs: Vec::new(),
             kind: RecKind::Null,
-            end: false,
+            end: true,
         }
     }
 }
@@ -414,24 +414,27 @@ struct LineEnd {
 }
 
 impl CompletionState {
-    fn check_state_unchecked(&mut self, line: &str) {
+    /// returns `true` if method modifies `self`
+    fn check_state(&mut self, line: &str) -> bool {
         if let Some(ref command) = self.curr_command {
-            if self.ending.token == command.to_slice_unchecked(line) {
+            if line.len() == command.byte_start + command.slice_len {
                 (self.curr_command, self.curr_argument, self.curr_value) = (None, None, None);
-                return;
+                return true;
             }
         }
         if let Some(ref arg) = self.curr_argument {
-            if self.ending.token == arg.to_slice_unchecked(line) {
+            if line.len() == arg.byte_start + arg.slice_len {
                 (self.curr_argument, self.curr_value) = (None, None);
-                return;
+                return true;
             }
         }
         if let Some(ref value) = self.curr_value {
-            if self.ending.token == value.to_slice_unchecked(line) {
+            if line.len() == value.byte_start + value.slice_len {
                 self.curr_value = None;
+                return true;
             }
         }
+        false
     }
 
     fn update_curr_token(&mut self, line: &str) {
@@ -559,11 +562,10 @@ impl SliceData {
 
 impl Completion {
     #[inline]
-    fn last_key_unchecked<'a>(&self, line: &'a str) -> Option<&'a str> {
+    fn last_key(&self) -> Option<&SliceData> {
         self.curr_value()
             .or(self.curr_arg())
             .or(self.curr_command())
-            .map(|key| key.to_slice_unchecked(line))
     }
     #[inline]
     fn curr_command(&self) -> Option<&SliceData> {
@@ -602,17 +604,32 @@ impl Completion {
                 }
                 Some(last)
             };
-            return start.map(|start| {
-                SliceData::from_raw_unchecked(
-                    start,
-                    line_trim_end.len() - start,
-                    expected,
-                    line,
-                    self,
-                )
-            });
+            if let Some(byte_start) = start {
+                let len = line_trim_end.len() - byte_start;
+                return (len > 0)
+                    .then(|| SliceData::from_raw_unchecked(byte_start, len, expected, line, self));
+            }
         }
         None
+    }
+
+    /// only counts values that follow the last argument
+    fn count_args_in_slice_unchecked<'a>(&self, slice: &'a str) -> (Option<&'a str>, usize) {
+        let mut prev_num_vals = 0;
+        let mut prev_arg = None;
+        let mut end = slice.len();
+
+        while let Some(token) = self.try_parse_token_from_end(&slice[..end], RecKind::Null) {
+            let str = token.to_slice_unchecked(slice);
+            if str.starts_with('-') {
+                prev_arg = Some(str);
+                break;
+            } else {
+                prev_num_vals += 1;
+                end = token.byte_start;
+            }
+        }
+        (prev_arg, prev_num_vals)
     }
 
     fn hash_command_unchecked(&self, line: &str, command: &mut SliceData) {
@@ -662,9 +679,15 @@ impl LineReader<'_> {
     }
 
     fn check_value_err(&self, user_input: &str) -> bool {
-        // MARK: TODO
-        // check for if end and has trailing text
-        match self.completion.rec_list[self.completion.curr_i].kind {
+        let curr_rec = self.completion.rec_list[self.completion.curr_i];
+        let input = self.line.input().trim_start();
+        let trailing = self
+            .completion
+            .last_key()
+            .map(|key| &input[key.byte_start + key.slice_len..])
+            .unwrap_or_else(|| input)
+            .trim();
+        match curr_rec.kind {
             RecKind::Value(_)
                 if !self
                     .completion
@@ -672,7 +695,13 @@ impl LineReader<'_> {
             {
                 true
             }
-            RecKind::UserDefined(_) if self.curr_token().is_empty() => true,
+            RecKind::UserDefined(_) if trailing.is_empty() => true,
+            RecKind::UserDefined(ref r)
+                if !r.contains(&self.completion.count_args_in_slice_unchecked(trailing).1) =>
+            {
+                true
+            }
+            RecKind::Help | RecKind::Null if !trailing.is_empty() => true,
             _ => false,
         }
     }
@@ -685,14 +714,15 @@ impl LineReader<'_> {
         }
 
         self.completion.input.update_curr_token(line_trim_start);
-        self.completion.input.check_state_unchecked(line_trim_start);
+        let state_changed = self.completion.input.check_state(line_trim_start);
 
-        if self.completion.rec_list[self.completion.curr_i].end
-            && self
-                .completion
-                .last_key_unchecked(line_trim_start)
-                .is_some_and(|last| line_trim_start.contains(last))
-        {
+        if self.completion.rec_list[self.completion.curr_i].end && !state_changed {
+            self.line.found_err(any_true!(
+                self.completion.curr_command().is_some_and_invalid(),
+                self.completion.curr_arg().is_some_and_invalid(),
+                self.completion.curr_value().is_some(),
+                self.check_value_err(self.curr_token())
+            ));
             return;
         }
 
@@ -724,27 +754,13 @@ impl LineReader<'_> {
                 .trim_start()
                 .ends_with(char::is_whitespace)
             {
-                let mut prev_num_vals = 0;
-                let mut prev_arg = None;
-
                 let search_slice = &line_trim_start
                     [command.slice_len..line_trim_start.len() - self.curr_token().len()];
-                let mut end = search_slice.len();
-                while let Some(token) = self
-                    .completion
-                    .try_parse_token_from_end(&search_slice[..end], RecKind::Null)
-                {
-                    let str = token.to_slice_unchecked(search_slice);
-                    if str.starts_with('-') {
-                        prev_arg = Some(str);
-                        break;
-                    } else {
-                        prev_num_vals += 1;
-                        end = token.byte_start;
-                    }
-                }
 
                 let mut take_end = true;
+
+                let (prev_arg, prev_num_vals) =
+                    self.completion.count_args_in_slice_unchecked(search_slice);
 
                 if let (Some(arg), true) = (prev_arg, prev_num_vals > 0) {
                     let hash = self
