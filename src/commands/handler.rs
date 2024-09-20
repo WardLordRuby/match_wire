@@ -7,7 +7,10 @@ use crate::{
     },
     utils::{
         caching::{build_cache, Cache},
-        input::line::{EventLoop, InitCallback, InputEventHook, LineData, LineReader},
+        input::{
+            line::{EventLoop, InitCallback, InputEventHook, LineData, LineReader},
+            style::WHITE,
+        },
     },
     CACHED_DATA,
 };
@@ -272,7 +275,7 @@ struct DisplayLogs<'a>(&'a [String]);
 impl<'a> Display for DisplayLogs<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for line in self.0 {
-            writeln!(f, "{line}")?;
+            writeln!(f, "{line}{WHITE}")?;
         }
         Ok(())
     }

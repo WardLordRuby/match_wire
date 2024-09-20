@@ -3,10 +3,10 @@ use crossterm::style::{Color, Stylize};
 use std::fmt::Display;
 
 pub const PROMPT_END: &str = "> ";
-const YELLOW: &str = "\x1b[0;33m";
-const BLUE: &str = "\x1b[38;5;38m";
-const GREY: &str = "\x1b[38;5;238m";
-const WHITE: &str = "\x1b[0m";
+pub const YELLOW: &str = "\x1b[0;33m";
+pub const BLUE: &str = "\x1b[38;5;38m";
+pub const GREY: &str = "\x1b[38;5;238m";
+pub const WHITE: &str = "\x1b[0m";
 
 enum TextColor {
     Yellow,
