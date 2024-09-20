@@ -5,7 +5,6 @@ use std::{
     ops::Range,
 };
 
-const NO_PARENT: &str = "NULL";
 const ROOT: &str = "ROOT";
 const UNIVERSAL: &str = "ANY";
 
@@ -59,7 +58,7 @@ struct InnerScheme {
 #[derive(PartialEq, Eq, Debug)]
 struct RecData {
     /// name of the parent entry
-    parent: &'static str,
+    parent: Option<&'static str>,
     /// required data if this node contains any aliases
     alias: Option<AliasData>,
     /// recomendations followed by recomendation aliases
@@ -79,7 +78,7 @@ struct AliasData {
 impl RecData {
     fn empty() -> Self {
         RecData {
-            parent: NO_PARENT,
+            parent: None,
             alias: None,
             recs: Vec::new(),
             kind: RecKind::Null,
@@ -124,7 +123,7 @@ impl InnerScheme {
     fn empty_with(parent: &'static str, kind: RecKind, end: bool) -> Self {
         InnerScheme {
             data: RecData {
-                parent,
+                parent: Some(parent),
                 alias: None,
                 recs: Vec::new(),
                 kind,
@@ -136,7 +135,7 @@ impl InnerScheme {
     fn help() -> Self {
         InnerScheme {
             data: RecData {
-                parent: UNIVERSAL,
+                parent: Some(UNIVERSAL),
                 alias: None,
                 recs: Vec::new(),
                 kind: RecKind::Help,
@@ -148,7 +147,7 @@ impl InnerScheme {
     fn ending_rec(parent: &'static str) -> Self {
         InnerScheme {
             data: RecData {
-                parent,
+                parent: Some(parent),
                 alias: None,
                 recs: Vec::new(),
                 kind: RecKind::Null,
@@ -164,7 +163,7 @@ impl InnerScheme {
 pub fn init_completion() -> CommandScheme {
     CommandScheme {
         commands: RecData {
-            parent: NO_PARENT,
+            parent: None,
             alias: Some(AliasData {
                 rec_mapping: vec![(3, 10), (3, 11), (4, 12), (4, 13), (5, 14), (6, 15)],
             }),
@@ -194,7 +193,7 @@ pub fn init_completion() -> CommandScheme {
             // filter
             InnerScheme {
                 data: RecData {
-                    parent: ROOT,
+                    parent: Some(ROOT),
                     alias: None,
                     recs: vec![
                         "limit",
@@ -230,7 +229,7 @@ pub fn init_completion() -> CommandScheme {
                     // region
                     InnerScheme {
                         data: RecData {
-                            parent: "filter",
+                            parent: Some("filter"),
                             alias: Some(AliasData {
                                 rec_mapping: vec![(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)],
                             }),
@@ -268,7 +267,7 @@ pub fn init_completion() -> CommandScheme {
             // reconnect
             InnerScheme {
                 data: RecData {
-                    parent: ROOT,
+                    parent: Some(ROOT),
                     alias: None,
                     recs: vec!["history", "connect", "help"],
                     kind: RecKind::Argument,
@@ -416,19 +415,24 @@ impl From<&'static CommandScheme> for Completion {
             rec_map,
             rec_list,
             value_sets,
-            curr_i: COMMANDS,
+            data_set_i: COMMANDS,
         }
     }
 }
 
+/// on startup the `CommandScheme` tree structure gets flattended into this struct to provide  
+/// efficent lookups to the correct data that should be used to compute the best recomendations  
+/// for the user with any given input. `Completion` also holds the current line state in field `input`  
+/// `CompletionState` aims to provide accurate slices into the string `LineReader.line.input`  
+/// since this struct is nested within `LineReader` we manage str slicing by indexes and lens   
 pub struct Completion {
     recomendations: Vec<&'static str>,
     rec_i: i8,
     input: CompletionState,
-    curr_i: usize,
+    data_set_i: usize,
+    rec_list: Vec<&'static RecData>,
     rec_map: HashMap<&'static str, usize>,
     value_sets: HashMap<usize, HashSet<&'static str>>,
-    rec_list: Vec<&'static RecData>,
 }
 
 #[derive(Default, Debug)]
@@ -678,9 +682,11 @@ impl Completion {
             return;
         }
         if let Some(&i) = self.rec_map.get(command_str) {
-            if self.rec_list[i].parent == ROOT || self.rec_list[i].parent == UNIVERSAL {
-                command.hash_i = i;
-                return;
+            if let Some(parent) = self.rec_list[i].parent {
+                if parent == ROOT || parent == UNIVERSAL {
+                    command.hash_i = i;
+                    return;
+                }
             }
         }
         command.hash_i = INVALID
@@ -698,9 +704,11 @@ impl Completion {
             .to_slice_unchecked(line);
         let arg_str = arg_str.trim_start_matches('-');
         if let Some(&i) = self.rec_map.get(arg_str) {
-            if self.rec_list[i].parent == command || self.rec_list[i].parent == UNIVERSAL {
-                arg.hash_i = i;
-                return;
+            if let Some(parent) = self.rec_list[i].parent {
+                if parent == command || parent == UNIVERSAL {
+                    arg.hash_i = i;
+                    return;
+                }
             }
         }
         arg.hash_i = INVALID
@@ -718,7 +726,7 @@ impl LineReader<'_> {
     }
 
     fn check_value_err(&self, user_input: &str) -> bool {
-        let curr_rec = self.completion.rec_list[self.completion.curr_i];
+        let curr_rec = self.completion.rec_list[self.completion.data_set_i];
         let input = self.line.input().trim_start();
         let trailing = self
             .completion
@@ -730,7 +738,7 @@ impl LineReader<'_> {
             RecKind::Value(_)
                 if !self
                     .completion
-                    .value_valid(user_input, self.completion.curr_i) =>
+                    .value_valid(user_input, self.completion.data_set_i) =>
             {
                 true
             }
@@ -755,7 +763,7 @@ impl LineReader<'_> {
         self.completion.input.update_curr_token(line_trim_start);
         let state_changed = self.completion.input.check_state(line_trim_start);
 
-        if self.completion.rec_list[self.completion.curr_i].end && !state_changed {
+        if self.completion.rec_list[self.completion.data_set_i].end && !state_changed {
             self.line.found_err(any_true!(
                 self.completion.curr_command().is_some_and_invalid(),
                 self.completion.curr_arg().is_some_and_invalid(),
@@ -877,7 +885,7 @@ impl LineReader<'_> {
 
         // eprintln!("{}", self.completion.input.display(line_trim_start));
 
-        self.completion.curr_i = match (
+        self.completion.data_set_i = match (
             self.completion.curr_command(),
             self.completion.curr_arg(),
             self.completion.curr_value(),
@@ -893,7 +901,7 @@ impl LineReader<'_> {
             _ => INVALID,
         };
 
-        let rec_data = self.completion.rec_list[self.completion.curr_i];
+        let rec_data = self.completion.rec_list[self.completion.data_set_i];
 
         self.line.found_err(any_true!(
             self.completion.curr_command().is_some_and_invalid(),
@@ -971,7 +979,7 @@ impl LineReader<'_> {
                     )
             };
 
-            match self.completion.rec_list[self.completion.curr_i].kind {
+            match self.completion.rec_list[self.completion.data_set_i].kind {
                 RecKind::Argument => format_line(true),
                 RecKind::Value(_) | RecKind::Command => format_line(false),
                 RecKind::Help => format_line(self.completion.curr_command().is_some()),
@@ -992,7 +1000,7 @@ impl LineReader<'_> {
 
     pub fn reset_completion(&mut self) {
         self.completion.input = CompletionState::default();
-        self.completion.curr_i = COMMANDS;
+        self.completion.data_set_i = COMMANDS;
         let commands = self.completion.rec_list[COMMANDS];
         let end = commands.unique_rec_end();
         self.completion.recomendations = commands.recs[..end].to_vec();
