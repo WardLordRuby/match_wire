@@ -1,3 +1,10 @@
+use crate::{
+    commands::handler::Message,
+    utils::input::{
+        completion::{CommandScheme, Completion},
+        style::PROMPT_END,
+    },
+};
 use crossterm::{
     cursor,
     event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -9,11 +16,7 @@ use std::{
     collections::VecDeque,
     io::{self, Stdout, Write},
 };
-
-use crate::utils::input::{
-    completion::{CommandScheme, Completion},
-    style::PROMPT_END,
-};
+use tracing::{error, info};
 
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> (io::Result<EventLoop>, bool);
 pub type InitCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
@@ -133,6 +136,16 @@ impl<'a> LineReader<'a> {
         })
         .await;
         self.term.queue(cursor::Show)?;
+        Ok(())
+    }
+
+    pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {
+        self.move_to_beginning(self.line_len())?;
+        match msg {
+            Message::Str(msg) => println!("{msg}"),
+            Message::Info(msg) => info!("{msg}"),
+            Message::Err(msg) => error!("{msg}"),
+        }
         Ok(())
     }
 

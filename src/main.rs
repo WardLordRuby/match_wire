@@ -1,8 +1,7 @@
 use clap::CommandFactory;
 use cli::UserCommand;
-use commands::{
-    handler::{try_execute_command, CommandContextBuilder, CommandHandle},
-    launch_h2m::{initalize_listener, launch_h2m_pseudo},
+use commands::handler::{
+    launch_handler, try_execute_command, CommandContextBuilder, CommandHandle,
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
@@ -59,9 +58,12 @@ fn main() {
             .await
             .unwrap_or_else(|err| error!("{err}"));
 
+        let (message_tx, mut message_rx) = mpsc::channel(20);
+
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.read.cache)
             .exe_dir(startup_data.exe_dir)
+            .msg_sender(message_tx)
             .h2m_server_connection_history(startup_data.read.connection_history)
             .local_dir(startup_data.local_dir)
             .build()
@@ -73,7 +75,7 @@ fn main() {
             let cache_needs_update = command_context.cache_needs_update();
             async move {
                 loop {
-                    if cache_needs_update.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+                    if cache_needs_update.compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst).is_ok()
                         && update_cache_tx.send(true).await.is_err() {
                             break;
                     }
@@ -82,14 +84,7 @@ fn main() {
             }
         });
 
-        launch_h2m_pseudo(&mut command_context).await.map(Some).unwrap_or_else(|err| {
-            error!("{err}");
-            None
-        });
-
-        if command_context.pty_handle().is_some() {
-            initalize_listener(&mut command_context).await;
-        }
+        launch_handler(&mut command_context).await;
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
@@ -112,9 +107,14 @@ fn main() {
             }
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
-                    update_cache(&command_context, &mut line_handle).await
+                    update_cache(&command_context).await
                         .unwrap_or_else(|err| error!("{err}"));
-                    continue;
+                }
+                Some(msg) = message_rx.recv() => {
+                    if let Err(err) = line_handle.print_background_msg(msg) {
+                        error!("{err}");
+                        break;
+                    }
                 }
                 _ = close_listener.recv() => {
                     info!(name: LOG_ONLY, "app shutdown");
@@ -125,7 +125,7 @@ fn main() {
                     match event_result {
                         Ok(event) => {
                             match line_handle.process_input_event(event) {
-                                Ok(EventLoop::Continue) => continue,
+                                Ok(EventLoop::Continue) => (),
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
                                     let command_handle = match shellwords::split(line_handle.last_line()) {
@@ -162,8 +162,10 @@ fn main() {
             }
         }
         if command_context.cache_needs_update().load(Ordering::SeqCst) {
-            update_cache(&command_context, &mut line_handle).await
-                .unwrap_or_else(|err| error!("{err}"));
+            match update_cache(&command_context).await {
+                Ok(_) => info!(name: LOG_ONLY, "Cache updated locally"),
+                Err(err) => error!(name: LOG_ONLY, "{err}")
+            }
         }
         info!(name: LOG_ONLY, "app shutdown");
         terminal::disable_raw_mode().unwrap();

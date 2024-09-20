@@ -1,15 +1,12 @@
 use crate::{
     commands::{
         filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
-        handler::CommandContext,
+        handler::{CommandContext, Message},
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
-    utils::{
-        input::line::LineReader,
-        json_data::{CacheFile, ServerCache, ServerInfo},
-    },
+    utils::json_data::{CacheFile, ServerCache, ServerInfo},
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use std::{
@@ -20,7 +17,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tracing::{error, info, instrument, trace};
+use tracing::{error, instrument, trace};
 
 pub struct Cache {
     pub host_to_connect: HashMap<String, String>,
@@ -266,10 +263,7 @@ pub fn read_cache(local_env_dir: &Path) -> Result<ReadCache, ReadCacheErr> {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn update_cache<'a>(
-    context: &CommandContext,
-    line_handle: &mut LineReader<'a>,
-) -> io::Result<()> {
+pub async fn update_cache<'a>(context: &CommandContext) -> io::Result<()> {
     let local_env_dir = context.local_dir();
     let Some(ref local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
@@ -292,12 +286,10 @@ pub async fn update_cache<'a>(
         }
     };
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
-    // MARK: FIXME
-    // find better way to get background tasks to print on their own line
-    // passing in the linehandle just for this is sad
-    line_handle
-        .move_to_beginning(line_handle.line_len())
-        .unwrap();
-    info!("Cache updated locally");
+    context
+        .msg_sender()
+        .send(Message::Info(String::from("Cache updated locally")))
+        .await
+        .unwrap_or_else(|err| error!("{err}"));
     Ok(())
 }

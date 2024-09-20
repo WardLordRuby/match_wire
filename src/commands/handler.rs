@@ -9,7 +9,7 @@ use crate::{
         caching::{build_cache, Cache},
         input::line::{EventLoop, InitCallback, InputEventHook, LineData, LineReader},
     },
-    CACHED_DATA, LOG_ONLY,
+    CACHED_DATA,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -21,9 +21,15 @@ use std::{
         Arc,
     },
 };
-use tokio::sync::{Mutex, RwLock};
-use tracing::error;
+use tokio::sync::{mpsc::Sender, Mutex, RwLock};
+use tracing::{error, info};
 use winptyrs::PTY;
+
+pub enum Message {
+    Str(String),
+    Info(String),
+    Err(String),
+}
 
 pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
@@ -33,6 +39,7 @@ pub struct CommandContext {
     h2m_server_connection_history: Arc<Mutex<Vec<HostName>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<Arc<PathBuf>>,
+    msg_sender: Arc<Sender<Message>>,
 }
 
 impl CommandContext {
@@ -45,23 +52,22 @@ impl CommandContext {
     pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
         self.cache_needs_update.clone()
     }
-    pub async fn check_h2m_connection(&mut self) -> Result<(), &'static str> {
-        let mut is_err = false;
+    pub async fn check_h2m_connection(&mut self) -> Result<(), String> {
+        let mut error = String::new();
         if let Some(ref lock) = self.pty_handle {
             let handle = lock.read().await;
             match handle.is_alive() {
                 Ok(true) => return Ok(()),
-                Ok(false) => (),
-                Err(err) => {
-                    error!(name: LOG_ONLY, "{}", err.to_string_lossy());
-                    is_err = true;
+                Ok(false) => {
+                    return Err(String::from(
+                        "No connection to H2M is active, use 'launch' command to start H2M",
+                    ))
                 }
+                Err(err) => error = err.to_string_lossy().to_string(),
             }
         }
-        if is_err {
-            self.pty_handle = None;
-        }
-        Err("No connection to H2M is active, use 'launch' command to start H2M")
+        self.pty_handle = None;
+        Err(error)
     }
     pub fn local_dir(&self) -> Option<Arc<PathBuf>> {
         self.local_dir.as_ref().map(Arc::clone)
@@ -78,6 +84,9 @@ impl CommandContext {
     pub fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
         self.pty_handle.clone()
     }
+    pub fn msg_sender(&self) -> Arc<Sender<Message>> {
+        self.msg_sender.clone()
+    }
     /// NOTE: Only intended to be called by `launch_h2m_pseudo(..)`
     pub fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
@@ -88,6 +97,7 @@ impl CommandContext {
 pub struct CommandContextBuilder {
     cache: Option<Arc<Mutex<Cache>>>,
     exe_dir: Option<Arc<PathBuf>>,
+    msg_sender: Option<Arc<Sender<Message>>>,
     local_dir: Option<Arc<PathBuf>>,
     h2m_server_connection_history: Option<Arc<Mutex<Vec<HostName>>>>,
 }
@@ -103,6 +113,10 @@ impl CommandContextBuilder {
     }
     pub fn exe_dir(mut self, exe_dir: PathBuf) -> Self {
         self.exe_dir = Some(Arc::new(exe_dir));
+        self
+    }
+    pub fn msg_sender(mut self, sender: Sender<Message>) -> Self {
+        self.msg_sender = Some(Arc::new(sender));
         self
     }
     pub fn local_dir(mut self, local_dir: Option<PathBuf>) -> Self {
@@ -122,6 +136,7 @@ impl CommandContextBuilder {
         Ok(CommandContext {
             cache: self.cache.ok_or("cache is required")?,
             exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
+            msg_sender: self.msg_sender.ok_or("msg_sender is required")?,
             h2m_server_connection_history: self
                 .h2m_server_connection_history
                 .unwrap_or_else(|| Arc::new(Mutex::new(Vec::new()))),
@@ -216,11 +231,39 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
     CommandHandle::Processed
 }
 
-async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
+pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     match launch_h2m_pseudo(context).await {
-        Ok(_) => initalize_listener(context).await,
+        Ok(_) => {
+            info!("Launching H2M-mod...");
+            match initalize_listener(context).await {
+                Ok(_) => {
+                    let pty = context.pty_handle();
+                    let msg_sender = context.msg_sender();
+                    tokio::task::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+                        if let Some(ref lock) = pty {
+                            let handle = lock.read().await;
+                            let msg = match handle.is_alive() {
+                                Ok(true) => {
+                                    Message::Info(String::from("Connected to H2M-mod console"))
+                                }
+                                Ok(false) => Message::Err(String::from(
+                                    "Could not establish connection to H2M-mod",
+                                )),
+                                Err(err) => Message::Err(err.to_string_lossy().to_string()),
+                            };
+                            msg_sender
+                                .send(msg)
+                                .await
+                                .unwrap_or_else(|err| error!("{err}"));
+                        }
+                    });
+                }
+                Err(err) => error!("{err}"),
+            }
+        }
         Err(err) => error!("{err}"),
-    }
+    };
     CommandHandle::Processed
 }
 

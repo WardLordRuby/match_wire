@@ -64,11 +64,8 @@ fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16]) {
     }
 }
 
-pub async fn initalize_listener(context: &mut CommandContext) {
-    if let Err(err) = context.check_h2m_connection().await {
-        error!("{err}");
-        return;
-    }
+pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), String> {
+    context.check_h2m_connection().await?;
 
     let h2m_console_history = context.h2m_console_history();
     let h2m_server_connection_history = context.h2m_server_connection_history();
@@ -121,6 +118,7 @@ pub async fn initalize_listener(context: &mut CommandContext) {
             }
         }
     });
+    Ok(())
 }
 
 pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<(), String> {

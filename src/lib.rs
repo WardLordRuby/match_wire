@@ -44,6 +44,7 @@ pub const LOG_NAME: &str = "h2m_favorties.log";
 
 // MARK: TODOS
 // 1. stylize terminal
+//    - colorize info warn and error level messages that are printed to the terminal
 // 2. make splash screen for startup
 
 #[macro_export]
