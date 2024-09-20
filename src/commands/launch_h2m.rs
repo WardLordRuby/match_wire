@@ -15,7 +15,9 @@ use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
 const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
 const H2M_WINDOW_NAMES: [&str; 2] = ["h2m-mod", "h2m-revived"];
 const JOIN_CHARS: &str = "Joining ";
+const CONNECT_CHARS: &str = "Connecti";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
+const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 
@@ -38,11 +40,18 @@ impl From<&[u16]> for HostName {
 
 fn strip_ansi_codes(input: &str) -> String {
     let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
-    re.replace_all(input, "")
-        .trim_start()
-        .trim_start_matches(JOIN_CHARS)
-        .trim_end_matches('.')
-        .to_string()
+    let input = re.replace_all(input, "");
+
+    if input.starts_with(JOIN_CHARS) {
+        input.trim_start_matches(JOIN_CHARS).trim_end_matches('.')
+    } else if input.starts_with(CONNECT_CHARS) {
+        input
+            .split_once(": ")
+            .map_or(input.as_ref(), |(_, suf)| suf)
+    } else {
+        &input
+    }
+    .to_string()
 }
 
 fn strip_cursor_visibility_commands(input: &[u16]) -> String {
@@ -70,14 +79,14 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     let h2m_console_history = context.h2m_console_history();
     let h2m_server_connection_history = context.h2m_server_connection_history();
     let cache_needs_update = context.cache_needs_update();
-    let lock = context.pty_handle().unwrap();
+    let pty = context.pty_handle().unwrap();
 
     // MARK: IMPROVE
     // speed up the time it takes to read in commands | maybe use channels?
     tokio::spawn(async move {
         let mut buffer = OsString::new();
 
-        let handle = lock.read().await;
+        let handle = pty.read().await;
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         while let Ok(true) = handle.is_alive() {
             tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
@@ -88,6 +97,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     }
                     buffer.push(os_string);
                     let mut wide_encode_buf = Vec::new();
+                    let mut console_history = h2m_console_history.lock().await;
                     for byte in buffer.encode_wide() {
                         if byte == NEW_LINE {
                             continue;
@@ -96,14 +106,13 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                             if !wide_encode_buf.is_empty() {
                                 if wide_encode_buf
                                     .windows(JOIN_BYTES.len())
-                                    .any(|window| window == JOIN_BYTES)
+                                    .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
                                 {
                                     let mut connection_history =
                                         h2m_server_connection_history.lock().await;
                                     add_to_history(&mut connection_history, &wide_encode_buf);
                                     cache_needs_update.store(true, Ordering::Relaxed);
                                 }
-                                let mut console_history = h2m_console_history.lock().await;
                                 console_history
                                     .push(strip_cursor_visibility_commands(&wide_encode_buf));
                                 wide_encode_buf.clear();
@@ -131,7 +140,7 @@ pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<(), Strin
     }
 
     let pty_args = PTYArgs {
-        cols: 100,
+        cols: 250,
         rows: 50,
         mouse_mode: MouseMode::WINPTY_MOUSE_MODE_NONE,
         timeout: 20000,
