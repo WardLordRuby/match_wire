@@ -1,4 +1,4 @@
-use crate::utils::input::line::LineReader;
+use crate::{cli::SOURCE_LEN, utils::input::line::LineReader};
 use std::{
     collections::{HashMap, HashSet},
     io,
@@ -200,6 +200,7 @@ pub fn init_completion() -> CommandScheme {
                         "player-min",
                         "team-size-max",
                         "region",
+                        "source",
                         "includes",
                         "excludes",
                         "help",
@@ -244,6 +245,22 @@ pub fn init_completion() -> CommandScheme {
                                 "asiapacific",
                             ],
                             kind: RecKind::value_with_num_args(1),
+                            end: false,
+                        },
+                        inner: None,
+                    },
+                    // source
+                    // MARK: TODO
+                    // make sure completion works for list of set values
+                    // might have to special case lists with "unlimitied" num args
+                    InnerScheme {
+                        data: RecData {
+                            parent: Some("filter"),
+                            alias: Some(AliasData {
+                                rec_mapping: vec![(0, 2), (1, 3)],
+                            }),
+                            recs: vec!["iw4-master", "hmw-master", "iw4", "hmw"],
+                            kind: RecKind::value_with_num_args(SOURCE_LEN),
                             end: false,
                         },
                         inner: None,

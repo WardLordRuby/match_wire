@@ -237,6 +237,8 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     match launch_h2m_pseudo(context).await {
         Ok(_) => {
+            // MARK: TODO
+            // Ok needs to contain the version number of the spawned process
             info!("Launching H2M-mod...");
             match initalize_listener(context).await {
                 Ok(_) => {
@@ -282,6 +284,10 @@ impl<'a> Display for DisplayLogs<'a> {
 }
 
 async fn h2m_console_history(history: &Mutex<Vec<String>>) -> CommandHandle {
+    // MARK: TODO
+    // write a input hook to turn this fn into displaying the console live w/ forwarding input
+    // use version num of h2m-mod.exe to determine prompt text
+
     let history = history.lock().await;
     println!("{}", DisplayLogs(&history));
     CommandHandle::Processed

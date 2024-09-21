@@ -16,12 +16,13 @@ use std::{
     io::{self, Write},
     net::{IpAddr, ToSocketAddrs},
     path::PathBuf,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net/";
 
-pub const MASTER_URL: &str = "http://master.iw4.zip/";
+const MASTER_URL: &str = "http://master.iw4.zip/";
+const HMW_MASTER_URL: &str = "http://ms.s2mod.to/game-servers";
 const JSON_SERVER_ENDPOINT: &str = "instance";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
@@ -32,17 +33,17 @@ const LOCAL_HOST: &str = "localhost";
 pub const GAME_ID: &str = "H2M";
 const CODE_NA: &str = "NA";
 const CODE_EU: &str = "EU";
+const APAC_CONT_CODES: [&str; 3] = ["AF", "AS", "OC"];
 
-static APAC_CONT_CODES: LazyLock<HashSet<&str>> = LazyLock::new(populate_apac_cont_codes);
+// MARK: REWRITE
+// change cache to just a mapping of ip -> Cont code
+// list of ip:port's each master gives us
 
-fn populate_apac_cont_codes() -> HashSet<&'static str> {
-    const APAC_CONT_CODES_ARR: [&str; 3] = ["AS", "OC", "AF"];
-    HashSet::from(APAC_CONT_CODES_ARR)
-}
+// compile a list of servers from iw4 master + hmw master
+// hit each server for a getInfo request
 
-// MARK: TODO
-// walk through filter and makes sure that basic filter options still work in the event of can not
-// connect to the master server list
+// reset should reset each servers name and then rebuild the host_to_connect map
+// and try to insert new ips into the cache from both masters
 
 fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
@@ -59,7 +60,7 @@ impl Region {
         match self {
             Region::NA if country_code != CODE_NA => false,
             Region::EU if country_code != CODE_EU => false,
-            Region::Apac if !APAC_CONT_CODES.contains(country_code) => false,
+            Region::Apac if !APAC_CONT_CODES.contains(&country_code) => false,
             _ => true,
         }
     }
@@ -85,6 +86,8 @@ pub async fn build_favorites(
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
     let limit = args.limit.unwrap_or(DEFAULT_SERVER_CAP);
 
+    // MARK: TODO
+    // Use version num of h2m-mod to determine if to display this
     if limit >= DEFAULT_SERVER_CAP {
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
@@ -129,6 +132,8 @@ async fn filter_server_list(
 ) -> reqwest::Result<(Vec<ServerInfo>, bool)> {
     let mut host_list = get_server_master().await?;
 
+    // MARK: TODO
+    // create parsing to check if contains string "bots" if yes -> Some(true) if no -> Some(false) else -> None
     let include = args.includes.as_ref().map(|s| lowercase_vec(s));
     let exclude = args.excludes.as_ref().map(|s| lowercase_vec(s));
 

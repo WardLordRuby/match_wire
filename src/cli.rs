@@ -85,6 +85,10 @@ pub struct Filters {
     #[arg(short, long, value_enum)]
     pub region: Option<Region>,
 
+    /// Specify source [Default: use all sources]
+    #[arg(short, long, value_enum, num_args(1..SOURCE_LEN))]
+    pub source: Option<Vec<Source>>,
+
     /// Server name must contain any 1 of the following terms
     /// {n}  [Note: search terms are case-insensitive]
     #[arg(short, long, num_args(1..))]
@@ -106,4 +110,14 @@ pub enum Region {
     EU,
     #[value(aliases(["APAC", "Asia", "AsiaPacific", "asia", "pacific"]))]
     Apac,
+}
+
+pub const SOURCE_LEN: usize = 2;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum Source {
+    #[value(alias = "iw4")]
+    Iw4Master,
+    #[value(alias = "hmw")]
+    HmwMaster,
 }
