@@ -1,12 +1,15 @@
 use crate::{
+    cli::Source,
     commands::{
-        filter::{get_server_master, resolve_address, try_location_lookup, GAME_ID, IP},
+        filter::{
+            insert_hmw_servers, insert_iw4_servers, queue_info_requests, try_get_info, Server,
+        },
         handler::{CommandContext, Message},
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
-    utils::json_data::{CacheFile, ServerCache, ServerInfo},
+    utils::json_data::{CacheFile, ServerCache},
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use std::{
@@ -22,158 +25,193 @@ use tracing::{error, instrument, trace};
 pub struct Cache {
     pub host_to_connect: HashMap<String, String>,
     pub ip_to_region: HashMap<String, String>,
-    pub servers: Vec<ServerCache>,
+    pub connection_history: Vec<HostName>,
+    /// IP -> ports
+    pub iw4m: HashMap<String, Vec<u32>>,
+    /// IP -> ports
+    pub hmw: HashMap<String, Vec<u32>>,
+    /// IP -> 2 char cont. code
     pub created: SystemTime,
 }
 
-impl Default for Cache {
-    fn default() -> Self {
+impl Cache {
+    fn new() -> Self {
         Cache {
             host_to_connect: HashMap::new(),
             ip_to_region: HashMap::new(),
-            servers: Vec::new(),
+            connection_history: Vec::new(),
+            iw4m: HashMap::new(),
+            hmw: HashMap::new(),
             created: SystemTime::now(),
         }
     }
-}
 
-impl Cache {
-    pub fn from(servers: Vec<ServerCache>, created: SystemTime) -> Self {
-        let len = servers.len();
-        let (host_to_connect, ip_to_region) = servers.iter().fold(
-            (HashMap::with_capacity(len), HashMap::new()),
-            |(mut host_map, mut ip_map), server| {
-                host_map.insert(server.hostname.clone(), server.get_id());
-                ip_map.insert(server.ip.clone(), server.region.clone());
-                (host_map, ip_map)
-            },
-        );
+    pub async fn from(value: CacheFile) -> Self {
+        let mut servers = value.cache.iw4m.clone();
+        let mut len = 0_usize;
+        value.cache.hmw.iter().for_each(|(ip, insert)| {
+            servers
+                .entry(ip.clone())
+                .and_modify(|ports| {
+                    for port in insert.iter() {
+                        if !ports.contains(port) {
+                            ports.push(*port);
+                        }
+                    }
+                    len += ports.len();
+                })
+                .or_insert({
+                    len += insert.len();
+                    insert.clone()
+                });
+        });
+        let mut tasks = Vec::with_capacity(len);
+        let client = reqwest::Client::new();
+        for (ip, ports) in servers {
+            for port in ports {
+                len += 1;
+                let client = client.clone();
+                let ip = ip.clone();
+                tasks.push(tokio::spawn(
+                    async move { try_get_info(ip, port, client).await },
+                ));
+            }
+        }
+        let mut host_to_connect = HashMap::with_capacity(len);
+        for task in tasks {
+            match task.await {
+                Ok(result) => match result {
+                    Ok(server) => {
+                        let id = server.get_id();
+                        host_to_connect.insert(server.info.host_name, id);
+                    }
+                    Err(err) => error!("{err}"),
+                },
+                Err(err) => error!("{err}"),
+            }
+        }
         Cache {
             host_to_connect,
-            ip_to_region,
-            servers,
-            created,
+            ip_to_region: value.cache.regions,
+            connection_history: value.connection_history,
+            iw4m: value.cache.iw4m,
+            hmw: value.cache.hmw,
+            created: value.created,
         }
     }
 
-    pub fn update_cache_with(&mut self, server: &ServerInfo, region: String) {
+    pub fn update_cache_with(
+        &mut self,
+        server: &Server,
+        region: Option<String>,
+        source: Option<&Source>,
+    ) {
         self.host_to_connect
-            .insert(server.hostname.clone(), server.get_id());
-        self.ip_to_region.insert(server.ip.clone(), region.clone());
-        self.servers.push(ServerCache::from(server, region))
-    }
-
-    pub fn push(&mut self, server: ServerCache) {
-        self.host_to_connect
-            .insert(server.hostname.clone(), server.get_id());
-        self.ip_to_region
-            .insert(server.ip.clone(), server.region.clone());
-        self.servers.push(server)
-    }
-}
-
-impl ServerCache {
-    pub fn from(value: &ServerInfo, region: String) -> Self {
-        ServerCache {
-            hostname: value.hostname.clone(),
-            ip: value.ip.clone(),
-            port: value.port,
-            region,
+            .insert(server.info.host_name.clone(), server.get_id());
+        if let Some(region) = region {
+            self.ip_to_region.insert(server.ip.clone(), region);
         }
-    }
-    pub fn consume(value: ServerInfo, region: String) -> Self {
-        ServerCache {
-            hostname: value.hostname,
-            ip: value.ip,
-            port: value.port,
-            region,
+        if let Some(source) = source {
+            let map = match source {
+                Source::HmwMaster => &mut self.hmw,
+
+                Source::Iw4Master => &mut self.iw4m,
+            };
+            map.entry(server.ip.clone())
+                .and_modify(|ports| {
+                    if !ports.contains(&server.port) {
+                        ports.push(server.port);
+                    }
+                })
+                .or_insert(vec![server.port]);
         }
     }
 
-    fn get_id(&self) -> String {
-        format!("{}:{}", self.ip, self.port)
-    }
-}
+    pub fn push(&mut self, server: Server, region: Option<String>, source: Option<&Source>) {
+        let id = server.get_id();
+        self.host_to_connect.insert(server.info.host_name, id);
+        if let Some(region) = region {
+            self.ip_to_region.insert(server.ip.clone(), region);
+        }
+        if let Some(source) = source {
+            let map = match source {
+                Source::HmwMaster => &mut self.hmw,
 
-impl ServerInfo {
-    fn get_id(&self) -> String {
-        format!("{}:{}", self.ip, self.port)
+                Source::Iw4Master => &mut self.iw4m,
+            };
+            map.entry(server.ip)
+                .and_modify(|ports| {
+                    if !ports.contains(&server.port) {
+                        ports.push(server.port);
+                    }
+                })
+                .or_insert(vec![server.port]);
+        }
     }
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn build_cache(connection_history: Option<&[HostName]>) -> reqwest::Result<CacheFile> {
-    let host_list = get_server_master().await?;
+pub async fn build_cache(
+    connection_history: Option<&[HostName]>,
+    regions: Option<&HashMap<String, String>>,
+) -> reqwest::Result<CacheFile> {
+    let mut cache = Cache::new();
     let client = reqwest::Client::new();
-    let mut tasks = Vec::new();
+    let mut iw4_tasks = Vec::new();
+    let mut hmw_tasks = Vec::new();
+
+    let mut iw4_servers = HashMap::new();
+    let mut hmw_servers = HashMap::new();
+    insert_iw4_servers(None, &mut iw4_servers).await;
+    insert_hmw_servers(None, &mut hmw_servers).await;
+    queue_info_requests(iw4_servers, &mut iw4_tasks, &client).await;
+    queue_info_requests(hmw_servers, &mut hmw_tasks, &client).await;
+
+    for task in iw4_tasks {
+        match task.await {
+            Ok(result) => match result {
+                Ok(server) => {
+                    let region = regions.and_then(|cache| cache.get(&server.ip).cloned());
+                    cache.push(server, region, Some(&Source::Iw4Master))
+                }
+                Err(err) => error!(name: LOG_ONLY, "{err}"),
+            },
+            Err(err) => error!(name: LOG_ONLY, "{err}"),
+        }
+    }
+
+    for task in hmw_tasks {
+        match task.await {
+            Ok(result) => match result {
+                Ok(server) => {
+                    let region = regions.and_then(|cache| cache.get(&server.ip).cloned());
+                    cache.push(server, region, Some(&Source::HmwMaster));
+                }
+                Err(err) => error!(name: LOG_ONLY, "{err}"),
+            },
+            Err(err) => error!(name: LOG_ONLY, "{err}"),
+        }
+    }
 
     println!("Updating server location cache...");
 
-    for host in host_list {
-        for mut server in host.servers {
-            if server.game != GAME_ID {
-                continue;
-            }
-            match resolve_address(&server.ip, &host.ip_address, &host.webfront_url) {
-                IP::Unchanged => (),
-                IP::Modified(ip) => server.ip = ip.to_string(),
-                IP::Err(err) => {
-                    error!(name: LOG_ONLY, "{err}");
-                    continue;
-                }
-            }
-            let client = client.clone();
-            tasks.push(tokio::spawn(async move {
-                let location = match try_location_lookup(&server, client).await {
-                    Ok(loc) => loc,
-                    Err(err) => return Err(err),
-                };
-                Ok(ServerCache {
-                    hostname: server.hostname,
-                    ip: server.ip,
-                    port: server.port,
-                    region: location.code,
-                })
-            }))
-        }
-    }
-
-    let mut cache = Vec::new();
-    for task in tasks {
-        match task.await {
-            Ok(result) => match result {
-                Ok(server) => cache.push(server),
-                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
-            },
-            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
-        }
-    }
     trace!("Fetched regions for all H2M servers");
     Ok(CacheFile {
         version: env!("CARGO_PKG_VERSION").to_string(),
         created: std::time::SystemTime::now(),
         connection_history: connection_history.map(|v| v.to_vec()).unwrap_or_default(),
-        cache,
+        cache: ServerCache {
+            iw4m: cache.iw4m,
+            hmw: cache.hmw,
+            regions: cache.ip_to_region,
+        },
     })
-}
-
-pub struct ReadCache {
-    pub cache: Cache,
-    pub connection_history: Vec<HostName>,
-}
-
-impl From<CacheFile> for ReadCache {
-    fn from(value: CacheFile) -> Self {
-        ReadCache {
-            cache: Cache::from(value.cache, value.created),
-            connection_history: value.connection_history,
-        }
-    }
 }
 
 pub struct ReadCacheErr {
     pub err: io::Error,
     pub connection_history: Option<Vec<HostName>>,
+    pub region_cache: Option<HashMap<String, String>>,
 }
 
 impl ReadCacheErr {
@@ -181,16 +219,23 @@ impl ReadCacheErr {
         ReadCacheErr {
             err: io::Error::new(kind, err),
             connection_history: None,
+            region_cache: None,
         }
     }
 
-    fn with_history<E>(kind: ErrorKind, err: E, history: Vec<HostName>) -> Self
+    fn with_old<E>(
+        kind: ErrorKind,
+        err: E,
+        history: Vec<HostName>,
+        region: HashMap<String, String>,
+    ) -> Self
     where
         E: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         ReadCacheErr {
             err: io::Error::new(kind, err),
             connection_history: Some(history),
+            region_cache: Some(region),
         }
     }
 }
@@ -200,6 +245,7 @@ impl From<io::Error> for ReadCacheErr {
         ReadCacheErr {
             err: value,
             connection_history: None,
+            region_cache: None,
         }
     }
 }
@@ -209,6 +255,7 @@ impl From<serde_json::Error> for ReadCacheErr {
         ReadCacheErr {
             err: io::Error::other(value.to_string()),
             connection_history: None,
+            region_cache: None,
         }
     }
 }
@@ -220,38 +267,40 @@ impl Display for ReadCacheErr {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub fn read_cache(local_env_dir: &Path) -> Result<ReadCache, ReadCacheErr> {
+pub async fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
     match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
         Ok(OperationResult::Bool(true)) => {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
             let reader = io::BufReader::new(file);
             let data = serde_json::from_reader::<_, CacheFile>(reader)?;
             if data.version != env!("CARGO_PKG_VERSION") {
-                return Err(ReadCacheErr {
-                    err: io::Error::new(io::ErrorKind::InvalidData, "version mismatch"),
-                    connection_history: Some(data.connection_history),
-                });
+                return Err(ReadCacheErr::new(
+                    io::ErrorKind::InvalidData,
+                    "version mismatch".to_string(),
+                ));
             }
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(data.created) {
                 Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
-                    return Err(ReadCacheErr::with_history(
+                    return Err(ReadCacheErr::with_old(
                         ErrorKind::InvalidData,
                         "cache is too old",
                         data.connection_history,
+                        data.cache.regions,
                     ))
                 }
                 Err(err) => {
-                    return Err(ReadCacheErr::with_history(
+                    return Err(ReadCacheErr::with_old(
                         ErrorKind::Other,
                         err,
                         data.connection_history,
+                        data.cache.regions,
                     ))
                 }
                 _ => (),
             }
             trace!("Cache read from file");
-            Ok(ReadCache::from(data))
+            Ok(Cache::from(data).await)
         }
         Ok(OperationResult::Bool(false)) => Err(ReadCacheErr::new(
             ErrorKind::NotFound,
@@ -271,17 +320,20 @@ pub async fn update_cache<'a>(context: &CommandContext) -> io::Result<()> {
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
     let data = {
         let cache_lock = context.cache();
-        let history_lock = context.h2m_server_connection_history();
         let cache = cache_lock.lock().await;
-        let connection_history = history_lock.lock().await;
         CacheFile {
             version: env!("CARGO_PKG_VERSION").to_string(),
             created: cache.created,
-            cache: cache.servers.clone(),
-            connection_history: if connection_history.len() > HISTORY_MAX as usize {
-                connection_history[connection_history.len() - HISTORY_MAX as usize..].to_vec()
+            cache: ServerCache {
+                iw4m: cache.iw4m.clone(),
+                hmw: cache.hmw.clone(),
+                regions: cache.ip_to_region.clone(),
+            },
+            connection_history: if cache.connection_history.len() > HISTORY_MAX as usize {
+                cache.connection_history[cache.connection_history.len() - HISTORY_MAX as usize..]
+                    .to_vec()
             } else {
-                connection_history.clone()
+                cache.connection_history.clone()
             },
         }
     };

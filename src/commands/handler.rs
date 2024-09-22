@@ -2,7 +2,7 @@ use crate::{
     cli::{Command, Filters, UserCommand},
     commands::{
         filter::build_favorites,
-        launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, HostName},
+        launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo},
         reconnect::reconnect,
     },
     utils::{
@@ -39,7 +39,6 @@ pub struct CommandContext {
     exe_dir: Arc<PathBuf>,
     cache_needs_update: Arc<AtomicBool>,
     h2m_console_history: Arc<Mutex<Vec<String>>>,
-    h2m_server_connection_history: Arc<Mutex<Vec<HostName>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<Arc<PathBuf>>,
     msg_sender: Arc<Sender<Message>>,
@@ -81,9 +80,6 @@ impl CommandContext {
     pub fn h2m_console_history(&self) -> Arc<Mutex<Vec<String>>> {
         self.h2m_console_history.clone()
     }
-    pub fn h2m_server_connection_history(&self) -> Arc<Mutex<Vec<HostName>>> {
-        self.h2m_server_connection_history.clone()
-    }
     pub fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
         self.pty_handle.clone()
     }
@@ -102,7 +98,6 @@ pub struct CommandContextBuilder {
     exe_dir: Option<Arc<PathBuf>>,
     msg_sender: Option<Arc<Sender<Message>>>,
     local_dir: Option<Arc<PathBuf>>,
-    h2m_server_connection_history: Option<Arc<Mutex<Vec<HostName>>>>,
 }
 
 impl CommandContextBuilder {
@@ -126,23 +121,12 @@ impl CommandContextBuilder {
         self.local_dir = local_dir.map(Arc::new);
         self
     }
-    pub fn h2m_server_connection_history(
-        mut self,
-        h2m_server_connection_history: Vec<HostName>,
-    ) -> Self {
-        self.h2m_server_connection_history =
-            Some(Arc::new(Mutex::new(h2m_server_connection_history)));
-        self
-    }
 
     pub fn build(self) -> Result<CommandContext, &'static str> {
         Ok(CommandContext {
             cache: self.cache.ok_or("cache is required")?,
             exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
             msg_sender: self.msg_sender.ok_or("msg_sender is required")?,
-            h2m_server_connection_history: self
-                .h2m_server_connection_history
-                .unwrap_or_else(|| Arc::new(Mutex::new(Vec::new()))),
             cache_needs_update: Arc::new(AtomicBool::new(false)),
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
             local_dir: self.local_dir,
@@ -208,10 +192,10 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
     };
 
     let cache_file = {
-        let connection_history = context.h2m_server_connection_history();
-        let connection_history = connection_history.lock().await;
+        let cache_arc = context.cache();
+        let cache = cache_arc.lock().await;
 
-        match build_cache(Some(&connection_history)).await {
+        match build_cache(Some(&cache.connection_history), Some(&cache.ip_to_region)).await {
             Ok(data) => data,
             Err(err) => {
                 error!("{err}");
@@ -230,7 +214,7 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
     }
     let cache = context.cache();
     let mut cache = cache.lock().await;
-    *cache = Cache::from(cache_file.cache, cache_file.created);
+    *cache = Cache::from(cache_file).await;
     CommandHandle::Processed
 }
 

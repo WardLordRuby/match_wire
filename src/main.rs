@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
-    caching::{build_cache, read_cache, update_cache, Cache, ReadCache},
+    caching::{build_cache, read_cache, update_cache, Cache},
     input::{
         completion::{init_completion, CommandScheme},
         line::{EventLoop, LineReader},
@@ -61,10 +61,9 @@ fn main() {
         let (message_tx, mut message_rx) = mpsc::channel(20);
 
         let mut command_context = CommandContextBuilder::new()
-            .cache(startup_data.read.cache)
+            .cache(startup_data.read)
             .exe_dir(startup_data.exe_dir)
             .msg_sender(message_tx)
-            .h2m_server_connection_history(startup_data.read.connection_history)
             .local_dir(startup_data.local_dir)
             .build()
             .unwrap();
@@ -173,7 +172,7 @@ fn main() {
 }
 
 struct StartupData {
-    read: ReadCache,
+    read: Cache,
     exe_dir: PathBuf,
     local_dir: Option<PathBuf>,
 }
@@ -211,6 +210,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
 
     let mut local_dir = None;
     let mut connection_history = None;
+    let mut region_cache = None;
     if let Some(path) = std::env::var_os(LOCAL_DATA) {
         let mut dir = PathBuf::from(path);
 
@@ -220,7 +220,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
             init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{err}"));
             info!(name: LOG_ONLY, "App startup");
             local_dir = Some(dir);
-            match read_cache(local_dir.as_ref().unwrap()) {
+            match read_cache(local_dir.as_ref().unwrap()).await {
                 Ok(cache) => {
                     return Ok(StartupData {
                         read: cache,
@@ -231,6 +231,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                 Err(err) => {
                     info!("{err}");
                     connection_history = err.connection_history;
+                    region_cache = err.region_cache;
                 }
             }
         }
@@ -240,7 +241,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
             init_subscriber(Path::new("")).unwrap();
         }
     }
-    let cache_file = build_cache(connection_history.as_deref())
+    let cache_file = build_cache(connection_history.as_deref(), region_cache.as_ref())
         .await
         .map_err(std::io::Error::other)?;
     if let Some(ref dir) = local_dir {
@@ -250,10 +251,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                     error!("{err}")
                 }
                 return Ok(StartupData {
-                    read: ReadCache {
-                        cache: Cache::from(cache_file.cache, cache_file.created),
-                        connection_history: cache_file.connection_history,
-                    },
+                    read: Cache::from(cache_file).await,
                     exe_dir,
                     local_dir,
                 });
@@ -262,10 +260,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
         }
     }
     Ok(StartupData {
-        read: ReadCache {
-            cache: Cache::from(cache_file.cache, std::time::SystemTime::now()),
-            connection_history: Vec::new(),
-        },
+        read: Cache::from(cache_file).await,
         exe_dir,
         local_dir,
     })

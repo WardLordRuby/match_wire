@@ -37,7 +37,7 @@ pub const H2M_MAX_TEAM_SIZE: i64 = 9;
 pub const REQUIRED_FILES: [&str; 3] = ["h1_mp64_ship.exe", "h2m-mod", "players2"];
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
-pub const CACHED_DATA: &str = "region_cache.json";
+pub const CACHED_DATA: &str = "cache.json";
 
 pub const APP_NAME: &str = "h2m_favorites";
 pub const LOG_NAME: &str = "h2m_favorties.log";

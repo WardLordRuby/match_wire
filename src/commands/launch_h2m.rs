@@ -76,8 +76,8 @@ fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16]) {
 pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), String> {
     context.check_h2m_connection().await?;
 
-    let h2m_console_history = context.h2m_console_history();
-    let h2m_server_connection_history = context.h2m_server_connection_history();
+    let console_history_arc = context.h2m_console_history();
+    let cache_arc = context.cache();
     let cache_needs_update = context.cache_needs_update();
     let pty = context.pty_handle().unwrap();
 
@@ -97,7 +97,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     }
                     buffer.push(os_string);
                     let mut wide_encode_buf = Vec::new();
-                    let mut console_history = h2m_console_history.lock().await;
+                    let mut console_history = console_history_arc.lock().await;
                     for byte in buffer.encode_wide() {
                         if byte == NEW_LINE {
                             continue;
@@ -108,9 +108,8 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                                     .windows(JOIN_BYTES.len())
                                     .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
                                 {
-                                    let mut connection_history =
-                                        h2m_server_connection_history.lock().await;
-                                    add_to_history(&mut connection_history, &wide_encode_buf);
+                                    let mut cache = cache_arc.lock().await;
+                                    add_to_history(&mut cache.connection_history, &wide_encode_buf);
                                     cache_needs_update.store(true, Ordering::Relaxed);
                                 }
                                 console_history
