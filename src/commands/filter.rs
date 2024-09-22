@@ -15,7 +15,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{self, Write},
-    net::{IpAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
 };
@@ -33,19 +33,9 @@ const DEFAULT_SERVER_CAP: usize = 100;
 const LOCAL_HOST: &str = "localhost";
 
 pub const GAME_ID: &str = "H2M";
-const CODE_NA: &str = "NA";
-const CODE_EU: &str = "EU";
-const APAC_CONT_CODES: [&str; 3] = ["AF", "AS", "OC"];
-
-// MARK: REWRITE
-// change cache to just a mapping of ip -> Cont code
-// list of ip:port's each master gives us
-
-// compile a list of servers from iw4 master + hmw master
-// hit each server for a getInfo request
-
-// reset should reset each servers name and then rebuild the host_to_connect map
-// and try to insert new ips into the cache from both masters
+const CODE_NA: [char; 2] = ['N', 'A'];
+const CODE_EU: [char; 2] = ['E', 'U'];
+const APAC_CONT_CODES: [[char; 2]; 3] = [['A', 'F'], ['A', 'S'], ['O', 'C']];
 
 fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
@@ -58,7 +48,7 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
 }
 
 impl Region {
-    fn matches(&self, country_code: &str) -> bool {
+    fn matches(&self, country_code: [char; 2]) -> bool {
         match self {
             Region::NA if country_code != CODE_NA => false,
             Region::EU if country_code != CODE_EU => false,
@@ -78,7 +68,7 @@ pub async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
 }
 
 pub async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
-    trace!("retreiving iw4 master server list");
+    trace!("retreiving hmw master server list");
     reqwest::get(HMW_MASTER_URL)
         .await?
         .json::<Vec<String>>()
@@ -130,45 +120,65 @@ pub async fn build_favorites(
 }
 
 enum Task {
-    Allowed((Server, String)),
-    Filtered((Server, String)),
+    Allowed((Server, [char; 2])),
+    Filtered((Server, [char; 2])),
     Err(io::Error),
 }
 
 #[derive(Clone)]
 pub struct Server {
-    pub ip: String,
-    pub port: u32,
+    pub ip: IpAddr,
+    pub port: u16,
     pub info: GetInfo,
 }
 
 impl Server {
-    pub fn get_id(&self) -> String {
-        format!("{}:{}", self.ip, self.port)
+    pub fn socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.ip, self.port)
     }
 }
 
-pub async fn try_get_info(ip: String, port: u32, client: reqwest::Client) -> io::Result<Server> {
+pub struct GetInfoErr {
+    pub err: String,
+    pub meta: Option<HostMeta>,
+}
+
+pub async fn try_get_info(
+    ip: IpAddr,
+    port: u16,
+    mut meta: Option<HostMeta>,
+    client: reqwest::Client,
+) -> Result<Server, GetInfoErr> {
     let addr = format!("http://{}:{}{SERVER_GET_INFO_ENDPOINT}", ip, port);
-    let server_responce = client
-        .get(&addr)
-        .send()
-        .await
-        .map_err(|err| io::Error::other(format!("{err}, with ip: {ip}:{port}")))?;
+    let server_responce = match client.get(&addr).send().await {
+        Ok(res) => res,
+        Err(err) => {
+            return Err(GetInfoErr {
+                err: format!("{err}, with ip: {ip}:{port}"),
+                meta,
+            })
+        }
+    };
     server_responce
         .json::<GetInfo>()
         .await
-        .map(|info| Server {
-            ip: ip.to_string(),
-            port,
-            info,
+        .map(|info| Server { ip, port, info })
+        .map_err(|err| {
+            if let Some(ref mut data) = meta {
+                data.server_resolved_addr = Some(ip);
+            }
+            GetInfoErr {
+                err: err.to_string(),
+                meta,
+            }
         })
-        .map_err(io::Error::other)
 }
 
 pub struct HostMeta {
     pub host_ip: String,
     pub webfront_url: String,
+    pub server: ServerInfo,
+    pub server_resolved_addr: Option<IpAddr>,
 }
 
 pub async fn insert_iw4_servers(
@@ -188,6 +198,8 @@ pub async fn insert_iw4_servers(
                         Some(HostMeta {
                             host_ip: host.ip_address.clone(),
                             webfront_url: host.webfront_url.clone(),
+                            server,
+                            server_resolved_addr: None,
                         }),
                     );
                 }
@@ -233,15 +245,15 @@ pub async fn insert_hmw_servers(
 
 pub async fn queue_info_requests(
     map: HashMap<String, Option<HostMeta>>,
-    tasks: &mut Vec<JoinHandle<io::Result<Server>>>,
+    tasks: &mut Vec<JoinHandle<Result<Server, GetInfoErr>>>,
     client: &Client,
 ) {
     for (ip_port, host_meta) in map.into_iter() {
-        let (mut ip, port) = match ip_port
+        let (ip, port) = match ip_port
             .rsplit_once(':')
-            .map(|(ip, port)| (ip, port.parse::<u32>()))
+            .map(|(ip, port)| (ip, port.parse::<u16>()))
         {
-            Some((ip, Ok(port))) => (ip.to_string(), port),
+            Some((ip, Ok(port))) => (ip, port),
             Some((_, Err(err))) => {
                 error!(name: LOG_ONLY, "failed to parse port in: {ip_port}, {err}");
                 continue;
@@ -251,18 +263,18 @@ pub async fn queue_info_requests(
                 continue;
             }
         };
-        match resolve_address(&ip, host_meta) {
-            IP::Unchanged => (),
-            IP::Modified(new) => ip = new.to_string(),
+        let ip = match resolve_address(ip, host_meta.as_ref()) {
+            IP::Unchanged(ip) => ip,
+            IP::Modified(new) => new,
             IP::Err(err) => {
                 error!(name: LOG_ONLY, "could not resolve address: {ip_port}, {err}");
                 continue;
             }
-        }
+        };
         let client = client.clone();
-        tasks.push(tokio::spawn(
-            async move { try_get_info(ip, port, client).await },
-        ));
+        tasks.push(tokio::spawn(async move {
+            try_get_info(ip, port, host_meta, client).await
+        }));
     }
 }
 
@@ -273,6 +285,8 @@ async fn filter_server_list(
 ) -> reqwest::Result<(Vec<Server>, bool)> {
     let mut servers = HashMap::new();
 
+    // MARK: OPTIMIZE
+    // we don't need to do this if we never filter against any of the retrieved data
     if let Some(ref list) = args.source {
         if list.contains(&Source::Iw4Master) {
             insert_iw4_servers(Some(&cache), &mut servers).await;
@@ -295,14 +309,16 @@ async fn filter_server_list(
         match task.await {
             Ok(result) => match result {
                 Ok(server) => host_list.push(server),
-                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+                Err(info) => {
+                    error!(name: LOG_ONLY, "{}", info.err);
+                    // Do we want to do something with metadata?
+                    // if let Some(data) = err.meta {}
+                }
             },
             Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
 
-    // MARK: TODO
-    // create parsing to check if contains string "bots" if yes -> Some(true) if no -> Some(false) else -> None
     let include = args.includes.as_ref().map(|s| lowercase_vec(s));
     let exclude = args.excludes.as_ref().map(|s| lowercase_vec(s));
 
@@ -359,13 +375,13 @@ async fn filter_server_list(
         for server in host_list {
             // we assume hmw master always have resolved ips
             if let Some(cached_region) = cache.ip_to_region.get(&server.ip) {
-                if region.matches(cached_region) {
+                if region.matches(*cached_region) {
                     server_list.push(server);
                     continue;
                 }
                 continue;
             }
-            if new_lookups.insert(server.ip.clone()) {
+            if new_lookups.insert(server.ip) {
                 let client = client.clone();
                 trace!("Requsting location data for: {}", server.ip);
                 tasks.push(tokio::spawn(async move {
@@ -373,7 +389,7 @@ async fn filter_server_list(
                         Ok(loc) => loc,
                         Err(err) => return Task::Err(err),
                     };
-                    if region.matches(&location.code) {
+                    if region.matches(location.code) {
                         return Task::Allowed((server, location.code));
                     }
                     Task::Filtered((server, location.code))
@@ -421,8 +437,8 @@ async fn filter_server_list(
             .into_iter()
             .fold(Vec::new(), |mut update, server| {
                 if let Some(cached_region) = cache.ip_to_region.get(&server.ip) {
-                    update.push((server.clone(), cached_region.clone()));
-                    if region.matches(cached_region) {
+                    update.push((server.clone(), *cached_region));
+                    if region.matches(*cached_region) {
                         server_list.push(server)
                     }
                 }
@@ -443,7 +459,7 @@ async fn filter_server_list(
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn try_location_lookup(ip: &str, client: reqwest::Client) -> io::Result<Continent> {
+pub async fn try_location_lookup(ip: &IpAddr, client: reqwest::Client) -> io::Result<Continent> {
     let location_api_url = format!("{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}", ip);
 
     let api_response = client
@@ -469,16 +485,16 @@ pub async fn try_location_lookup(ip: &str, client: reqwest::Client) -> io::Resul
 }
 
 enum IP {
-    Unchanged,
+    Unchanged(IpAddr),
     Modified(IpAddr),
     Err(io::Error),
 }
 
 #[instrument(level = "trace", skip_all)]
-fn resolve_address(server_ip: &str, host_meta: Option<HostMeta>) -> IP {
+fn resolve_address(server_ip: &str, host_meta: Option<&HostMeta>) -> IP {
     let ip_trim = server_ip.trim_matches('/').trim_matches(':');
     if ip_trim.is_empty() || ip_trim == LOCAL_HOST {
-        if let Some(ref meta) = host_meta {
+        if let Some(meta) = host_meta {
             return match parse_possible_ipv6(&meta.host_ip, &meta.webfront_url) {
                 Ok(ip) => IP::Modified(ip),
                 Err(err) => IP::Err(err),
@@ -494,7 +510,7 @@ fn resolve_address(server_ip: &str, host_meta: Option<HostMeta>) -> IP {
             ));
         }
         if server_ip == ip.to_string() {
-            return IP::Unchanged;
+            return IP::Unchanged(ip);
         }
         trace!("{server_ip} trimmed and parsed to: {ip}");
         return IP::Modified(ip);
@@ -506,7 +522,7 @@ fn resolve_address(server_ip: &str, host_meta: Option<HostMeta>) -> IP {
             return IP::Modified(ip);
         }
     }
-    if let Some(ref meta) = host_meta {
+    if let Some(meta) = host_meta {
         return match parse_possible_ipv6(&meta.host_ip, &meta.webfront_url) {
             Ok(ip) => IP::Modified(ip),
             Err(err) => IP::Err(err),

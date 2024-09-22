@@ -1,6 +1,10 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::commands::launch_h2m::HostName;
 
@@ -25,7 +29,7 @@ pub struct ServerInfo {
     pub id: i64,
     #[serde(rename = "maxclientnum")]
     pub max_clients: u8,
-    pub port: u32,
+    pub port: u16,
     pub map: String,
     pub version: String,
     pub game: String,
@@ -35,15 +39,15 @@ pub struct ServerInfo {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct GetInfo {
-    #[serde(deserialize_with = "from_string_u8")]
+    #[serde(deserialize_with = "from_string::<_, u8>")]
     pub clients: u8,
     #[serde(rename = "sv_maxclients")]
-    #[serde(deserialize_with = "from_string_u8")]
+    #[serde(deserialize_with = "from_string::<_, u8>")]
     pub max_clients: u8,
     #[serde(rename = "sv_privateClients")]
-    #[serde(deserialize_with = "from_string_i8")]
+    #[serde(deserialize_with = "from_string::<_, i8>")]
     pub private_clients: i8,
-    #[serde(deserialize_with = "from_string_u8")]
+    #[serde(deserialize_with = "from_string::<_, u8>")]
     pub bots: u8,
     #[serde(rename = "gamename")]
     pub game_name: String,
@@ -55,20 +59,14 @@ pub struct GetInfo {
 
 use serde::Deserializer;
 
-fn from_string_u8<'de, D>(deserializer: D) -> Result<u8, D::Error>
+fn from_string<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
+    T: FromStr,
+    T::Err: std::fmt::Display,
 {
-    let value = String::deserialize(deserializer)?;
-    value.parse::<u8>().map_err(serde::de::Error::custom)
-}
-
-fn from_string_i8<'de, D>(deserializer: D) -> Result<i8, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = String::deserialize(deserializer)?;
-    value.parse::<i8>().map_err(serde::de::Error::custom)
+    let string = String::deserialize(deserializer)?;
+    string.parse::<T>().map_err(serde::de::Error::custom)
 }
 
 #[derive(Deserialize, Debug)]
@@ -80,7 +78,20 @@ pub struct ServerLocation {
 
 #[derive(Deserialize, Debug)]
 pub struct Continent {
-    pub code: String,
+    #[serde(deserialize_with = "deserialize_country_code")]
+    pub code: [char; 2],
+}
+
+fn deserialize_country_code<'de, D>(deserializer: D) -> Result<[char; 2], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let string = String::deserialize(deserializer)?;
+    string.chars().collect::<Vec<_>>().try_into().map_err(|_| {
+        serde::de::Error::custom(format!(
+            "Expected 2 character Country code, found: {string}"
+        ))
+    })
 }
 
 #[derive(Deserialize, Debug)]
@@ -99,10 +110,49 @@ pub struct CacheFile {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ServerCache {
-    /// IP -> ports
-    pub iw4m: HashMap<String, Vec<u32>>,
-    /// IP -> ports
-    pub hmw: HashMap<String, Vec<u32>>,
-    /// IP -> 2 char cont. code
-    pub regions: HashMap<String, String>,
+    pub iw4m: HashMap<IpAddr, Vec<u16>>,
+    pub hmw: HashMap<IpAddr, Vec<u16>>,
+    #[serde(
+        deserialize_with = "deserialize_country_code_map",
+        serialize_with = "serialize_country_code_map"
+    )]
+    pub regions: HashMap<IpAddr, [char; 2]>,
+    pub host_names: HashMap<String, SocketAddr>,
+}
+
+fn deserialize_country_code_map<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<IpAddr, [char; 2]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let string_map: HashMap<IpAddr, String> = HashMap::deserialize(deserializer)?;
+
+    string_map
+        .into_iter()
+        .map(|(ip, code)| {
+            let chars = code.chars().collect::<Vec<_>>().try_into().map_err(|_| {
+                serde::de::Error::custom(format!(
+                    "Expected 2 character Country code, found: {code}"
+                ))
+            })?;
+            Ok((ip, chars))
+        })
+        .collect()
+}
+
+fn serialize_country_code_map<S>(
+    map: &HashMap<IpAddr, [char; 2]>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use serde::ser::SerializeMap;
+    let mut map_serializer = serializer.serialize_map(Some(map.len()))?;
+    for (ip, code) in map {
+        let code_str = code.iter().collect::<String>();
+        map_serializer.serialize_entry(ip, &code_str)?;
+    }
+    map_serializer.end()
 }

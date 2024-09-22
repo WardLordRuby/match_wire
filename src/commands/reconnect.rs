@@ -4,10 +4,9 @@ use crate::{
         handler::{CommandContext, CommandHandle},
         launch_h2m::HostName,
     },
-    utils::caching::Cache,
 };
-use std::{ffi::OsString, fmt::Display};
-use tokio::sync::{Mutex, RwLock};
+use std::{collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
+use tokio::sync::RwLock;
 use tracing::error;
 use winptyrs::PTY;
 
@@ -45,14 +44,16 @@ impl<'a> Display for DisplayHistory<'a> {
     }
 }
 
-async fn display_history<'a>(history: &'a [HostName], cache: &'a Mutex<Cache>) {
-    let cache = cache.lock().await;
+async fn display_history<'a>(
+    history: &'a [HostName],
+    host_to_connect: &'a HashMap<String, SocketAddr>,
+) {
     let ips = history
         .iter()
         .rev()
         .take(HISTORY_MAX as usize)
         .map(|entry| {
-            cache.host_to_connect.get(&entry.raw).map_or_else(
+            host_to_connect.get(&entry.raw).map_or_else(
                 || String::from("Server not found in cache"),
                 |ip| format!("connect {ip}"),
             )
@@ -82,7 +83,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
         return CommandHandle::Processed;
     }
     if args.history {
-        display_history(&cache.connection_history, &cache_arc).await;
+        display_history(&cache.connection_history, &cache.host_to_connect).await;
         return CommandHandle::Processed;
     }
     if let Err(err) = context.check_h2m_connection().await {
@@ -115,7 +116,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
-async fn connect_to(ip_port: &str, lock: &RwLock<PTY>) -> Result<(), String> {
+async fn connect_to(ip_port: &SocketAddr, lock: &RwLock<PTY>) -> Result<(), String> {
     let handle = lock.read().await;
     let send_command = |command: &str| match handle.write(OsString::from(command)) {
         Ok(chars) => {

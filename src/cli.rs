@@ -29,6 +29,10 @@ pub enum Command {
     #[command(alias = "Launch")]
     Launch,
 
+    // MARK: TODO
+    // build out update cache and reset cache
+    // update: rebuild the host_to_connect map and try to insert new ips into the cache from both masters
+    // reset: start from scratch
     /// Clear and rebuild the internal server cache list
     /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
     #[command(aliases(["Reset", "reset", "Update", "update"]))]
@@ -73,6 +77,8 @@ pub struct Filters {
     #[arg(short, long)]
     pub limit: Option<usize>,
 
+    // MARK: TODO
+    // add filter for bots true/false
     /// Specify a minimum number of players a server must have [Default: 0]
     #[arg(short, long, value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM))]
     pub player_min: Option<u8>,
@@ -86,7 +92,7 @@ pub struct Filters {
     pub region: Option<Region>,
 
     /// Specify source [Default: use all sources]
-    #[arg(short, long, value_enum, num_args(1..SOURCE_LEN))]
+    #[arg(short, long, value_enum, num_args(1..=SOURCE_LEN))]
     pub source: Option<Vec<Source>>,
 
     /// Server name must contain any 1 of the following terms

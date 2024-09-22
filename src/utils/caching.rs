@@ -16,6 +16,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io::{self, ErrorKind},
+    net::{IpAddr, SocketAddr},
     path::Path,
     time::{Duration, SystemTime},
 };
@@ -23,14 +24,11 @@ use std::{
 use tracing::{error, instrument, trace};
 
 pub struct Cache {
-    pub host_to_connect: HashMap<String, String>,
-    pub ip_to_region: HashMap<String, String>,
+    pub host_to_connect: HashMap<String, SocketAddr>,
+    pub ip_to_region: HashMap<IpAddr, [char; 2]>,
     pub connection_history: Vec<HostName>,
-    /// IP -> ports
-    pub iw4m: HashMap<String, Vec<u32>>,
-    /// IP -> ports
-    pub hmw: HashMap<String, Vec<u32>>,
-    /// IP -> 2 char cont. code
+    pub iw4m: HashMap<IpAddr, Vec<u16>>,
+    pub hmw: HashMap<IpAddr, Vec<u16>>,
     pub created: SystemTime,
 }
 
@@ -51,7 +49,7 @@ impl Cache {
         let mut len = 0_usize;
         value.cache.hmw.iter().for_each(|(ip, insert)| {
             servers
-                .entry(ip.clone())
+                .entry(*ip)
                 .and_modify(|ports| {
                     for port in insert.iter() {
                         if !ports.contains(port) {
@@ -71,10 +69,9 @@ impl Cache {
             for port in ports {
                 len += 1;
                 let client = client.clone();
-                let ip = ip.clone();
-                tasks.push(tokio::spawn(
-                    async move { try_get_info(ip, port, client).await },
-                ));
+                tasks.push(tokio::spawn(async move {
+                    try_get_info(ip, port, None, client).await
+                }));
             }
         }
         let mut host_to_connect = HashMap::with_capacity(len);
@@ -82,10 +79,10 @@ impl Cache {
             match task.await {
                 Ok(result) => match result {
                     Ok(server) => {
-                        let id = server.get_id();
+                        let id = server.socket_addr();
                         host_to_connect.insert(server.info.host_name, id);
                     }
-                    Err(err) => error!("{err}"),
+                    Err(info) => error!("{}", info.err),
                 },
                 Err(err) => error!("{err}"),
             }
@@ -100,52 +97,46 @@ impl Cache {
         }
     }
 
+    pub fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
+        let map = match source {
+            Source::HmwMaster => &mut self.hmw,
+            Source::Iw4Master => &mut self.iw4m,
+        };
+        map.entry(ip)
+            .and_modify(|cached| {
+                for port in ports {
+                    if !cached.contains(port) {
+                        cached.push(*port);
+                    }
+                }
+            })
+            .or_insert(ports.to_vec());
+    }
+
     pub fn update_cache_with(
         &mut self,
         server: &Server,
-        region: Option<String>,
+        region: Option<[char; 2]>,
         source: Option<&Source>,
     ) {
         self.host_to_connect
-            .insert(server.info.host_name.clone(), server.get_id());
+            .insert(server.info.host_name.clone(), server.socket_addr());
         if let Some(region) = region {
-            self.ip_to_region.insert(server.ip.clone(), region);
+            self.ip_to_region.insert(server.ip, region);
         }
-        if let Some(source) = source {
-            let map = match source {
-                Source::HmwMaster => &mut self.hmw,
-
-                Source::Iw4Master => &mut self.iw4m,
-            };
-            map.entry(server.ip.clone())
-                .and_modify(|ports| {
-                    if !ports.contains(&server.port) {
-                        ports.push(server.port);
-                    }
-                })
-                .or_insert(vec![server.port]);
+        if let Some(&source) = source {
+            self.insert_ports(server.ip, &[server.port], source);
         }
     }
 
-    pub fn push(&mut self, server: Server, region: Option<String>, source: Option<&Source>) {
-        let id = server.get_id();
+    pub fn push(&mut self, server: Server, region: Option<[char; 2]>, source: Option<&Source>) {
+        let id = server.socket_addr();
         self.host_to_connect.insert(server.info.host_name, id);
         if let Some(region) = region {
-            self.ip_to_region.insert(server.ip.clone(), region);
+            self.ip_to_region.insert(server.ip, region);
         }
-        if let Some(source) = source {
-            let map = match source {
-                Source::HmwMaster => &mut self.hmw,
-
-                Source::Iw4Master => &mut self.iw4m,
-            };
-            map.entry(server.ip)
-                .and_modify(|ports| {
-                    if !ports.contains(&server.port) {
-                        ports.push(server.port);
-                    }
-                })
-                .or_insert(vec![server.port]);
+        if let Some(&source) = source {
+            self.insert_ports(server.ip, &[server.port], source);
         }
     }
 }
@@ -153,7 +144,7 @@ impl Cache {
 #[instrument(level = "trace", skip_all)]
 pub async fn build_cache(
     connection_history: Option<&[HostName]>,
-    regions: Option<&HashMap<String, String>>,
+    regions: Option<&HashMap<IpAddr, [char; 2]>>,
 ) -> reqwest::Result<CacheFile> {
     let mut cache = Cache::new();
     let client = reqwest::Client::new();
@@ -174,7 +165,18 @@ pub async fn build_cache(
                     let region = regions.and_then(|cache| cache.get(&server.ip).cloned());
                     cache.push(server, region, Some(&Source::Iw4Master))
                 }
-                Err(err) => error!(name: LOG_ONLY, "{err}"),
+                Err(info) => {
+                    error!(name: LOG_ONLY, "{}", info.err);
+                    if let Some(data) = info.meta {
+                        let ip = data
+                            .server_resolved_addr
+                            .expect("is always some when returned as an error");
+                        cache
+                            .host_to_connect
+                            .insert(data.server.host_name, SocketAddr::new(ip, data.server.port));
+                        cache.insert_ports(ip, &[data.server.port], Source::Iw4Master);
+                    }
+                }
             },
             Err(err) => error!(name: LOG_ONLY, "{err}"),
         }
@@ -187,7 +189,7 @@ pub async fn build_cache(
                     let region = regions.and_then(|cache| cache.get(&server.ip).cloned());
                     cache.push(server, region, Some(&Source::HmwMaster));
                 }
-                Err(err) => error!(name: LOG_ONLY, "{err}"),
+                Err(info) => error!(name: LOG_ONLY, "{}", info.err),
             },
             Err(err) => error!(name: LOG_ONLY, "{err}"),
         }
@@ -204,6 +206,7 @@ pub async fn build_cache(
             iw4m: cache.iw4m,
             hmw: cache.hmw,
             regions: cache.ip_to_region,
+            host_names: cache.host_to_connect,
         },
     })
 }
@@ -211,7 +214,7 @@ pub async fn build_cache(
 pub struct ReadCacheErr {
     pub err: io::Error,
     pub connection_history: Option<Vec<HostName>>,
-    pub region_cache: Option<HashMap<String, String>>,
+    pub region_cache: Option<HashMap<IpAddr, [char; 2]>>,
 }
 
 impl ReadCacheErr {
@@ -227,7 +230,7 @@ impl ReadCacheErr {
         kind: ErrorKind,
         err: E,
         history: Vec<HostName>,
-        region: HashMap<String, String>,
+        region: HashMap<IpAddr, [char; 2]>,
     ) -> Self
     where
         E: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -328,6 +331,7 @@ pub async fn update_cache<'a>(context: &CommandContext) -> io::Result<()> {
                 iw4m: cache.iw4m.clone(),
                 hmw: cache.hmw.clone(),
                 regions: cache.ip_to_region.clone(),
+                host_names: cache.host_to_connect.clone(),
             },
             connection_history: if cache.connection_history.len() > HISTORY_MAX as usize {
                 cache.connection_history[cache.connection_history.len() - HISTORY_MAX as usize..]
