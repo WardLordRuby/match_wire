@@ -37,7 +37,7 @@ pub struct ServerInfo {
     pub host_name: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct GetInfo {
     #[serde(deserialize_with = "from_string::<_, u8>")]
     pub clients: u8,

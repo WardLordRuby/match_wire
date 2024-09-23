@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};
 use utils::{
-    caching::{build_cache, read_cache, update_cache, Cache},
+    caching::{build_cache, read_cache, write_cache, Cache},
     input::{
         completion::{init_completion, CommandScheme},
         line::{EventLoop, LineReader},
@@ -61,7 +61,7 @@ fn main() {
         let (message_tx, mut message_rx) = mpsc::channel(20);
 
         let mut command_context = CommandContextBuilder::new()
-            .cache(startup_data.read)
+            .cache(startup_data.cache)
             .exe_dir(startup_data.exe_dir)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
@@ -106,7 +106,7 @@ fn main() {
             }
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
-                    update_cache(&command_context).await
+                    write_cache(&command_context).await
                         .unwrap_or_else(|err| error!("{err}"));
                 }
                 Some(msg) = message_rx.recv() => {
@@ -161,7 +161,7 @@ fn main() {
             }
         }
         if command_context.cache_needs_update().load(Ordering::SeqCst) {
-            match update_cache(&command_context).await {
+            match write_cache(&command_context).await {
                 Ok(_) => info!(name: LOG_ONLY, "Cache updated locally"),
                 Err(err) => error!(name: LOG_ONLY, "{err}")
             }
@@ -172,7 +172,7 @@ fn main() {
 }
 
 struct StartupData {
-    read: Cache,
+    cache: Cache,
     exe_dir: PathBuf,
     local_dir: Option<PathBuf>,
 }
@@ -223,7 +223,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
             match read_cache(local_dir.as_ref().unwrap()).await {
                 Ok(cache) => {
                     return Ok(StartupData {
-                        read: cache,
+                        cache,
                         exe_dir,
                         local_dir,
                     })
@@ -251,7 +251,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                     error!("{err}")
                 }
                 return Ok(StartupData {
-                    read: Cache::from(cache_file).await,
+                    cache: Cache::from(cache_file),
                     exe_dir,
                     local_dir,
                 });
@@ -260,7 +260,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
         }
     }
     Ok(StartupData {
-        read: Cache::from(cache_file).await,
+        cache: Cache::from(cache_file),
         exe_dir,
         local_dir,
     })

@@ -214,7 +214,7 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
     }
     let cache = context.cache();
     let mut cache = cache.lock().await;
-    *cache = Cache::from(cache_file).await;
+    *cache = Cache::from(cache_file);
     CommandHandle::Processed
 }
 
