@@ -1,16 +1,39 @@
 use crate::{commands::handler::CommandContext, parse_hostname};
 use serde::{Deserialize, Serialize};
 use std::{
-    ffi::{CStr, OsString},
+    ffi::{CStr, OsStr, OsString},
     os::windows::ffi::{OsStrExt, OsStringExt},
+    path::Path,
     sync::atomic::Ordering,
 };
 use tracing::error;
 use winapi::{
-    shared::windef::HWND,
-    um::winuser::{EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible},
+    shared::{minwindef::DWORD, windef::HWND},
+    um::{
+        winnt::WCHAR,
+        winuser::{EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible},
+        winver::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW},
+    },
 };
 use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
+
+#[repr(C)]
+#[allow(non_snake_case, non_camel_case_types)]
+struct VS_FIXEDFILEINFO {
+    dwSignature: DWORD,
+    dwStrucVersion: DWORD,
+    dwFileVersionMS: DWORD,
+    dwFileVersionLS: DWORD,
+    dwProductVersionMS: DWORD,
+    dwProductVersionLS: DWORD,
+    dwFileFlagsMask: DWORD,
+    dwFileFlags: DWORD,
+    dwFileOS: DWORD,
+    dwFileType: DWORD,
+    dwFileSubtype: DWORD,
+    dwFileDateMS: DWORD,
+    dwFileDateLS: DWORD,
+}
 
 const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
 const H2M_WINDOW_NAMES: [&str; 2] = ["h2m-mod", "h2m-revived"];
@@ -92,6 +115,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
             match handle.read(1024, false) {
                 Ok(os_string) => {
+                    println!("read {} bytes", os_string.len());
                     if os_string.is_empty() {
                         continue;
                     }
@@ -129,7 +153,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     Ok(())
 }
 
-pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<(), String> {
+pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<f64, String> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
     if h2m_running() {
@@ -155,16 +179,22 @@ pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<(), Strin
     let lock = context.pty_handle().unwrap();
     let mut conpty = lock.write().await;
 
-    if conpty
-        .spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None)
-        .is_err()
-    {
-        conpty
-            .spawn(exe_dir.join(H2M_NAMES[1]).into(), None, None, None)
-            .map_err(|err| err.to_string_lossy().to_string())?;
-    }
+    let spawned = match conpty.spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None) {
+        Ok(_) => H2M_NAMES[0],
+        Err(_) => {
+            conpty
+                .spawn(exe_dir.join(H2M_NAMES[1]).into(), None, None, None)
+                .map_err(|err| err.to_string_lossy().to_string())?;
+            H2M_NAMES[1]
+        }
+    };
+    let spawned_path = exe_dir.join(spawned);
+    let version = get_exe_version(&spawned_path).unwrap_or_else(|| {
+        error!("Failed to get versoin of {spawned}");
+        0.0
+    });
 
-    Ok(())
+    Ok(version)
 }
 
 pub fn h2m_running() -> bool {
@@ -173,6 +203,64 @@ pub fn h2m_running() -> bool {
         EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize);
     }
     result
+}
+
+#[allow(clippy::identity_op)]
+fn get_exe_version(path: &Path) -> Option<f64> {
+    let wide_path: Vec<u16> = OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let size = GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut());
+        if size == 0 {
+            return None;
+        }
+
+        let mut buffer: Vec<u8> = vec![0; size as usize];
+        if GetFileVersionInfoW(wide_path.as_ptr(), 0, size, buffer.as_mut_ptr() as *mut _) == 0 {
+            return None;
+        }
+
+        let mut version_info: *mut winapi::ctypes::c_void = std::ptr::null_mut();
+        let mut len: u32 = 0;
+        if VerQueryValueW(
+            buffer.as_ptr() as *const _,
+            "\\".encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<WCHAR>>()
+                .as_ptr(),
+            &mut version_info,
+            &mut len,
+        ) == 0
+        {
+            return None;
+        }
+
+        let info = &*(version_info as *const VS_FIXEDFILEINFO);
+        let major = (info.dwFileVersionMS >> 16) & 0xffff;
+        let minor = (info.dwFileVersionMS >> 0) & 0xffff;
+        let build = (info.dwFileVersionLS >> 16) & 0xffff;
+        let revision = (info.dwFileVersionLS >> 0) & 0xffff;
+
+        let trim_u16 = |num: u16| -> String {
+            if num == 0 {
+                "0".to_string()
+            } else {
+                num.to_string().trim_start_matches('0').to_string()
+            }
+        };
+
+        let version = format!(
+            "{}.{}{}{}",
+            major,
+            trim_u16(minor as u16),
+            trim_u16(build as u16),
+            trim_u16(revision as u16)
+        );
+        version.parse().ok()
+    }
 }
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i32 {

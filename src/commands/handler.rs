@@ -42,6 +42,7 @@ pub struct CommandContext {
     pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<Arc<PathBuf>>,
     msg_sender: Arc<Sender<Message>>,
+    h2m_version: f64,
 }
 
 impl CommandContext {
@@ -131,6 +132,7 @@ impl CommandContextBuilder {
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
             local_dir: self.local_dir,
             pty_handle: None,
+            h2m_version: 0.0,
         })
     }
 }
@@ -172,12 +174,17 @@ async fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> 
     let cache = context.cache();
     let exe_dir = context.exe_dir();
 
-    let new_entries_found = build_favorites(exe_dir, &args.unwrap_or_default(), cache)
-        .await
-        .unwrap_or_else(|err| {
-            error!("{err}");
-            false
-        });
+    let new_entries_found = build_favorites(
+        exe_dir,
+        &args.unwrap_or_default(),
+        cache,
+        context.h2m_version,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        error!("{err}");
+        false
+    });
     if new_entries_found {
         context.cache_needs_update().store(true, Ordering::Release);
     }
@@ -220,10 +227,9 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
 
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     match launch_h2m_pseudo(context).await {
-        Ok(_) => {
-            // MARK: TODO
-            // Ok needs to contain the version number of the spawned process
+        Ok(version) => {
             info!("Launching H2M-mod...");
+            context.h2m_version = version;
             match initalize_listener(context).await {
                 Ok(_) => {
                     let pty = context.pty_handle();

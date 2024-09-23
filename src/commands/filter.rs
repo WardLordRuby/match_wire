@@ -80,15 +80,20 @@ pub async fn build_favorites(
     curr_dir: Arc<PathBuf>,
     args: &Filters,
     cache: Arc<Mutex<Cache>>,
+    version: f64,
 ) -> io::Result<bool> {
     let mut ip_collected = 0;
     let mut ips = String::new();
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
-    let limit = args.limit.unwrap_or(DEFAULT_SERVER_CAP);
+    let limit = args.limit.unwrap_or({
+        if version < 1.0 {
+            DEFAULT_SERVER_CAP
+        } else {
+            1000
+        }
+    });
 
-    // MARK: TODO
-    // Use version num of h2m-mod to determine if to display this
-    if limit >= DEFAULT_SERVER_CAP {
+    if version < 1.0 && limit >= DEFAULT_SERVER_CAP {
         println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
     }
 
@@ -102,6 +107,9 @@ pub async fn build_favorites(
     );
 
     if servers.len() > limit {
+        // MARK: FIXME
+        // console now gets overwhelmed with messages if servers are added that do not reply to GetInfo requests
+        // aka Server.info == None
         servers.sort_unstable_by_key(|server| server.info.as_ref().map_or(0, |info| info.clients));
     }
 
