@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::commands::launch_h2m::HostName;
 
@@ -56,8 +56,6 @@ pub struct GetInfo {
     #[serde(rename = "hostname")]
     pub host_name: String,
 }
-
-use serde::Deserializer;
 
 fn from_string<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -148,7 +146,6 @@ fn serialize_country_code_map<S>(
 where
     S: Serializer,
 {
-    use serde::ser::SerializeMap;
     let mut map_serializer = serializer.serialize_map(Some(map.len()))?;
     for (ip, code) in map {
         let code_str = code.iter().collect::<String>();

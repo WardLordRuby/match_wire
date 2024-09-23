@@ -197,7 +197,6 @@ pub struct HostMeta {
     pub host_ip: String,
     pub webfront_url: String,
     pub server: ServerInfo,
-    pub server_resolved_addr: Option<IpAddr>,
 }
 
 impl HostMeta {
@@ -206,7 +205,6 @@ impl HostMeta {
             host_ip: host_ip.to_string(),
             webfront_url: webfront_url.to_string(),
             server,
-            server_resolved_addr: None,
         }
     }
 }
@@ -612,31 +610,28 @@ pub async fn try_location_lookup(ip: &IpAddr, client: reqwest::Client) -> io::Re
 fn resolve_address(host_meta: &mut HostMeta) -> io::Result<IpAddr> {
     let server_ip = host_meta.server.ip.as_str();
     let ip_trim = server_ip.trim_matches('/').trim_matches(':');
-    if ip_trim.is_empty() || ip_trim == LOCAL_HOST {
-        let ip = parse_possible_ipv6(&host_meta.host_ip, &host_meta.webfront_url)?;
-        host_meta.server.ip = ip.to_string();
-        return Ok(ip);
-    }
-    if let Ok(ip) = ip_trim.parse::<IpAddr>() {
-        if ip.is_unspecified() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Addr: {ip}, is unspecified"),
-            ));
-        }
-        if server_ip == ip.to_string() {
-            return Ok(ip);
-        }
-        trace!("{server_ip} trimmed and parsed to: {ip}");
-        host_meta.server.ip = ip.to_string();
-        return Ok(ip);
-    }
-
-    if let Ok(mut socket_addr) = (ip_trim, 80).to_socket_addrs() {
-        if let Some(ip) = socket_addr.next().map(|socket| socket.ip()) {
-            trace!("Found socket address of: {ip}, from: {ip_trim}");
+    if !ip_trim.is_empty() && ip_trim != LOCAL_HOST {
+        if let Ok(ip) = ip_trim.parse::<IpAddr>() {
+            if ip.is_unspecified() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Addr: {ip}, is unspecified"),
+                ));
+            }
+            if server_ip == ip.to_string() {
+                return Ok(ip);
+            }
+            trace!("{server_ip} trimmed and parsed to: {ip}");
             host_meta.server.ip = ip.to_string();
             return Ok(ip);
+        }
+
+        if let Ok(mut socket_addr) = (ip_trim, 80).to_socket_addrs() {
+            if let Some(ip) = socket_addr.next().map(|socket| socket.ip()) {
+                trace!("Found socket address of: {ip}, from: {ip_trim}");
+                host_meta.server.ip = ip.to_string();
+                return Ok(ip);
+            }
         }
     }
 
