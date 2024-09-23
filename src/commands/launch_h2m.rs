@@ -1,4 +1,7 @@
-use crate::{commands::handler::CommandContext, parse_hostname};
+use crate::{
+    commands::handler::{CommandContext, Message},
+    parse_hostname, LOG_ONLY,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
@@ -6,7 +9,7 @@ use std::{
     path::Path,
     sync::atomic::Ordering,
 };
-use tracing::error;
+use tracing::{error, info};
 use winapi::{
     shared::{minwindef::DWORD, windef::HWND},
     um::{
@@ -102,53 +105,87 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     let console_history_arc = context.h2m_console_history();
     let cache_arc = context.cache();
     let cache_needs_update = context.cache_needs_update();
+    let forward_logs_arc = context.forward_logs();
+    let msg_sender_arc = context.msg_sender();
     let pty = context.pty_handle().unwrap();
 
-    // MARK: IMPROVE
-    // speed up the time it takes to read in commands | maybe use channels?
     tokio::spawn(async move {
         let mut buffer = OsString::new();
+        const BUFFER_SIZE: usize = 16384; // 16 KB
+        const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 
-        let handle = pty.read().await;
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        while let Ok(true) = handle.is_alive() {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-            match handle.read(1024, false) {
-                Ok(os_string) => {
-                    println!("read {} bytes", os_string.len());
-                    if os_string.is_empty() {
-                        continue;
-                    }
-                    buffer.push(os_string);
-                    let mut wide_encode_buf = Vec::new();
-                    let mut console_history = console_history_arc.lock().await;
-                    for byte in buffer.encode_wide() {
-                        if byte == NEW_LINE {
-                            continue;
-                        }
-                        if byte == CARRIAGE_RETURN {
-                            if !wide_encode_buf.is_empty() {
-                                if wide_encode_buf
-                                    .windows(JOIN_BYTES.len())
-                                    .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
-                                {
-                                    let mut cache = cache_arc.lock().await;
-                                    add_to_history(&mut cache.connection_history, &wide_encode_buf);
-                                    cache_needs_update.store(true, Ordering::Relaxed);
-                                }
-                                console_history
-                                    .push(strip_cursor_visibility_commands(&wide_encode_buf));
-                                wide_encode_buf.clear();
-                            }
-                            continue;
-                        }
-                        wide_encode_buf.push(byte);
-                    }
-                    buffer = OsString::from_wide(&wide_encode_buf);
-                }
-                Err(err) => error!("{err:?}"),
+        loop {
+            tokio::time::sleep(PROCESS_INTERVAL).await;
+            let handle = pty.read().await;
+            if !matches!(handle.is_alive(), Ok(true)) {
+                break;
             }
+
+            let start_time = tokio::time::Instant::now();
+
+            while start_time.elapsed() < PROCESS_INTERVAL {
+                match handle.read(BUFFER_SIZE as u32, false) {
+                    Ok(os_string) => {
+                        if os_string.is_empty() {
+                            break;
+                        }
+                        buffer.push(os_string);
+                    }
+                    Err(err) => {
+                        error!("{err:?}");
+                        break;
+                    }
+                }
+
+                tokio::task::yield_now().await;
+            }
+
+            if buffer.is_empty() {
+                continue;
+            }
+
+            let mut wide_encode_buf = Vec::new();
+            let mut console_history = console_history_arc.lock().await;
+            let start = console_history.len();
+
+            for byte in buffer.encode_wide() {
+                if byte == NEW_LINE {
+                    continue;
+                }
+                if byte == CARRIAGE_RETURN {
+                    if !wide_encode_buf.is_empty() {
+                        if wide_encode_buf
+                            .windows(JOIN_BYTES.len())
+                            .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
+                        {
+                            let mut cache = cache_arc.lock().await;
+                            add_to_history(&mut cache.connection_history, &wide_encode_buf);
+                            cache_needs_update.store(true, Ordering::Relaxed);
+                        }
+                        console_history.push(strip_cursor_visibility_commands(&wide_encode_buf));
+                        wide_encode_buf.clear();
+                    }
+                    continue;
+                }
+                wide_encode_buf.push(byte);
+            }
+
+            if forward_logs_arc.load(Ordering::Acquire) && start < console_history.len() {
+                for i in start..console_history.len() {
+                    if msg_sender_arc
+                        .send(Message::Str(console_history[i].clone()))
+                        .await
+                        .is_err()
+                    {
+                        forward_logs_arc.store(false, Ordering::SeqCst);
+                    }
+                }
+            }
+
+            buffer = OsString::from_wide(&wide_encode_buf);
         }
+        info!(name: LOG_ONLY, "No longer reading h2m console ouput")
     });
     Ok(())
 }
