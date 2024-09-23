@@ -142,15 +142,15 @@ pub async fn build_cache(
                     error!(name: LOG_ONLY, "{}", info.err);
                     let source = info.meta.to_valid_source();
                     if let Sourced::Iw4(data) = info.meta {
-                        let ip = data
-                            .server_resolved_addr
-                            .expect("is always some when returned as an error");
-                        if let Some(source) = source {
-                            cache.insert_ports(ip, &[data.server.port], source);
+                        if let Ok(ip) = data.server.ip.parse() {
+                            if let Some(source) = source {
+                                cache.insert_ports(ip, &[data.server.port], source);
+                            }
+                            cache.host_to_connect.insert(
+                                data.server.host_name,
+                                SocketAddr::new(ip, data.server.port),
+                            );
                         }
-                        cache
-                            .host_to_connect
-                            .insert(data.server.host_name, SocketAddr::new(ip, data.server.port));
                     }
                 }
             },

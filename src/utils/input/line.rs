@@ -1,5 +1,5 @@
 use crate::{
-    commands::handler::Message,
+    commands::handler::{CommandContext, Message},
     utils::input::{
         completion::{CommandScheme, Completion},
         style::PROMPT_END,
@@ -18,8 +18,9 @@ use std::{
 };
 use tracing::{error, info};
 
-pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> (io::Result<EventLoop>, bool);
-pub type InitCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
+pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
+pub type LineCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
+pub type ContextCallback = dyn Fn(&mut CommandContext);
 
 pub struct LineReader<'a> {
     pub completion: Completion,
@@ -71,6 +72,11 @@ impl LineData {
     }
 
     #[inline]
+    pub fn take_input(&mut self) -> String {
+        std::mem::take(&mut self.input)
+    }
+
+    #[inline]
     pub fn prompt(&self) -> &str {
         &self.prompt
     }
@@ -100,6 +106,8 @@ pub struct History {
 
 pub enum EventLoop {
     Continue,
+    SendCommand(String),
+    Callback(Box<ContextCallback>),
     Break,
     TryProcessCommand,
 }
@@ -168,6 +176,12 @@ impl<'a> LineReader<'a> {
     }
 
     #[inline]
+    /// pops the first queued callback
+    pub fn pop_callback(&mut self) -> Option<Box<InputEventHook>> {
+        self.callback.pop_front()
+    }
+
+    #[inline]
     pub fn uneventful(&mut self) -> bool {
         std::mem::take(&mut self.uneventful)
     }
@@ -229,13 +243,13 @@ impl<'a> LineReader<'a> {
         self.term.flush()
     }
 
-    fn insert_char(&mut self, c: char) {
+    pub fn insert_char(&mut self, c: char) {
         self.line.input.push(c);
         self.line.len = self.line.len.saturating_add(1);
         self.update_completeion();
     }
 
-    fn remove_char(&mut self) -> io::Result<()> {
+    pub fn remove_char(&mut self) -> io::Result<()> {
         self.line.input.pop();
         self.move_to_beginning(self.line_len())?;
         self.line.len = self.line.len.saturating_sub(1);
@@ -243,12 +257,12 @@ impl<'a> LineReader<'a> {
         Ok(())
     }
 
-    fn new_line(&mut self) -> io::Result<()> {
+    pub fn new_line(&mut self) -> io::Result<()> {
         writeln!(self.term)?;
         self.clear_line()
     }
 
-    fn ctrl_c_line(&mut self) -> io::Result<()> {
+    pub fn ctrl_c_line(&mut self) -> io::Result<()> {
         writeln!(self.term, "{}", "^C".red())?;
         self.clear_line()
     }
@@ -325,12 +339,12 @@ impl<'a> LineReader<'a> {
                 ..
             }) = event
             {
-                let callback = self.callback.pop_front().expect("outer if");
-                let (result, finished) = callback(self, event);
+                let callback = self.pop_callback().expect("outer if");
+                let (event_loop, finished) = callback(self, event)?;
                 if !finished {
                     self.callback.push_front(callback);
                 }
-                return result;
+                return Ok(event_loop);
             }
         }
         match event {

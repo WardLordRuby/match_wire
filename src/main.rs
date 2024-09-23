@@ -45,6 +45,9 @@ fn main() {
         .expect("Failed to create single-threaded runtime");
 
     main_runtime.block_on(async {
+        // MARK: TODO
+        // try launch inside startup data
+
         let startup_data = match app_startup().await {
             Ok(data) => data,
             Err(err) => {
@@ -125,6 +128,8 @@ fn main() {
                         Ok(event) => {
                             match line_handle.process_input_event(event) {
                                 Ok(EventLoop::Continue) => (),
+                                Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
+                                Ok(EventLoop::SendCommand(cmd)) => try_send_cmd(&mut command_context, &mut line_handle, cmd).await,
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
                                     let command_handle = match shellwords::split(line_handle.last_line()) {

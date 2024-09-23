@@ -172,7 +172,7 @@ pub fn init_completion() -> CommandScheme {
                 "reconnect",
                 "launch",
                 "update-cache",
-                "display-logs",
+                "game-console",
                 "game-dir",
                 "local-env",
                 "quit",
@@ -180,7 +180,7 @@ pub fn init_completion() -> CommandScheme {
                 "help",
                 "update",
                 "reset",
-                "display",
+                "console",
                 "logs",
                 "gamedir",
                 "localenv",
@@ -307,7 +307,7 @@ pub fn init_completion() -> CommandScheme {
             InnerScheme::ending_rec(ROOT),
             // update-cache
             InnerScheme::ending_rec(ROOT),
-            // display-logs
+            // game-console
             InnerScheme::ending_rec(ROOT),
             // game-dir
             InnerScheme::ending_rec(ROOT),

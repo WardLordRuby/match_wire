@@ -7,10 +7,7 @@ use crate::{
     },
     utils::{
         caching::{build_cache, Cache},
-        input::{
-            line::{EventLoop, InitCallback, InputEventHook, LineData, LineReader},
-            style::WHITE,
-        },
+        input::line::{EventLoop, InputEventHook, LineCallback, LineData, LineReader},
     },
     CACHED_DATA,
 };
@@ -38,6 +35,7 @@ pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
     exe_dir: Arc<PathBuf>,
     cache_needs_update: Arc<AtomicBool>,
+    forward_logs: Arc<AtomicBool>,
     h2m_console_history: Arc<Mutex<Vec<String>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<Arc<PathBuf>>,
@@ -46,14 +44,21 @@ pub struct CommandContext {
 }
 
 impl CommandContext {
+    #[inline]
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
         self.cache.clone()
     }
+    #[inline]
     pub fn exe_dir(&self) -> Arc<PathBuf> {
         self.exe_dir.clone()
     }
+    #[inline]
     pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
         self.cache_needs_update.clone()
+    }
+    #[inline]
+    pub fn forward_logs(&self) -> Arc<AtomicBool> {
+        self.forward_logs.clone()
     }
     pub async fn check_h2m_connection(&mut self) -> Result<(), String> {
         let mut error = String::new();
@@ -72,21 +77,27 @@ impl CommandContext {
         self.pty_handle = None;
         Err(error)
     }
+    #[inline]
     pub fn local_dir(&self) -> Option<Arc<PathBuf>> {
         self.local_dir.as_ref().map(Arc::clone)
     }
+    #[inline]
     pub fn update_local_dir(&mut self, local_dir: PathBuf) {
         self.local_dir = Some(Arc::new(local_dir))
     }
+    #[inline]
     pub fn h2m_console_history(&self) -> Arc<Mutex<Vec<String>>> {
         self.h2m_console_history.clone()
     }
+    #[inline]
     pub fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
         self.pty_handle.clone()
     }
+    #[inline]
     pub fn msg_sender(&self) -> Arc<Sender<Message>> {
         self.msg_sender.clone()
     }
+    #[inline]
     /// NOTE: Only intended to be called by `launch_h2m_pseudo(..)`
     pub fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
@@ -129,17 +140,18 @@ impl CommandContextBuilder {
             exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
             msg_sender: self.msg_sender.ok_or("msg_sender is required")?,
             cache_needs_update: Arc::new(AtomicBool::new(false)),
+            forward_logs: Arc::new(AtomicBool::new(false)),
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
             local_dir: self.local_dir,
             pty_handle: None,
-            h2m_version: 0.0,
+            h2m_version: 1.0,
         })
     }
 }
 
 pub enum CommandHandle {
     Processed,
-    Callback((Box<InitCallback>, Box<InputEventHook>)),
+    Callback((Box<LineCallback>, Box<InputEventHook>)),
     Exit,
 }
 
@@ -155,7 +167,7 @@ pub async fn try_execute_command(
             Command::Reconnect { args } => reconnect(args, context).await,
             Command::Launch => launch_handler(context).await,
             Command::UpdateCache => reset_cache(context).await,
-            Command::DisplayLogs => h2m_console_history(&context.h2m_console_history()).await,
+            Command::GameConsole => h2m_console_history(context).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
             Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
             Command::Version => print_version(),
@@ -267,19 +279,83 @@ struct DisplayLogs<'a>(&'a [String]);
 impl<'a> Display for DisplayLogs<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for line in self.0 {
-            writeln!(f, "{line}{WHITE}")?;
+            writeln!(f, "{line}")?;
         }
         Ok(())
     }
 }
 
-async fn h2m_console_history(history: &Mutex<Vec<String>>) -> CommandHandle {
-    // MARK: TODO
-    // write a input hook to turn this fn into displaying the console live w/ forwarding input
-    // use version num of h2m-mod.exe to determine prompt text
+#[inline]
+fn end_forward(context: &mut CommandContext) {
+    context.forward_logs().store(false, Ordering::SeqCst);
+}
 
-    let history = history.lock().await;
-    println!("{}", DisplayLogs(&history));
+async fn h2m_console_history(context: &mut CommandContext) -> CommandHandle {
+    if context.check_h2m_connection().await.is_ok() && h2m_running() {
+        let history = context.h2m_console_history.lock().await;
+        context.forward_logs.store(true, Ordering::SeqCst);
+        println!("{}", DisplayLogs(&history));
+
+        let init = |handle: &mut LineReader<'_>| {
+            handle.set_prompt(String::from("h2m-mod.exe"));
+            Ok(())
+        };
+
+        let input_hook = |handle: &mut LineReader<'_>, event: Event| match event {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => {
+                handle.ctrl_c_line()?;
+                handle.set_prompt(LineData::default_prompt());
+                Ok((EventLoop::Callback(Box::new(end_forward)), true))
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                ..
+            }) => {
+                handle.insert_char(c);
+                Ok((EventLoop::Continue, false))
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                ..
+            }) => {
+                if handle.line.input().is_empty() {
+                    handle.set_prompt(LineData::default_prompt());
+                    return Ok((EventLoop::Callback(Box::new(end_forward)), true));
+                }
+                handle.remove_char()?;
+                Ok((EventLoop::Continue, false))
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            }) => {
+                if handle.line.input().is_empty() {
+                    handle.new_line()?;
+                    return Ok((EventLoop::Continue, false));
+                }
+                let cmd = handle.line.take_input();
+                handle.new_line()?;
+
+                Ok((EventLoop::SendCommand(cmd), false))
+            }
+            _ => unreachable!("line handle only sends key press events"),
+        };
+
+        return CommandHandle::Callback((Box::new(init), Box::new(input_hook)));
+    }
+
+    let history = context.h2m_console_history.lock().await;
+    if !history.is_empty() {
+        println!("No active connection to H2M, displaying old logs");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        println!("{}", DisplayLogs(&history));
+    } else {
+        println!("No active connection to H2M");
+    }
     CommandHandle::Processed
 }
 
@@ -316,14 +392,14 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            }) => (Ok(EventLoop::Break), true),
+            }) => Ok((EventLoop::Break, true)),
             Event::Key(KeyEvent {
                 code: KeyCode::Char('y'),
                 ..
-            }) => (Ok(EventLoop::Break), true),
+            }) => Ok((EventLoop::Break, true)),
             _ => {
                 handle.set_prompt(LineData::default_prompt());
-                (Ok(EventLoop::Continue), true)
+                Ok((EventLoop::Continue, true))
             }
         };
 

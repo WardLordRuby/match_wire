@@ -38,9 +38,9 @@ pub enum Command {
     #[command(aliases(["Reset", "reset", "Update", "update"]))]
     UpdateCache,
 
-    /// Print H2M console logs
-    #[command(aliases(["Display", "display", "Logs", "logs"]))]
-    DisplayLogs,
+    /// Opens H2M/HMW game console
+    #[command(aliases(["Logs", "logs", "console"]))]
+    GameConsole,
 
     /// Open MWR(2017) directory
     #[command(aliases(["Gamedir", "gamedir", "GameDir"]))]
