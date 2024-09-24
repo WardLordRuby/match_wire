@@ -203,6 +203,8 @@ pub fn init_completion() -> CommandScheme {
                         "source",
                         "includes",
                         "excludes",
+                        "with-bots",
+                        "without-bots",
                         "help",
                     ],
                     kind: RecKind::Argument,
@@ -250,9 +252,6 @@ pub fn init_completion() -> CommandScheme {
                         inner: None,
                     },
                     // source
-                    // MARK: TODO
-                    // make sure completion works for list of set values
-                    // might have to special case lists with "unlimitied" num args
                     InnerScheme {
                         data: RecData {
                             parent: Some("filter"),
@@ -277,6 +276,10 @@ pub fn init_completion() -> CommandScheme {
                         RecKind::user_defined_with_num_args(usize::MAX),
                         false,
                     ),
+                    // with-bots
+                    InnerScheme::empty_with("filter", RecKind::Argument, false),
+                    // without-bots
+                    InnerScheme::empty_with("filter", RecKind::Argument, false),
                     // help
                     InnerScheme::help(),
                 ]),
@@ -363,30 +366,32 @@ impl From<&'static CommandScheme> for Completion {
                     kind: RecKind::Argument,
                     ..
                 } => {
-                    let expected_len = inner.data.unique_rec_end();
-                    assert_eq!(expected_len, inner.inner.as_ref().unwrap().len());
-                    for (i, (&argument, inner)) in recs
-                        .iter()
-                        .zip(inner.inner.as_ref().expect("is some"))
-                        .enumerate()
-                        .take(expected_len)
-                    {
-                        list.push(&inner.data);
-                        let l_i = list.len() - 1;
-                        insert_index(map, argument, l_i, &inner.data, list);
-                        if let Some(ref data) = alias {
-                            data.rec_mapping
-                                .iter()
-                                .filter(|(rec_i, _)| *rec_i == i)
-                                .map(|&(_, alias_i)| recs[alias_i])
-                                .for_each(|alias| {
-                                    insert_index(map, alias, l_i, &inner.data, list);
-                                });
+                    if !recs.is_empty() {
+                        let expected_len = inner.data.unique_rec_end();
+                        assert_eq!(expected_len, inner.inner.as_ref().unwrap().len());
+                        for (i, (&argument, inner)) in recs
+                            .iter()
+                            .zip(inner.inner.as_ref().expect("is some"))
+                            .enumerate()
+                            .take(expected_len)
+                        {
+                            list.push(&inner.data);
+                            let l_i = list.len() - 1;
+                            insert_index(map, argument, l_i, &inner.data, list);
+                            if let Some(ref data) = alias {
+                                data.rec_mapping
+                                    .iter()
+                                    .filter(|(rec_i, _)| *rec_i == i)
+                                    .map(|&(_, alias_i)| recs[alias_i])
+                                    .for_each(|alias| {
+                                        insert_index(map, alias, l_i, &inner.data, list);
+                                    });
+                            }
+                            if let RecKind::Value(_) = inner.data.kind {
+                                insert_rec_set(value_sets, &inner.data.recs, l_i);
+                            }
+                            walk_inner(inner, list, map, value_sets);
                         }
-                        if let RecKind::Value(_) = inner.data.kind {
-                            insert_rec_set(value_sets, &inner.data.recs, l_i);
-                        }
-                        walk_inner(inner, list, map, value_sets);
                     }
                 }
                 _ => assert!(inner.inner.is_none()),
@@ -792,10 +797,7 @@ impl LineReader<'_> {
 
         self.completion.rec_i = USER_INPUT;
 
-        if self.completion.curr_command().is_none()
-            && line_trim_start.ends_with(char::is_whitespace)
-            && self.open_quote().is_none()
-        {
+        if self.completion.curr_command().is_none() && self.open_quote().is_none() {
             self.completion.input.curr_command = line_trim_start
                 .split_once(char::is_whitespace)
                 .map(|(pre, _)| {
@@ -859,6 +861,13 @@ impl LineReader<'_> {
                             && arg.to_slice_unchecked(line_trim_start).starts_with('-')
                     })
             };
+        }
+
+        if let Some(arg) = self.completion.curr_arg() {
+            let rec_data = self.completion.rec_list[arg.hash_i];
+            if rec_data.kind == RecKind::Argument && !rec_data.end && rec_data.recs.is_empty() {
+                self.completion.input.curr_argument = None;
+            }
         }
 
         if self.completion.curr_arg().is_some_and_valid()
