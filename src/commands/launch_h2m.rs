@@ -190,7 +190,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     Ok(())
 }
 
-pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<f64, String> {
+pub async fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
     if h2m_running() {
@@ -210,11 +210,11 @@ pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<f64, Stri
     // MARK: FIXME
     // why does the pseudo terminal spawn with no cols or rows
 
-    context.init_pty(PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap());
+    let mut conpty = PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap();
 
-    let exe_dir = context.exe_dir();
-    let lock = context.pty_handle().unwrap();
-    let mut conpty = lock.write().await;
+    // let exe_dir = context.exe_dir();
+    // let lock = context.pty_handle().unwrap();
+    // let mut conpty = lock.write().await;
 
     let spawned = match conpty.spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None) {
         Ok(_) => H2M_NAMES[0],
@@ -225,13 +225,14 @@ pub async fn launch_h2m_pseudo(context: &mut CommandContext) -> Result<f64, Stri
             H2M_NAMES[1]
         }
     };
+    info!("Launching H2M-mod...");
     let spawned_path = exe_dir.join(spawned);
     let version = get_exe_version(&spawned_path).unwrap_or_else(|| {
         error!("Failed to get versoin of {spawned}");
         0.0
     });
 
-    Ok(version)
+    Ok((conpty, version))
 }
 
 pub fn h2m_running() -> bool {

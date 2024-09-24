@@ -107,9 +107,6 @@ pub async fn build_favorites(
     );
 
     if servers.len() > limit {
-        // MARK: FIXME
-        // console now gets overwhelmed with messages if servers are added that do not reply to GetInfo requests
-        // aka Server.info == None
         servers.sort_unstable_by_key(|server| server.info.as_ref().map_or(0, |info| info.clients));
     }
 

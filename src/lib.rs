@@ -21,7 +21,7 @@ use commands::handler::CommandContext;
 use std::{
     collections::HashSet,
     ffi::OsString,
-    io::Result,
+    io::{self, Result},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -129,6 +129,34 @@ where
             let num_found = collection.len();
             (num_found, collection)
         })),
+    }
+}
+
+pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
+    match does_dir_contain(exe_dir, Operation::Count, &REQUIRED_FILES)
+        .expect("Failed to read contents of current dir")
+    {
+        OperationResult::Count((count, _)) if count == REQUIRED_FILES.len() => Ok(()),
+        OperationResult::Count((_, files)) => {
+            if !files.contains(REQUIRED_FILES[0]) {
+                return new_io_error!(
+                std::io::ErrorKind::Other,
+                "Move h2m_favorites.exe into your 'Call of Duty Modern Warfare Remastered' directory"
+            );
+            } else if !files.contains(REQUIRED_FILES[1]) {
+                return new_io_error!(
+                std::io::ErrorKind::Other,
+                "H2M mod files not found, h2m_favorites.exe must be placed in 'Call of Duty Modern Warfare Remastered' directory"
+            );
+            }
+            if !files.contains(REQUIRED_FILES[2]) {
+                std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
+                    .expect("Failed to create players2 folder");
+                info!("players2 folder is missing, a new one was created");
+            }
+            Ok(())
+        }
+        _ => unreachable!(),
     }
 }
 

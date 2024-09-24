@@ -1,7 +1,8 @@
 use clap::CommandFactory;
 use cli::UserCommand;
-use commands::handler::{
-    launch_handler, try_execute_command, CommandContextBuilder, CommandHandle,
+use commands::{
+    handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
+    launch_h2m::launch_h2m_pseudo,
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use h2m_favorites::*;
@@ -11,7 +12,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 use utils::{
     caching::{build_cache, read_cache, write_cache, Cache},
     input::{
@@ -20,6 +21,7 @@ use utils::{
     },
     subscriber::init_subscriber,
 };
+use winptyrs::PTY;
 
 static COMPLETION: LazyLock<CommandScheme> = LazyLock::new(init_completion);
 
@@ -45,9 +47,6 @@ fn main() {
         .expect("Failed to create single-threaded runtime");
 
     main_runtime.block_on(async {
-        // MARK: TODO
-        // try launch inside startup data
-
         let startup_data = match app_startup().await {
             Ok(data) => data,
             Err(err) => {
@@ -65,6 +64,7 @@ fn main() {
 
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
+            .launch_res(startup_data.launch_res)
             .exe_dir(startup_data.exe_dir)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
@@ -86,7 +86,7 @@ fn main() {
             }
         });
 
-        launch_handler(&mut command_context).await;
+        listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!("{err}"));
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
@@ -128,9 +128,9 @@ fn main() {
                         Ok(event) => {
                             match line_handle.process_input_event(event) {
                                 Ok(EventLoop::Continue) => (),
+                                Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
                                 Ok(EventLoop::SendCommand(cmd)) => try_send_cmd(&mut command_context, &mut line_handle, cmd).await,
-                                Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::TryProcessCommand) => {
                                     let command_handle = match shellwords::split(line_handle.last_line()) {
                                         Ok(user_args) => try_execute_command(user_args, &mut command_context).await,
@@ -178,6 +178,7 @@ fn main() {
 
 struct StartupData {
     cache: Cache,
+    launch_res: Result<(PTY, f64), String>,
     exe_dir: PathBuf,
     local_dir: Option<PathBuf>,
 }
@@ -188,30 +189,9 @@ async fn app_startup() -> std::io::Result<StartupData> {
         .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
 
     #[cfg(not(debug_assertions))]
-    match does_dir_contain(&exe_dir, Operation::Count, &REQUIRED_FILES)
-        .expect("Failed to read contents of current dir")
-    {
-        OperationResult::Count((count, _)) if count == REQUIRED_FILES.len() => (),
-        OperationResult::Count((_, files)) => {
-            if !files.contains(REQUIRED_FILES[0]) {
-                return new_io_error!(
-                    std::io::ErrorKind::Other,
-                    "Move h2m_favorites.exe into your 'Call of Duty Modern Warfare Remastered' directory"
-                );
-            } else if !files.contains(REQUIRED_FILES[1]) {
-                return new_io_error!(
-                    std::io::ErrorKind::Other,
-                    "H2M mod files not found, h2m_favorites.exe must be placed in 'Call of Duty Modern Warfare Remastered' directory"
-                );
-            }
-            if !files.contains(REQUIRED_FILES[2]) {
-                std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
-                    .expect("Failed to create players2 folder");
-                println!("players2 folder is missing, a new one was created");
-            }
-        }
-        _ => unreachable!(),
-    }
+    contains_required_files(&exe_dir)?;
+
+    let launch_res = launch_h2m_pseudo(&exe_dir).await;
 
     let mut local_dir = None;
     let mut connection_history = None;
@@ -229,6 +209,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                 Ok(cache) => {
                     return Ok(StartupData {
                         cache,
+                        launch_res,
                         exe_dir,
                         local_dir,
                     })
@@ -257,6 +238,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                 }
                 return Ok(StartupData {
                     cache: Cache::from(cache_file),
+                    launch_res,
                     exe_dir,
                     local_dir,
                 });
@@ -266,6 +248,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
     }
     Ok(StartupData {
         cache: Cache::from(cache_file),
+        launch_res,
         exe_dir,
         local_dir,
     })

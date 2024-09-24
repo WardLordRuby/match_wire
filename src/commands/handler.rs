@@ -22,7 +22,7 @@ use std::{
     },
 };
 use tokio::sync::{mpsc::Sender, Mutex, RwLock};
-use tracing::{error, info};
+use tracing::error;
 use winptyrs::PTY;
 
 pub enum Message {
@@ -61,7 +61,7 @@ impl CommandContext {
         self.forward_logs.clone()
     }
     pub async fn check_h2m_connection(&mut self) -> Result<(), String> {
-        let mut error = String::new();
+        let mut error = String::from("No Pseudoconsole set");
         if let Some(ref lock) = self.pty_handle {
             let handle = lock.read().await;
             match handle.is_alive() {
@@ -98,8 +98,7 @@ impl CommandContext {
         self.msg_sender.clone()
     }
     #[inline]
-    /// NOTE: Only intended to be called by `launch_h2m_pseudo(..)`
-    pub fn init_pty(&mut self, pty: PTY) {
+    fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
 }
@@ -107,6 +106,7 @@ impl CommandContext {
 #[derive(Default)]
 pub struct CommandContextBuilder {
     cache: Option<Arc<Mutex<Cache>>>,
+    launch_res: Option<Result<(PTY, f64), String>>,
     exe_dir: Option<Arc<PathBuf>>,
     msg_sender: Option<Arc<Sender<Message>>>,
     local_dir: Option<Arc<PathBuf>>,
@@ -133,18 +133,30 @@ impl CommandContextBuilder {
         self.local_dir = local_dir.map(Arc::new);
         self
     }
+    pub fn launch_res(mut self, res: Result<(PTY, f64), String>) -> Self {
+        self.launch_res = Some(res);
+        self
+    }
 
     pub fn build(self) -> Result<CommandContext, &'static str> {
+        let (pty_handle, h2m_version) = match self.launch_res {
+            Some(Ok((handle, ver))) => (Some(handle), Some(ver)),
+            Some(Err(err)) => {
+                error!("{err}");
+                (None, None)
+            }
+            None => (None, None),
+        };
         Ok(CommandContext {
             cache: self.cache.ok_or("cache is required")?,
             exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
             msg_sender: self.msg_sender.ok_or("msg_sender is required")?,
+            pty_handle: pty_handle.map(|handle| Arc::new(RwLock::new(handle))),
             cache_needs_update: Arc::new(AtomicBool::new(false)),
             forward_logs: Arc::new(AtomicBool::new(false)),
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
             local_dir: self.local_dir,
-            pty_handle: None,
-            h2m_version: 1.0,
+            h2m_version: h2m_version.unwrap_or(1.0),
         })
     }
 }
@@ -167,10 +179,10 @@ pub async fn try_execute_command(
             Command::Reconnect { args } => reconnect(args, context).await,
             Command::Launch => launch_handler(context).await,
             Command::UpdateCache => reset_cache(context).await,
-            Command::GameConsole => h2m_console_history(context).await,
+            Command::GameConsole => open_h2m_console(context).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
             Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
-            Command::Version => print_version(),
+            Command::Version => print_version(context.h2m_version),
             Command::Quit => quit(context).await,
         },
         Err(err) => {
@@ -238,40 +250,42 @@ async fn reset_cache(context: &CommandContext) -> CommandHandle {
 }
 
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
-    match launch_h2m_pseudo(context).await {
-        Ok(version) => {
-            info!("Launching H2M-mod...");
+    match launch_h2m_pseudo(&context.exe_dir).await {
+        Ok((conpty, version)) => {
+            context.init_pty(conpty);
             context.h2m_version = version;
-            match initalize_listener(context).await {
-                Ok(_) => {
-                    let pty = context.pty_handle();
-                    let msg_sender = context.msg_sender();
-                    tokio::task::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
-                        if let Some(ref lock) = pty {
-                            let handle = lock.read().await;
-                            let msg = match handle.is_alive() {
-                                Ok(true) => {
-                                    Message::Info(String::from("Connected to H2M-mod console"))
-                                }
-                                Ok(false) => Message::Err(String::from(
-                                    "Could not establish connection to H2M-mod",
-                                )),
-                                Err(err) => Message::Err(err.to_string_lossy().to_string()),
-                            };
-                            msg_sender
-                                .send(msg)
-                                .await
-                                .unwrap_or_else(|err| error!("{err}"));
-                        }
-                    });
-                }
-                Err(err) => error!("{err}"),
+            if let Err(err) = listener_routine(context).await {
+                error!("{err}")
             }
         }
         Err(err) => error!("{err}"),
     };
     CommandHandle::Processed
+}
+
+/// if calling manually you are responsible for setting pty and version inside of context
+pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String> {
+    initalize_listener(context).await?;
+    let pty = context.pty_handle();
+    let msg_sender = context.msg_sender();
+    tokio::task::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+        if let Some(lock) = pty {
+            let handle = lock.read().await;
+            let msg = match handle.is_alive() {
+                Ok(true) => Message::Info(String::from("Connected to H2M-mod console")),
+                Ok(false) => {
+                    Message::Err(String::from("Could not establish connection to H2M-mod"))
+                }
+                Err(err) => Message::Err(err.to_string_lossy().to_string()),
+            };
+            msg_sender
+                .send(msg)
+                .await
+                .unwrap_or_else(|err| error!("{err}"));
+        }
+    });
+    Ok(())
 }
 
 struct DisplayLogs<'a>(&'a [String]);
@@ -290,11 +304,11 @@ fn end_forward(context: &mut CommandContext) {
     context.forward_logs().store(false, Ordering::SeqCst);
 }
 
-async fn h2m_console_history(context: &mut CommandContext) -> CommandHandle {
+async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
     if context.check_h2m_connection().await.is_ok() && h2m_running() {
         let history = context.h2m_console_history.lock().await;
         context.forward_logs.store(true, Ordering::SeqCst);
-        println!("{}", DisplayLogs(&history));
+        print!("{}", DisplayLogs(&history));
 
         let init = |handle: &mut LineReader<'_>| {
             handle.set_prompt(String::from("h2m-mod.exe"));
@@ -342,7 +356,7 @@ async fn h2m_console_history(context: &mut CommandContext) -> CommandHandle {
 
                 Ok((EventLoop::SendCommand(cmd), false))
             }
-            _ => unreachable!("line handle only sends key press events"),
+            _ => Ok((EventLoop::Continue, false)),
         };
 
         return CommandHandle::Callback((Box::new(init), Box::new(input_hook)));
@@ -352,7 +366,7 @@ async fn h2m_console_history(context: &mut CommandContext) -> CommandHandle {
     if !history.is_empty() {
         println!("No active connection to H2M, displaying old logs");
         std::thread::sleep(std::time::Duration::from_secs(2));
-        println!("{}", DisplayLogs(&history));
+        print!("{}", DisplayLogs(&history));
     } else {
         println!("No active connection to H2M");
     }
@@ -370,8 +384,9 @@ fn open_dir(path: Option<&Path>) -> CommandHandle {
     CommandHandle::Processed
 }
 
-fn print_version() -> CommandHandle {
+fn print_version(h2m_v: f64) -> CommandHandle {
     println!("{} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    println!("h2m-mod.exe v{h2m_v}");
     CommandHandle::Processed
 }
 
