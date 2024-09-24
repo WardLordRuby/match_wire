@@ -106,6 +106,8 @@ pub struct History {
 
 pub enum EventLoop {
     Continue,
+    /// Sending a command and marking the calling `InputLineHook` as finished can lead to  
+    /// undefined behavior if `try_send_command` errors
     SendCommand(String),
     Callback(Box<ContextCallback>),
     Break,

@@ -1,5 +1,5 @@
 use crate::{
-    cli::{Command, Filters, UserCommand},
+    cli::{CacheCmd, Command, Filters, UserCommand},
     commands::{
         filter::build_favorites,
         launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo},
@@ -178,7 +178,7 @@ pub async fn try_execute_command(
             Command::Filter { args } => new_favorites_with(args, context).await,
             Command::Reconnect { args } => reconnect(args, context).await,
             Command::Launch => launch_handler(context).await,
-            Command::UpdateCache => reset_cache(context).await,
+            Command::Cache { option } => modify_cache(context, option).await,
             Command::GameConsole => open_h2m_console(context).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
             Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
@@ -216,23 +216,32 @@ async fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> 
     CommandHandle::Processed
 }
 
-async fn reset_cache(context: &CommandContext) -> CommandHandle {
+async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle {
     let Some(ref local_dir) = context.local_dir else {
         error!("Can not create cache with out a valid save directory");
         return CommandHandle::Processed;
     };
 
-    let cache_file = {
-        let cache_arc = context.cache();
-        let cache = cache_arc.lock().await;
+    let cache_file = match arg {
+        CacheCmd::Update => {
+            let cache_arc = context.cache();
+            let cache = cache_arc.lock().await;
 
-        match build_cache(Some(&cache.connection_history), Some(&cache.ip_to_region)).await {
-            Ok(data) => data,
-            Err(err) => {
-                error!("{err}");
-                return CommandHandle::Processed;
+            match build_cache(Some(&cache.connection_history), Some(&cache.ip_to_region)).await {
+                Ok(data) => data,
+                Err(err) => {
+                    error!("{err}, cache remains unchanged");
+                    return CommandHandle::Processed;
+                }
             }
         }
+        CacheCmd::Reset => match build_cache(None, None).await {
+            Ok(data) => data,
+            Err(err) => {
+                error!("{err}, cache remains unchanged");
+                return CommandHandle::Processed;
+            }
+        },
     };
 
     match std::fs::File::create(local_dir.join(CACHED_DATA)) {
@@ -321,7 +330,10 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             }) => {
-                handle.ctrl_c_line()?;
+                if !handle.line.input().is_empty() {
+                    handle.ctrl_c_line()?;
+                    return Ok((EventLoop::Continue, false));
+                }
                 handle.set_prompt(LineData::default_prompt());
                 Ok((EventLoop::Callback(Box::new(end_forward)), true))
             }

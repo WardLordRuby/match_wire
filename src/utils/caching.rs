@@ -113,11 +113,7 @@ impl Cache {
 pub async fn build_cache(
     connection_history: Option<&[HostName]>,
     regions: Option<&HashMap<IpAddr, [char; 2]>>,
-) -> reqwest::Result<CacheFile> {
-    let mut cache = Cache::new();
-    let client = reqwest::Client::new();
-    let mut tasks = Vec::new();
-
+) -> Result<CacheFile, &'static str> {
     println!("Updating cache...");
 
     let mut servers = iw4_servers(None).await.unwrap_or_else(|err| {
@@ -128,6 +124,14 @@ pub async fn build_cache(
         Ok(ref mut hmw) => servers.append(hmw),
         Err(err) => error!("{err}"),
     };
+
+    if servers.is_empty() {
+        return Err("Could not connect to either master server source");
+    }
+
+    let mut cache = Cache::new();
+    let client = reqwest::Client::new();
+    let mut tasks = Vec::new();
     queue_info_requests(servers, &mut tasks, false, &client).await;
 
     for task in tasks {

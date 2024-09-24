@@ -11,10 +11,9 @@ pub struct UserCommand {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Create a new favorites.json using various filter options
-    /// {n}  Using no arguments will take the top 100 servers with highest playercounts
     #[command(alias = "Filter")]
     Filter {
-        #[command(flatten)]
+        #[clap(flatten)]
         args: Option<Filters>,
     },
 
@@ -29,14 +28,12 @@ pub enum Command {
     #[command(alias = "Launch")]
     Launch,
 
-    // MARK: TODO
-    // build out update cache and reset cache
-    // update: rebuild the host_to_connect map and try to insert new ips into the cache from both masters
-    // reset: start from scratch
-    /// Clear and rebuild the internal server cache list
-    /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
-    #[command(aliases(["Reset", "reset", "Update", "update"]))]
-    UpdateCache,
+    /// Commands to reset and update the cache file
+    #[command(alias = "Cache")]
+    Cache {
+        #[arg(value_enum)]
+        option: CacheCmd,
+    },
 
     /// Opens H2M/HMW game console
     #[command(aliases(["Logs", "logs", "console"]))]
@@ -73,7 +70,8 @@ pub struct HistoryArgs {
 #[derive(Args, Debug, Clone, Default)]
 pub struct Filters {
     /// Specify the maximum number of servers added to favorites.json
-    /// {n}  [Note: current server-browser gets buggy after 100] [Default: 100]
+    /// {n}  [Note: H2M server-browser gets buggy after 100, this bug is fixed in HMW]
+    /// {n}  [H2M Default: 100] [HMW Default: uncapped]
     #[arg(short, long)]
     pub limit: Option<usize>,
 
@@ -97,7 +95,7 @@ pub struct Filters {
     #[arg(short, long, value_enum)]
     pub region: Option<Region>,
 
-    /// Specify source [Default: use all sources]
+    /// Specify source [Default: include all sources]
     #[arg(short, long, value_enum, num_args(1..=SOURCE_LEN))]
     pub source: Option<Vec<Source>>,
 
@@ -132,4 +130,14 @@ pub enum Source {
     Iw4Master,
     #[value(alias = "hmw")]
     HmwMaster,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum CacheCmd {
+    /// Clears entire cache file including connection history then starts a fresh cache file
+    #[value(alias = "clear")]
+    Reset,
+    /// Updates all server names in the cache  
+    /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
+    Update,
 }
