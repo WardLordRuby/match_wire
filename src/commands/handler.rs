@@ -315,9 +315,11 @@ fn end_forward(context: &mut CommandContext) {
 
 async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
     if context.check_h2m_connection().await.is_ok() && h2m_running() {
-        let history = context.h2m_console_history.lock().await;
-        context.forward_logs.store(true, Ordering::SeqCst);
-        print!("{}", DisplayLogs(&history));
+        {
+            let history = context.h2m_console_history.lock().await;
+            context.forward_logs.store(true, Ordering::SeqCst);
+            print!("{}", DisplayLogs(&history));
+        }
 
         let init = |handle: &mut LineReader<'_>| {
             handle.set_prompt(String::from("h2m-mod.exe"));

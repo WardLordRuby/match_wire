@@ -21,9 +21,6 @@ use std::{
 
 use tracing::{error, instrument, trace};
 
-// MARK: TODO
-// Check all mutex lock points
-
 pub struct Cache {
     pub host_to_connect: HashMap<String, SocketAddr>,
     pub ip_to_region: HashMap<IpAddr, [char; 2]>,

@@ -103,7 +103,11 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     }
     let connect = cache
         .host_to_connect
-        .get(&cache.connection_history.last().unwrap().raw);
+        .get(&cache.connection_history.last().unwrap().raw)
+        .copied();
+
+    drop(cache);
+
     if let Some(ip_port) = connect {
         let lock = context.pty_handle().unwrap();
         connect_to(ip_port, &lock)
@@ -116,7 +120,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
-async fn connect_to(ip_port: &SocketAddr, lock: &RwLock<PTY>) -> Result<(), String> {
+async fn connect_to(ip_port: SocketAddr, lock: &RwLock<PTY>) -> Result<(), String> {
     let handle = lock.read().await;
     let send_command = |command: &str| match handle.write(OsString::from(command)) {
         Ok(chars) => {
