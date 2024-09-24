@@ -77,8 +77,6 @@ pub struct Filters {
     #[arg(short, long)]
     pub limit: Option<usize>,
 
-    // MARK: TODO
-    // add filter for bots true/false
     /// Specify a minimum number of players a server must have [Default: 0]
     #[arg(short, long, value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM))]
     pub player_min: Option<u8>,
@@ -86,6 +84,14 @@ pub struct Filters {
     /// Specify a maximum team size [Default: 9]
     #[arg(short, long, value_parser = value_parser!(u8).range(1..=H2M_MAX_TEAM_SIZE))]
     pub team_size_max: Option<u8>,
+
+    /// Server contains bot players
+    #[arg(long, group = "bots")]
+    pub with_bots: bool,
+
+    /// Server does not contain bot players
+    #[arg(long, group = "bots")]
+    pub without_bots: bool,
 
     /// Specify region [Default: include all regions]
     #[arg(short, long, value_enum)]

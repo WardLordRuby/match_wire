@@ -212,10 +212,6 @@ pub async fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
 
     let mut conpty = PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap();
 
-    // let exe_dir = context.exe_dir();
-    // let lock = context.pty_handle().unwrap();
-    // let mut conpty = lock.write().await;
-
     let spawned = match conpty.spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None) {
         Ok(_) => H2M_NAMES[0],
         Err(_) => {

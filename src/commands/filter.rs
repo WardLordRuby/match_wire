@@ -111,8 +111,6 @@ pub async fn build_favorites(
     }
 
     for server in servers.iter().rev() {
-        // MARK: DEBUG
-        // make sure that this formats ipv6 how the favorites.json expects
         ips.push_str(&format!("\"{}\",", server.socket_addr));
         ip_collected += 1;
         if ip_collected == limit {
@@ -416,6 +414,8 @@ async fn filter_server_list(
         || args.includes.is_some()
         || args.player_min.is_some()
         || args.team_size_max.is_some()
+        || args.with_bots
+        || args.without_bots
     {
         let mut tasks = Vec::with_capacity(servers.len());
         let mut host_list = Vec::with_capacity(servers.len());
@@ -429,10 +429,11 @@ async fn filter_server_list(
                     Ok(server) => host_list.push(server),
                     Err(info) => {
                         error!(name: LOG_ONLY, "{}", info.err);
-                        // if args.bots.is_none {} // wrap in this once done
-                        if let Sourced::Iw4(meta) = info.meta {
-                            if let Some(server) = Server::from(meta) {
-                                host_list.push(server);
+                        if !args.with_bots && !args.without_bots {
+                            if let Sourced::Iw4(meta) = info.meta {
+                                if let Some(server) = Server::from(meta) {
+                                    host_list.push(server);
+                                }
                             }
                         }
                     }
@@ -464,6 +465,16 @@ async fn filter_server_list(
                     host_list.swap_remove(i);
                     continue;
                 }
+            }
+
+            if args.with_bots && info.bots == 0 {
+                host_list.swap_remove(i);
+                continue;
+            }
+
+            if args.without_bots && info.bots != 0 {
+                host_list.swap_remove(i);
+                continue;
             }
 
             let mut hostname_l = None;

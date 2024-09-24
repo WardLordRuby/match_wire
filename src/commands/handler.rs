@@ -275,7 +275,7 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
             let msg = match handle.is_alive() {
                 Ok(true) => Message::Info(String::from("Connected to H2M-mod console")),
                 Ok(false) => {
-                    Message::Err(String::from("Could not establish connection to H2M-mod"))
+                    Message::Err(String::from("Could not establish connection to H2M-mod, use command `launch` to re-launch game"))
                 }
                 Err(err) => Message::Err(err.to_string_lossy().to_string()),
             };
