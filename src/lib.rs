@@ -21,7 +21,7 @@ use commands::handler::CommandContext;
 use std::{
     collections::HashSet,
     ffi::OsString,
-    io::{self, Result},
+    io::{self, BufRead, BufReader, Result},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -43,9 +43,6 @@ pub const REQUIRED_FILES: [&str; 3] = ["h1_mp64_ship.exe", "h2m-mod", "players2"
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub const CACHED_DATA: &str = "cache.json";
-
-pub const APP_NAME: &str = "h2m_favorites";
-pub const LOG_NAME: &str = "h2m_favorties.log";
 
 // MARK: TODOS
 // 1. stylize terminal
@@ -152,7 +149,7 @@ pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
                     .expect("Failed to create players2 folder");
-                info!("players2 folder is missing, a new one was created");
+                println!("players2 folder is missing, a new one was created");
             }
             Ok(())
         }
@@ -161,8 +158,6 @@ pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
 }
 
 pub async fn await_user_for_end() {
-    use std::io::{BufRead, BufReader};
-
     println!("Press enter to exit...");
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin);
@@ -171,14 +166,14 @@ pub async fn await_user_for_end() {
 
 /// Validates local/app_dir exists and modifies input if valid
 pub fn check_app_dir_exists(local: &mut PathBuf) -> Result<()> {
-    use crate::{does_dir_contain, Operation, OperationResult, APP_NAME};
-    match does_dir_contain(local, Operation::All, &[APP_NAME]) {
+    let app_name = env!("CARGO_PKG_NAME");
+    match does_dir_contain(local, Operation::All, &[app_name]) {
         Ok(OperationResult::Bool(true)) => {
-            local.push(APP_NAME);
+            local.push(app_name);
             Ok(())
         }
         Ok(OperationResult::Bool(false)) => {
-            local.push(APP_NAME);
+            local.push(app_name);
             std::fs::create_dir(local)
         }
         Err(err) => Err(err),

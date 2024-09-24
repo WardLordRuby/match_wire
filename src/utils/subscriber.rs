@@ -50,9 +50,11 @@ where
 #[cfg(not(debug_assertions))]
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
     use tracing_subscriber::{filter::DynFilterFn, Layer};
+    let name = env!("CARGO_PKG_NAME");
+    let log_name = format!("{name}.log");
 
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
-        .filename_prefix(crate::LOG_NAME)
+        .filename_prefix(log_name)
         .max_log_files(5)
         .build(local_env_dir)
         .map_err(std::io::Error::other)?;
@@ -63,7 +65,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
         ))
         .fmt_fields(PrettyFields::new())
         .with_writer(file_appender)
-        .with_filter(EnvFilter::new("h2m_favorites=info,reqwest=warn"));
+        .with_filter(EnvFilter::new(format!("{name}=info,reqwest=warn")));
 
     let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != crate::LOG_ONLY);
 
@@ -73,7 +75,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
         .with_ansi(false)
         .with_level(false)
         .with_writer(std::io::stdout)
-        .with_filter(EnvFilter::new("h2m_favorites=info"))
+        .with_filter(EnvFilter::new(format!("{name}=info")))
         .with_filter(exclude_log_only);
 
     tracing_subscriber::registry()
