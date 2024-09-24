@@ -44,6 +44,7 @@ const JOIN_CHARS: &str = "Joining ";
 const CONNECT_CHARS: &str = "Connecti";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
+const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 
@@ -158,6 +159,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                         if wide_encode_buf
                             .windows(JOIN_BYTES.len())
                             .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
+                            && !wide_encode_buf.starts_with(&ERROR_BYTES)
                         {
                             let mut cache = cache_arc.lock().await;
                             add_to_history(&mut cache.connection_history, &wide_encode_buf);
