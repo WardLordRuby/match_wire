@@ -55,6 +55,9 @@ struct InnerScheme {
     inner: Option<Vec<InnerScheme>>,
 }
 
+// MARK: TODO
+// add support for short arg syntax
+
 #[derive(PartialEq, Eq, Debug)]
 struct RecData {
     /// name of the parent entry
@@ -62,7 +65,7 @@ struct RecData {
     /// required data if this node contains any aliases
     alias: Option<AliasData>,
     /// recomendations followed by recomendation aliases
-    recs: Vec<&'static str>,
+    recs: Option<Vec<&'static str>>,
     /// kind of data stored
     kind: RecKind,
     /// signals this is a leaf node
@@ -80,14 +83,17 @@ impl RecData {
         RecData {
             parent: None,
             alias: None,
-            recs: Vec::new(),
+            recs: Some(Vec::new()),
             kind: RecKind::Null,
             end: true,
         }
     }
+    fn rec_len(&self) -> usize {
+        self.recs.as_ref().map_or(0, |recs| recs.len())
+    }
     fn unique_rec_end(&self) -> usize {
-        self.alias.as_ref().map_or(self.recs.len(), |data| {
-            self.recs.len() - data.rec_mapping.len()
+        self.alias.as_ref().map_or(self.rec_len(), |data| {
+            self.rec_len() - data.rec_mapping.len()
         })
     }
 }
@@ -125,7 +131,7 @@ impl InnerScheme {
             data: RecData {
                 parent: Some(parent),
                 alias: None,
-                recs: Vec::new(),
+                recs: None,
                 kind,
                 end,
             },
@@ -137,7 +143,7 @@ impl InnerScheme {
             data: RecData {
                 parent: Some(UNIVERSAL),
                 alias: None,
-                recs: Vec::new(),
+                recs: None,
                 kind: RecKind::Help,
                 end: true,
             },
@@ -149,7 +155,7 @@ impl InnerScheme {
             data: RecData {
                 parent: Some(parent),
                 alias: None,
-                recs: Vec::new(),
+                recs: None,
                 kind: RecKind::Null,
                 end: true,
             },
@@ -167,7 +173,7 @@ pub fn init_completion() -> CommandScheme {
             alias: Some(AliasData {
                 rec_mapping: vec![(3, 10), (3, 11), (4, 12), (4, 13), (5, 14), (6, 15)],
             }),
-            recs: vec![
+            recs: Some(vec![
                 "filter",
                 "reconnect",
                 "launch",
@@ -184,7 +190,7 @@ pub fn init_completion() -> CommandScheme {
                 "logs",
                 "gamedir",
                 "localenv",
-            ],
+            ]),
             kind: RecKind::Command,
             end: false,
         },
@@ -195,7 +201,7 @@ pub fn init_completion() -> CommandScheme {
                 data: RecData {
                     parent: Some(ROOT),
                     alias: None,
-                    recs: vec![
+                    recs: Some(vec![
                         "limit",
                         "player-min",
                         "team-size-max",
@@ -206,7 +212,7 @@ pub fn init_completion() -> CommandScheme {
                         "with-bots",
                         "without-bots",
                         "help",
-                    ],
+                    ]),
                     kind: RecKind::Argument,
                     end: false,
                 },
@@ -236,7 +242,7 @@ pub fn init_completion() -> CommandScheme {
                             alias: Some(AliasData {
                                 rec_mapping: vec![(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)],
                             }),
-                            recs: vec![
+                            recs: Some(vec![
                                 "na",
                                 "eu",
                                 "apac",
@@ -245,7 +251,7 @@ pub fn init_completion() -> CommandScheme {
                                 "asia",
                                 "pacific",
                                 "asiapacific",
-                            ],
+                            ]),
                             kind: RecKind::value_with_num_args(1),
                             end: false,
                         },
@@ -258,7 +264,7 @@ pub fn init_completion() -> CommandScheme {
                             alias: Some(AliasData {
                                 rec_mapping: vec![(0, 2), (1, 3)],
                             }),
-                            recs: vec!["iw4-master", "hmw-master", "iw4", "hmw"],
+                            recs: Some(vec!["iw4-master", "hmw-master", "iw4", "hmw"]),
                             kind: RecKind::value_with_num_args(SOURCE_LEN),
                             end: false,
                         },
@@ -277,9 +283,9 @@ pub fn init_completion() -> CommandScheme {
                         false,
                     ),
                     // with-bots
-                    InnerScheme::empty_with("filter", RecKind::Argument, false),
+                    InnerScheme::empty_with("filter", RecKind::Null, false),
                     // without-bots
-                    InnerScheme::empty_with("filter", RecKind::Argument, false),
+                    InnerScheme::empty_with("filter", RecKind::Null, false),
                     // help
                     InnerScheme::help(),
                 ]),
@@ -289,7 +295,7 @@ pub fn init_completion() -> CommandScheme {
                 data: RecData {
                     parent: Some(ROOT),
                     alias: None,
-                    recs: vec!["history", "connect", "help"],
+                    recs: Some(vec!["history", "connect", "help"]),
                     kind: RecKind::Argument,
                     end: false,
                 },
@@ -366,32 +372,36 @@ impl From<&'static CommandScheme> for Completion {
                     kind: RecKind::Argument,
                     ..
                 } => {
-                    if !recs.is_empty() {
-                        let expected_len = inner.data.unique_rec_end();
-                        assert_eq!(expected_len, inner.inner.as_ref().unwrap().len());
-                        for (i, (&argument, inner)) in recs
-                            .iter()
-                            .zip(inner.inner.as_ref().expect("is some"))
-                            .enumerate()
-                            .take(expected_len)
-                        {
-                            list.push(&inner.data);
-                            let l_i = list.len() - 1;
-                            insert_index(map, argument, l_i, &inner.data, list);
-                            if let Some(ref data) = alias {
-                                data.rec_mapping
-                                    .iter()
-                                    .filter(|(rec_i, _)| *rec_i == i)
-                                    .map(|&(_, alias_i)| recs[alias_i])
-                                    .for_each(|alias| {
-                                        insert_index(map, alias, l_i, &inner.data, list);
-                                    });
-                            }
-                            if let RecKind::Value(_) = inner.data.kind {
-                                insert_rec_set(value_sets, &inner.data.recs, l_i);
-                            }
-                            walk_inner(inner, list, map, value_sets);
+                    let expected_len = inner.data.unique_rec_end();
+                    assert_eq!(expected_len, inner.inner.as_ref().unwrap().len());
+                    for (i, (&argument, inner)) in recs
+                        .as_ref()
+                        .expect("is some")
+                        .iter()
+                        .zip(inner.inner.as_ref().expect("is some"))
+                        .enumerate()
+                        .take(expected_len)
+                    {
+                        list.push(&inner.data);
+                        let l_i = list.len() - 1;
+                        insert_index(map, argument, l_i, &inner.data, list);
+                        if let Some(ref data) = alias {
+                            data.rec_mapping
+                                .iter()
+                                .filter(|(rec_i, _)| *rec_i == i)
+                                .map(|&(_, alias_i)| recs.as_ref().expect("is some")[alias_i])
+                                .for_each(|alias| {
+                                    insert_index(map, alias, l_i, &inner.data, list);
+                                });
                         }
+                        if let RecKind::Value(_) = inner.data.kind {
+                            insert_rec_set(
+                                value_sets,
+                                inner.data.recs.as_ref().expect("is some"),
+                                l_i,
+                            );
+                        }
+                        walk_inner(inner, list, map, value_sets);
                     }
                 }
                 _ => assert!(inner.inner.is_none()),
@@ -408,6 +418,8 @@ impl From<&'static CommandScheme> for Completion {
         for (i, (&command, inner)) in value
             .commands
             .recs
+            .as_ref()
+            .expect("is some")
             .iter()
             .zip(value.inner.iter())
             .enumerate()
@@ -420,18 +432,22 @@ impl From<&'static CommandScheme> for Completion {
                 data.rec_mapping
                     .iter()
                     .filter(|(rec_i, _)| *rec_i == i)
-                    .map(|&(_, alias_i)| value.commands.recs[alias_i])
+                    .map(|&(_, alias_i)| value.commands.recs.as_ref().expect("is some")[alias_i])
                     .for_each(|alias| {
                         insert_index(&mut rec_map, alias, l_i, &inner.data, &rec_list);
                     });
             }
             if let RecKind::Value(_) = inner.data.kind {
-                insert_rec_set(&mut value_sets, &inner.data.recs, l_i);
+                insert_rec_set(
+                    &mut value_sets,
+                    inner.data.recs.as_ref().expect("is some"),
+                    l_i,
+                );
             }
             walk_inner(inner, &mut rec_list, &mut rec_map, &mut value_sets);
         }
         Completion {
-            recomendations: value.commands.recs[..expected_len].to_vec(),
+            recomendations: value.commands.recs.as_ref().expect("is some")[..expected_len].to_vec(),
             rec_i: USER_INPUT,
             input: CompletionState::default(),
             rec_map,
@@ -864,8 +880,13 @@ impl LineReader<'_> {
         }
 
         if let Some(arg) = self.completion.curr_arg() {
-            let rec_data = self.completion.rec_list[arg.hash_i];
-            if rec_data.kind == RecKind::Argument && !rec_data.end && rec_data.recs.is_empty() {
+            if let RecData {
+                recs: None,
+                kind: RecKind::Null,
+                end: false,
+                ..
+            } = self.completion.rec_list[arg.hash_i]
+            {
                 self.completion.input.curr_argument = None;
             }
         }
@@ -937,21 +958,20 @@ impl LineReader<'_> {
             self.check_value_err(self.curr_token())
         ));
 
-        if rec_data.recs.is_empty() {
+        let Some(ref recs) = rec_data.recs else {
             self.completion.recomendations = Vec::new();
             return;
-        }
+        };
 
         if self.curr_token().is_empty() {
             let end = rec_data.unique_rec_end();
-            self.completion.recomendations = rec_data.recs[..end].to_vec();
+            self.completion.recomendations = recs[..end].to_vec();
             return;
         }
 
         let input_lower = self.curr_token().trim_start_matches('-').to_lowercase();
 
-        let mut recomendations = rec_data
-            .recs
+        let mut recomendations = recs
             .iter()
             .filter(|rec| rec.contains(&input_lower))
             .copied()
@@ -1029,7 +1049,8 @@ impl LineReader<'_> {
         self.completion.data_set_i = COMMANDS;
         let commands = self.completion.rec_list[COMMANDS];
         let end = commands.unique_rec_end();
-        self.completion.recomendations = commands.recs[..end].to_vec();
+        self.completion.recomendations =
+            commands.recs.as_ref().expect("commands is not empty")[..end].to_vec();
         self.completion.rec_i = USER_INPUT;
     }
 }
