@@ -127,8 +127,13 @@ pub async fn build_cache(
     }
 
     let mut cache = Cache::new();
-    let client = reqwest::Client::new();
     let mut tasks = Vec::new();
+
+    let client = reqwest::Client::builder()
+        .timeout(tokio::time::Duration::from_secs(3))
+        .build()
+        .unwrap();
+
     queue_info_requests(servers, &mut tasks, false, &client).await;
 
     for task in tasks {

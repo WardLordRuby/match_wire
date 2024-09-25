@@ -13,6 +13,7 @@ use tracing::{error, info, instrument, trace};
 
 use std::{
     collections::HashSet,
+    fmt::Display,
     fs::File,
     io::{self, Write},
     net::{IpAddr, SocketAddr, ToSocketAddrs},
@@ -170,7 +171,7 @@ pub async fn try_get_info(
         Ok(res) => res,
         Err(err) => {
             return Err(GetInfoErr {
-                err: format!("{err}, with ip: {socket_addr}"),
+                err: format!("{err}, with ip: {socket_addr}, from source: {meta}"),
                 meta,
             })
         }
@@ -210,6 +211,19 @@ pub enum Sourced {
     Iw4(HostMeta),
     Iw4Cached(SocketAddr),
     Failed,
+}
+
+impl Display for Sourced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let display = match self {
+            Sourced::Hmw(_) => "HMW master server",
+            Sourced::HmwCached(_) => "Cached HMW server",
+            Sourced::Iw4(_) => "Iw4m master server",
+            Sourced::Iw4Cached(_) => "Cached Iw4m server",
+            Sourced::Failed => "Failed get request",
+        };
+        write!(f, "{display}")
+    }
 }
 
 impl Sourced {
@@ -420,7 +434,11 @@ async fn filter_server_list(
         let mut tasks = Vec::with_capacity(servers.len());
         let mut host_list = Vec::with_capacity(servers.len());
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(tokio::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+
         queue_info_requests(servers, &mut tasks, true, &client).await;
 
         for task in tasks {
