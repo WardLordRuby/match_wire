@@ -14,13 +14,19 @@ use crossterm::{
 };
 use std::{
     collections::VecDeque,
+    future::Future,
     io::{self, Stdout, Write},
+    pin::Pin,
 };
 use tracing::{error, info};
 
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
 pub type LineCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
-pub type ContextCallback = dyn Fn(&mut CommandContext);
+pub type CtxCallback = dyn Fn(&mut CommandContext);
+pub type AsyncCtxCallback =
+    dyn for<'a> FnOnce(
+        &'a mut CommandContext,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + '_>>;
 
 pub struct LineReader<'a> {
     pub completion: Completion,
@@ -106,10 +112,12 @@ pub struct History {
 
 pub enum EventLoop {
     Continue,
-    /// Sending a command and marking the calling `InputLineHook` as finished can lead to  
-    /// undefined behavior if `try_send_command` errors
-    SendCommand(String),
-    Callback(Box<ContextCallback>),
+    // MARK: IMPROVE
+    // this could be taken care of by giving `InputLineHook` unique ids
+    /// executing a callback and marking the calling `InputLineHook` as finished will lead to  
+    /// undefined behavior if the callback returns an error
+    AsyncCallback(Box<AsyncCtxCallback>),
+    Callback(Box<CtxCallback>),
     Break,
     TryProcessCommand,
 }

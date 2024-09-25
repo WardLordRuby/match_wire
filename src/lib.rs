@@ -17,15 +17,14 @@ pub mod utils {
     pub mod subscriber;
 }
 
-use commands::handler::CommandContext;
+use commands::handler::{end_forward, CommandContext};
 use std::{
     collections::HashSet,
-    ffi::OsString,
     io::{self, BufRead, BufReader, Result},
     path::{Path, PathBuf},
     time::Duration,
 };
-use tracing::{error, info};
+use tracing::info;
 use utils::{
     input::line::{LineData, LineReader},
     json_data::Version,
@@ -221,16 +220,8 @@ pub fn parse_hostname(name: &str) -> String {
     host_name
 }
 
-pub async fn try_send_cmd(context: &mut CommandContext, line: &mut LineReader<'_>, cmd: String) {
-    if let Err(err) = context.check_h2m_connection().await {
-        error!("Could not send command, {err}");
-        line.set_prompt(LineData::default_prompt());
-        line.pop_callback();
-        return;
-    }
-    let pty_handle = context.pty_handle().expect("unreachable by guard clause");
-    let h2m_console = pty_handle.write().await;
-    if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
-        error!("failed to write command to h2m console");
-    }
+pub fn force_remove_hook(ctx: &mut CommandContext, line: &mut LineReader) {
+    line.set_prompt(LineData::default_prompt());
+    line.pop_callback();
+    end_forward(ctx);
 }

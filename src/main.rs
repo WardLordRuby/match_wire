@@ -130,7 +130,12 @@ fn main() {
                                 Ok(EventLoop::Continue) => (),
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
-                                Ok(EventLoop::SendCommand(cmd)) => try_send_cmd(&mut command_context, &mut line_handle, cmd).await,
+                                Ok(EventLoop::AsyncCallback(callback)) => {
+                                    if let Err(err) = callback(&mut command_context).await {
+                                        error!("{err}");
+                                        force_remove_hook(&mut command_context, &mut line_handle);
+                                    }
+                                },
                                 Ok(EventLoop::TryProcessCommand) => {
                                     let command_handle = match shellwords::split(line_handle.last_line()) {
                                         Ok(user_args) => try_execute_command(user_args, &mut command_context).await,

@@ -7,13 +7,16 @@ use crate::{
     },
     utils::{
         caching::{build_cache, Cache},
-        input::line::{EventLoop, InputEventHook, LineCallback, LineData, LineReader},
+        input::line::{
+            AsyncCtxCallback, EventLoop, InputEventHook, LineCallback, LineData, LineReader,
+        },
     },
     CACHED_DATA,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::{
+    ffi::OsString,
     fmt::Display,
     path::{Path, PathBuf},
     sync::{
@@ -314,7 +317,7 @@ impl<'a> Display for DisplayLogs<'a> {
 }
 
 #[inline]
-fn end_forward(context: &mut CommandContext) {
+pub fn end_forward(context: &mut CommandContext) {
     context.forward_logs().store(false, Ordering::SeqCst);
 }
 
@@ -373,7 +376,24 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
                 let cmd = handle.line.take_input();
                 handle.new_line()?;
 
-                Ok((EventLoop::SendCommand(cmd), false))
+                let send_cmd: Box<AsyncCtxCallback> = Box::new(|context: &mut CommandContext| {
+                    Box::pin(async move {
+                        context
+                            .check_h2m_connection()
+                            .await
+                            .map_err(|err| format!("Could not send command: {err}"))?;
+
+                        let pty_handle = context.pty_handle().expect("above guard");
+                        let h2m_console = pty_handle.write().await;
+
+                        if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
+                            error!("failed to write command to h2m console");
+                        }
+                        Ok(())
+                    })
+                });
+
+                Ok((EventLoop::AsyncCallback(send_cmd), false))
             }
             _ => Ok((EventLoop::Continue, false)),
         };
