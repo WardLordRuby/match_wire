@@ -644,11 +644,12 @@ fn resolve_address(host_meta: &mut HostMeta) -> io::Result<IpAddr> {
                     format!("Addr: {ip}, is unspecified"),
                 ));
             }
-            if server_ip == ip.to_string() {
+            let ip_str = ip.to_string();
+            if server_ip == ip_str {
                 return Ok(ip);
             }
             trace!("{server_ip} trimmed and parsed to: {ip}");
-            host_meta.server.ip = ip.to_string();
+            host_meta.server.ip = ip_str;
             return Ok(ip);
         }
 

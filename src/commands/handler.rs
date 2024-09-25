@@ -105,32 +105,31 @@ impl CommandContext {
 
 #[derive(Default)]
 pub struct CommandContextBuilder {
-    cache: Option<Arc<Mutex<Cache>>>,
+    cache: Option<Cache>,
     launch_res: Option<Result<(PTY, f64), String>>,
-    exe_dir: Option<Arc<PathBuf>>,
-    msg_sender: Option<Arc<Sender<Message>>>,
-    local_dir: Option<Arc<PathBuf>>,
+    exe_dir: Option<PathBuf>,
+    msg_sender: Option<Sender<Message>>,
+    local_dir: Option<PathBuf>,
 }
 
 impl CommandContextBuilder {
     pub fn new() -> Self {
         CommandContextBuilder::default()
     }
-
     pub fn cache(mut self, cache: Cache) -> Self {
-        self.cache = Some(Arc::new(Mutex::new(cache)));
+        self.cache = Some(cache);
         self
     }
     pub fn exe_dir(mut self, exe_dir: PathBuf) -> Self {
-        self.exe_dir = Some(Arc::new(exe_dir));
+        self.exe_dir = Some(exe_dir);
         self
     }
     pub fn msg_sender(mut self, sender: Sender<Message>) -> Self {
-        self.msg_sender = Some(Arc::new(sender));
+        self.msg_sender = Some(sender);
         self
     }
     pub fn local_dir(mut self, local_dir: Option<PathBuf>) -> Self {
-        self.local_dir = local_dir.map(Arc::new);
+        self.local_dir = local_dir;
         self
     }
     pub fn launch_res(mut self, res: Result<(PTY, f64), String>) -> Self {
@@ -139,8 +138,8 @@ impl CommandContextBuilder {
     }
 
     pub fn build(self) -> Result<CommandContext, &'static str> {
-        let (pty_handle, h2m_version) = match self.launch_res {
-            Some(Ok((handle, ver))) => (Some(handle), Some(ver)),
+        let (handle, version) = match self.launch_res {
+            Some(Ok((handle, version))) => (Some(handle), Some(version)),
             Some(Err(err)) => {
                 error!("{err}");
                 (None, None)
@@ -148,15 +147,21 @@ impl CommandContextBuilder {
             None => (None, None),
         };
         Ok(CommandContext {
-            cache: self.cache.ok_or("cache is required")?,
-            exe_dir: self.exe_dir.ok_or("exe_dir is required")?,
-            msg_sender: self.msg_sender.ok_or("msg_sender is required")?,
-            pty_handle: pty_handle.map(|handle| Arc::new(RwLock::new(handle))),
+            cache: self
+                .cache
+                .map(|cache| Arc::new(Mutex::new(cache)))
+                .ok_or("cache is required")?,
+            exe_dir: self.exe_dir.map(Arc::new).ok_or("exe_dir is required")?,
+            msg_sender: self
+                .msg_sender
+                .map(Arc::new)
+                .ok_or("msg_sender is required")?,
+            pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
+            local_dir: self.local_dir.map(Arc::new),
             cache_needs_update: Arc::new(AtomicBool::new(false)),
             forward_logs: Arc::new(AtomicBool::new(false)),
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
-            local_dir: self.local_dir,
-            h2m_version: h2m_version.unwrap_or(1.0),
+            h2m_version: version.unwrap_or(1.0),
         })
     }
 }
