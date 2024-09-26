@@ -11,6 +11,7 @@ const UNIVERSAL: &str = "ANY";
 const USER_INPUT: i8 = -1;
 const COMMANDS: usize = 0;
 const INVALID: usize = 1;
+const VALID: usize = 2;
 
 macro_rules! any_true {
     ($($x:expr),+ $(,)?) => {
@@ -29,7 +30,10 @@ pub struct CommandScheme {
     commands: RecData,
 
     /// static empty node used for invalid inputs
-    empty: RecData,
+    invalid: RecData,
+
+    /// static empty node used for valid inputs of `RecKind::Value`
+    valid: RecData,
 
     /// inner data shares indices with `commands.recs`
     inner: Vec<InnerScheme>,
@@ -52,11 +56,13 @@ struct InnerScheme {
     data: RecData,
 
     /// inner data shares indices with `data.recs`
-    inner: Option<Vec<InnerScheme>>,
+    inner: Option<Vec<Self>>,
 }
 
 // MARK: TODO
 // add support for short arg syntax
+
+// add way to toggle style/completion
 
 #[derive(PartialEq, Eq, Debug)]
 struct RecData {
@@ -83,14 +89,17 @@ impl RecData {
         RecData {
             parent: None,
             alias: None,
-            recs: Some(Vec::new()),
+            recs: None,
             kind: RecKind::Null,
             end: true,
         }
     }
+
+    #[inline]
     fn rec_len(&self) -> usize {
         self.recs.as_ref().map_or(0, |recs| recs.len())
     }
+
     fn unique_rec_end(&self) -> usize {
         self.alias.as_ref().map_or(self.rec_len(), |data| {
             self.rec_len() - data.rec_mapping.len()
@@ -171,21 +180,19 @@ pub fn init_completion() -> CommandScheme {
         commands: RecData {
             parent: None,
             alias: Some(AliasData {
-                rec_mapping: vec![(3, 10), (3, 11), (4, 12), (4, 13), (5, 14), (6, 15)],
+                rec_mapping: vec![(4, 10), (4, 11), (5, 12), (6, 13)],
             }),
             recs: Some(vec![
                 "filter",
                 "reconnect",
                 "launch",
-                "update-cache",
+                "cache",
                 "game-console",
                 "game-dir",
                 "local-env",
                 "quit",
                 "version",
                 "help",
-                "update",
-                "reset",
                 "console",
                 "logs",
                 "gamedir",
@@ -194,7 +201,8 @@ pub fn init_completion() -> CommandScheme {
             kind: RecKind::Command,
             end: false,
         },
-        empty: RecData::empty(),
+        invalid: RecData::empty(),
+        valid: RecData::empty(),
         inner: vec![
             // filter
             InnerScheme {
@@ -314,8 +322,19 @@ pub fn init_completion() -> CommandScheme {
             },
             // launch
             InnerScheme::ending_rec(ROOT),
-            // update-cache
-            InnerScheme::ending_rec(ROOT),
+            // cache
+            InnerScheme {
+                data: RecData {
+                    parent: Some(ROOT),
+                    alias: Some(AliasData {
+                        rec_mapping: vec![(0, 2)],
+                    }),
+                    recs: Some(vec!["reset", "update", "clear"]),
+                    kind: RecKind::value_with_num_args(1),
+                    end: true,
+                },
+                inner: None,
+            },
             // game-console
             InnerScheme::ending_rec(ROOT),
             // game-dir
@@ -414,7 +433,8 @@ impl From<&'static CommandScheme> for Completion {
         let mut value_sets = HashMap::new();
         let mut rec_list = Vec::new();
         rec_list.push(&value.commands);
-        rec_list.push(&value.empty);
+        rec_list.push(&value.invalid);
+        rec_list.push(&value.valid);
         for (i, (&command, inner)) in value
             .commands
             .recs
@@ -453,7 +473,7 @@ impl From<&'static CommandScheme> for Completion {
             rec_map,
             rec_list,
             value_sets,
-            data_set_i: COMMANDS,
+            list_i: COMMANDS,
         }
     }
 }
@@ -467,7 +487,7 @@ pub struct Completion {
     recomendations: Vec<&'static str>,
     rec_i: i8,
     input: CompletionState,
-    data_set_i: usize,
+    list_i: usize,
     rec_list: Vec<&'static RecData>,
     rec_map: HashMap<&'static str, usize>,
     value_sets: HashMap<usize, HashSet<&'static str>>,
@@ -602,17 +622,11 @@ impl CompletionState {
 trait Validity {
     /// returns `true` if `Some(hash_i == INVALID)` else `false`
     fn is_some_and_invalid(&self) -> bool;
-
-    /// returns `true` if `Some(hash_i != INVALID)` else `false`
-    fn is_some_and_valid(&self) -> bool;
 }
 
 impl Validity for Option<&SliceData> {
     fn is_some_and_invalid(&self) -> bool {
         matches!(self, Some(SliceData { hash_i, ..}) if *hash_i == INVALID)
-    }
-    fn is_some_and_valid(&self) -> bool {
-        matches!(self, Some(SliceData { hash_i, ..}) if *hash_i != INVALID)
     }
 }
 
@@ -620,9 +634,10 @@ impl SliceData {
     fn from_raw_unchecked(
         byte_start: usize,
         slice_len: usize,
-        expected: RecKind,
+        expected: &RecKind,
         line: &str,
         completion: &Completion,
+        arg_count: usize,
     ) -> Self {
         let mut data = SliceData {
             byte_start,
@@ -632,6 +647,7 @@ impl SliceData {
         match expected {
             RecKind::Command => completion.hash_command_unchecked(line, &mut data),
             RecKind::Argument => completion.hash_arg_unchecked(line, &mut data),
+            RecKind::Value(ref r) => completion.hash_value_unchecked(line, &mut data, r, arg_count),
             _ => (),
         }
         data
@@ -648,6 +664,10 @@ impl Completion {
         self.curr_value()
             .or(self.curr_arg())
             .or(self.curr_command())
+    }
+    #[inline]
+    fn arg_or_cmd(&self) -> Option<&SliceData> {
+        self.curr_arg().or(self.curr_command())
     }
     #[inline]
     fn curr_command(&self) -> Option<&SliceData> {
@@ -667,7 +687,12 @@ impl Completion {
         self.value_sets.get(&i).expect("kind value").contains(value)
     }
 
-    fn try_parse_token_from_end(&self, line: &str, expected: RecKind) -> Option<SliceData> {
+    fn try_parse_token_from_end(
+        &self,
+        line: &str,
+        expected: &RecKind,
+        arg_count: usize,
+    ) -> Option<SliceData> {
         if self.input.ending.open_quote.is_none() {
             let line_trim_end = line.trim_end();
             let start = if line_trim_end.ends_with(['\'', '\"']) {
@@ -686,8 +711,9 @@ impl Completion {
             };
             if let Some(byte_start) = start {
                 let len = line_trim_end.len() - byte_start;
-                return (len > 0)
-                    .then(|| SliceData::from_raw_unchecked(byte_start, len, expected, line, self));
+                return (len > 0).then(|| {
+                    SliceData::from_raw_unchecked(byte_start, len, expected, line, self, arg_count)
+                });
             }
         }
         None
@@ -699,7 +725,7 @@ impl Completion {
         let mut prev_arg = None;
         let mut end = slice.len();
 
-        while let Some(token) = self.try_parse_token_from_end(&slice[..end], RecKind::Null) {
+        while let Some(token) = self.try_parse_token_from_end(&slice[..end], &RecKind::Null, 0) {
             // the input slice never gets modified so we know it will always be safe to turn back into a slice
             let str = token.to_slice_unchecked(slice);
             if str.starts_with('-') {
@@ -716,24 +742,33 @@ impl Completion {
     fn hash_command_unchecked(&self, line: &str, command: &mut SliceData) {
         let command_str = command.to_slice_unchecked(line);
         if command_str.starts_with('-') {
-            command.hash_i = INVALID;
             return;
         }
-        if let Some(&i) = self.rec_map.get(command_str) {
+        let mut option = None;
+        let hash_str = command_str.chars().next().map_or(command_str, |c| {
+            if c.is_uppercase() {
+                option = Some(format!(
+                    "{}{}",
+                    c.to_lowercase(),
+                    &command_str[c.len_utf8()..]
+                ));
+                option.as_ref().unwrap()
+            } else {
+                command_str
+            }
+        });
+        if let Some(&i) = self.rec_map.get(hash_str) {
             if let Some(parent) = self.rec_list[i].parent {
                 if parent == ROOT || parent == UNIVERSAL {
                     command.hash_i = i;
-                    return;
                 }
             }
         }
-        command.hash_i = INVALID
     }
 
     fn hash_arg_unchecked(&self, line: &str, arg: &mut SliceData) {
         let arg_str = arg.to_slice_unchecked(line);
         if !arg_str.starts_with('-') {
-            arg.hash_i = INVALID;
             return;
         }
         let command = self
@@ -745,11 +780,34 @@ impl Completion {
             if let Some(parent) = self.rec_list[i].parent {
                 if parent == command || parent == UNIVERSAL {
                     arg.hash_i = i;
-                    return;
                 }
             }
         }
-        arg.hash_i = INVALID
+    }
+
+    fn hash_value_unchecked(
+        &self,
+        line: &str,
+        arg: &mut SliceData,
+        range: &Range<usize>,
+        count: usize,
+    ) {
+        let val_str = arg.to_slice_unchecked(line);
+        if val_str.starts_with('-') {
+            return;
+        }
+
+        if !range.contains(&count) {
+            return;
+        }
+
+        let parent = self
+            .arg_or_cmd()
+            .expect("can only set value if cmd or arg is some");
+
+        if self.value_valid(val_str, parent.hash_i) {
+            arg.hash_i = VALID;
+        }
     }
 }
 
@@ -764,19 +822,19 @@ impl LineReader<'_> {
     }
 
     fn check_value_err(&self, user_input: &str) -> bool {
-        let curr_rec = self.completion.rec_list[self.completion.data_set_i];
+        let curr_rec = self.completion.rec_list[self.completion.list_i];
         let input = self.line.input().trim_start();
         let trailing = self
             .completion
             .last_key()
             .map(|key| &input[key.byte_start + key.slice_len..])
-            .unwrap_or_else(|| input)
+            .unwrap_or(input)
             .trim();
         match curr_rec.kind {
             RecKind::Value(_)
                 if !self
                     .completion
-                    .value_valid(user_input, self.completion.data_set_i) =>
+                    .value_valid(user_input, self.completion.list_i) =>
             {
                 true
             }
@@ -791,6 +849,16 @@ impl LineReader<'_> {
         }
     }
 
+    fn check_for_errors(&mut self) {
+        self.line.found_err(any_true!(
+            self.completion.curr_command().is_some_and_invalid(),
+            self.completion.curr_arg().is_some_and_invalid(),
+            self.completion.curr_value().is_some_and_invalid(),
+            self.open_quote().is_some(),
+            self.check_value_err(self.curr_token())
+        ));
+    }
+
     pub fn update_completeion(&mut self) {
         let line_trim_start = self.line.input().trim_start();
         if line_trim_start.is_empty() {
@@ -801,14 +869,16 @@ impl LineReader<'_> {
         self.completion.input.update_curr_token(line_trim_start);
         let state_changed = self.completion.input.check_state(line_trim_start);
 
-        if self.completion.rec_list[self.completion.data_set_i].end && !state_changed {
-            self.line.found_err(any_true!(
-                self.completion.curr_command().is_some_and_invalid(),
-                self.completion.curr_arg().is_some_and_invalid(),
-                self.completion.curr_value().is_some(),
-                self.check_value_err(self.curr_token())
-            ));
-            return;
+        if let RecData {
+            recs: None,
+            end: true,
+            ..
+        } = self.completion.rec_list[self.completion.list_i]
+        {
+            if !state_changed {
+                self.check_for_errors();
+                return;
+            }
         }
 
         self.completion.rec_i = USER_INPUT;
@@ -820,19 +890,28 @@ impl LineReader<'_> {
                     SliceData::from_raw_unchecked(
                         0,
                         pre.len(),
-                        RecKind::Command,
+                        &RecKind::Command,
                         line_trim_start,
                         &self.completion,
+                        0,
                     )
                 });
         }
 
-        if self.completion.curr_command().is_some_and_valid()
+        if self.open_quote().is_none()
+            && self.completion.curr_value().is_none()
             && self.completion.curr_arg().is_none()
-            && self.open_quote().is_none()
+            && self.completion.curr_command().is_some_and(|cmd| {
+                matches!(
+                    self.completion.rec_list[cmd.hash_i].kind,
+                    RecKind::Argument | RecKind::Value(_)
+                )
+            })
         {
             let command = self.completion.curr_command().expect("outer if");
-            self.completion.input.curr_argument = if line_trim_start[command.slice_len..]
+            let command_recs = self.completion.rec_list[command.hash_i];
+
+            if line_trim_start[command.slice_len..]
                 .trim_start()
                 .ends_with(char::is_whitespace)
             {
@@ -861,22 +940,31 @@ impl LineReader<'_> {
                 }
 
                 if take_end {
-                    self.completion
-                        .try_parse_token_from_end(line_trim_start, RecKind::Argument)
-                } else {
-                    None
+                    let new = self.completion.try_parse_token_from_end(
+                        line_trim_start,
+                        &command_recs.kind,
+                        prev_num_vals,
+                    );
+                    match command_recs.kind {
+                        RecKind::Argument => self.completion.input.curr_argument = new,
+                        RecKind::Value(_) => self.completion.input.curr_value = new,
+                        _ => unreachable!("by outer if"),
+                    }
                 }
             } else {
-                self.completion
+                // make sure we set prev arg when backspacing
+                self.completion.input.curr_argument = self
+                    .completion
                     .try_parse_token_from_end(
                         &line_trim_start[..line_trim_start.len() - self.curr_token().len()],
-                        RecKind::Argument,
+                        &command_recs.kind,
+                        0,
                     )
                     .filter(|arg| {
                         arg.hash_i != INVALID
                             && arg.to_slice_unchecked(line_trim_start).starts_with('-')
-                    })
-            };
+                    });
+            }
         }
 
         if let Some(arg) = self.completion.curr_arg() {
@@ -887,76 +975,65 @@ impl LineReader<'_> {
                 ..
             } = self.completion.rec_list[arg.hash_i]
             {
+                // boolean flag found
                 self.completion.input.curr_argument = None;
             }
         }
 
-        if self.completion.curr_arg().is_some_and_valid()
-            && self.completion.curr_value().is_none()
+        if self.completion.curr_value().is_none()
             && self.open_quote().is_none()
+            && self.completion.curr_arg().is_some_and(|arg| {
+                arg.hash_i != INVALID
+                    && line_trim_start[arg.byte_start + arg.slice_len..]
+                        .trim_start()
+                        .ends_with(char::is_whitespace)
+            })
         {
             let arg = self.completion.curr_arg().expect("outer if");
-            if line_trim_start[arg.byte_start + arg.slice_len..]
-                .trim_start()
-                .ends_with(char::is_whitespace)
-            {
-                match self.completion.rec_list[arg.hash_i].kind {
-                    RecKind::Value(_) => {
-                        if let Some(value) = self.completion.try_parse_token_from_end(
-                            line_trim_start,
-                            // we expect Value but passing in value does nothing in try_parse
-                            RecKind::Null,
-                        ) {
-                            if self
-                                .completion
-                                .value_valid(value.to_slice_unchecked(line_trim_start), arg.hash_i)
-                            {
-                                self.completion.input.curr_argument = None;
-                            } else {
-                                self.completion.input.curr_value = Some(value);
-                            }
-                        };
-                    }
-                    RecKind::UserDefined(_) => {
-                        if line_trim_start[arg.byte_start + arg.slice_len..]
-                            .trim_start()
-                            .ends_with(char::is_whitespace)
-                        {
+            let arg_recs = self.completion.rec_list[arg.hash_i];
+
+            match arg_recs.kind {
+                RecKind::Value(_) => {
+                    if let Some(value) =
+                        self.completion
+                            .try_parse_token_from_end(line_trim_start, &arg_recs.kind, 1)
+                    {
+                        if value.hash_i != INVALID {
                             self.completion.input.curr_argument = None;
+                        } else {
+                            self.completion.input.curr_value = Some(value);
                         }
-                    }
-                    _ => (),
+                    };
                 }
+                RecKind::UserDefined(_) => {
+                    if line_trim_start[arg.byte_start + arg.slice_len..]
+                        .trim_start()
+                        .ends_with(char::is_whitespace)
+                    {
+                        self.completion.input.curr_argument = None;
+                    }
+                }
+                _ => (),
             }
         }
 
         // eprintln!("{}", self.completion.input.display(line_trim_start));
 
-        self.completion.data_set_i = match (
+        self.completion.list_i = match (
             self.completion.curr_command(),
             self.completion.curr_arg(),
             self.completion.curr_value(),
         ) {
-            (Some(_), Some(_), Some(_)) => INVALID,
-            (Some(&SliceData { hash_i: i, .. }), Some(&SliceData { hash_i: j, .. }), None)
-                if i != INVALID && j != INVALID =>
-            {
-                j
-            }
-            (Some(&SliceData { hash_i: i, .. }), None, None) if i != INVALID => i,
+            (Some(_), Some(_) | None, Some(&SliceData { hash_i: k, .. })) => k,
+            (Some(_), Some(&SliceData { hash_i: j, .. }), None) => j,
+            (Some(&SliceData { hash_i: i, .. }), None, None) => i,
             (None, None, None) if line_trim_start.split_whitespace().count() <= 1 => COMMANDS,
             _ => INVALID,
         };
 
-        let rec_data = self.completion.rec_list[self.completion.data_set_i];
+        let rec_data = self.completion.rec_list[self.completion.list_i];
 
-        self.line.found_err(any_true!(
-            self.completion.curr_command().is_some_and_invalid(),
-            self.completion.curr_arg().is_some_and_invalid(),
-            self.completion.curr_value().is_some(),
-            self.open_quote().is_some(),
-            self.check_value_err(self.curr_token())
-        ));
+        self.check_for_errors();
 
         let Some(ref recs) = rec_data.recs else {
             self.completion.recomendations = Vec::new();
@@ -1025,7 +1102,7 @@ impl LineReader<'_> {
                     )
             };
 
-            match self.completion.rec_list[self.completion.data_set_i].kind {
+            match self.completion.rec_list[self.completion.list_i].kind {
                 RecKind::Argument => format_line(true),
                 RecKind::Value(_) | RecKind::Command => format_line(false),
                 RecKind::Help => format_line(self.completion.curr_command().is_some()),
@@ -1046,7 +1123,7 @@ impl LineReader<'_> {
 
     pub fn reset_completion(&mut self) {
         self.completion.input = CompletionState::default();
-        self.completion.data_set_i = COMMANDS;
+        self.completion.list_i = COMMANDS;
         let commands = self.completion.rec_list[COMMANDS];
         let end = commands.unique_rec_end();
         self.completion.recomendations =
