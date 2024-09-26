@@ -116,7 +116,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        loop {
+        'task: loop {
             tokio::time::sleep(PROCESS_INTERVAL).await;
             let handle = pty.read().await;
             if !matches!(handle.is_alive(), Ok(true)) {
@@ -135,7 +135,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     }
                     Err(err) => {
                         error!("{err:?}");
-                        break;
+                        break 'task;
                     }
                 }
 

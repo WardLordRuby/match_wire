@@ -62,8 +62,6 @@ struct InnerScheme {
 // MARK: TODO
 // add support for short arg syntax
 
-// add way to toggle style/completion
-
 #[derive(PartialEq, Eq, Debug)]
 struct RecData {
     /// name of the parent entry
@@ -637,7 +635,7 @@ impl SliceData {
         expected: &RecKind,
         line: &str,
         completion: &Completion,
-        arg_count: usize,
+        arg_count: Option<usize>,
     ) -> Self {
         let mut data = SliceData {
             byte_start,
@@ -647,7 +645,9 @@ impl SliceData {
         match expected {
             RecKind::Command => completion.hash_command_unchecked(line, &mut data),
             RecKind::Argument => completion.hash_arg_unchecked(line, &mut data),
-            RecKind::Value(ref r) => completion.hash_value_unchecked(line, &mut data, r, arg_count),
+            RecKind::Value(ref r) => {
+                completion.hash_value_unchecked(line, &mut data, r, arg_count.unwrap_or(1))
+            }
             _ => (),
         }
         data
@@ -691,7 +691,7 @@ impl Completion {
         &self,
         line: &str,
         expected: &RecKind,
-        arg_count: usize,
+        arg_count: Option<usize>,
     ) -> Option<SliceData> {
         if self.input.ending.open_quote.is_none() {
             let line_trim_end = line.trim_end();
@@ -725,7 +725,7 @@ impl Completion {
         let mut prev_arg = None;
         let mut end = slice.len();
 
-        while let Some(token) = self.try_parse_token_from_end(&slice[..end], &RecKind::Null, 0) {
+        while let Some(token) = self.try_parse_token_from_end(&slice[..end], &RecKind::Null, None) {
             // the input slice never gets modified so we know it will always be safe to turn back into a slice
             let str = token.to_slice_unchecked(slice);
             if str.starts_with('-') {
@@ -792,12 +792,12 @@ impl Completion {
         range: &Range<usize>,
         count: usize,
     ) {
-        let val_str = arg.to_slice_unchecked(line);
-        if val_str.starts_with('-') {
+        if !range.contains(&count) {
             return;
         }
 
-        if !range.contains(&count) {
+        let val_str = arg.to_slice_unchecked(line);
+        if val_str.starts_with('-') {
             return;
         }
 
@@ -893,7 +893,7 @@ impl LineReader<'_> {
                         &RecKind::Command,
                         line_trim_start,
                         &self.completion,
-                        0,
+                        None,
                     )
                 });
         }
@@ -943,7 +943,7 @@ impl LineReader<'_> {
                     let new = self.completion.try_parse_token_from_end(
                         line_trim_start,
                         &command_recs.kind,
-                        prev_num_vals,
+                        Some(prev_num_vals),
                     );
                     match command_recs.kind {
                         RecKind::Argument => self.completion.input.curr_argument = new,
@@ -958,7 +958,7 @@ impl LineReader<'_> {
                     .try_parse_token_from_end(
                         &line_trim_start[..line_trim_start.len() - self.curr_token().len()],
                         &command_recs.kind,
-                        0,
+                        None,
                     )
                     .filter(|arg| {
                         arg.hash_i != INVALID
@@ -994,10 +994,11 @@ impl LineReader<'_> {
 
             match arg_recs.kind {
                 RecKind::Value(_) => {
-                    if let Some(value) =
-                        self.completion
-                            .try_parse_token_from_end(line_trim_start, &arg_recs.kind, 1)
-                    {
+                    if let Some(value) = self.completion.try_parse_token_from_end(
+                        line_trim_start,
+                        &arg_recs.kind,
+                        None,
+                    ) {
                         if value.hash_i != INVALID {
                             self.completion.input.curr_argument = None;
                         } else {

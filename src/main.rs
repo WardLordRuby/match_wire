@@ -56,11 +56,7 @@ fn main() {
             }
         };
 
-        get_latest_version()
-            .await
-            .unwrap_or_else(|err| error!("{err}"));
-
-        let (message_tx, mut message_rx) = mpsc::channel(20);
+        let (message_tx, mut message_rx) = mpsc::channel(200);
 
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
@@ -190,6 +186,10 @@ struct StartupData {
 
 #[instrument(level = "trace", skip_all)]
 async fn app_startup() -> std::io::Result<StartupData> {
+    get_latest_version()
+        .await
+        .unwrap_or_else(|err| error!("{err}"));
+
     let exe_dir = std::env::current_dir()
         .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
 

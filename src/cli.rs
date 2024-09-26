@@ -24,7 +24,7 @@ pub enum Command {
         args: HistoryArgs,
     },
 
-    /// Launch H2M-Mod
+    /// Launch HMW/H2M
     #[command(alias = "Launch")]
     Launch,
 
