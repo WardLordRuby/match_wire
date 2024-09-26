@@ -222,6 +222,7 @@ pub fn parse_hostname(name: &str) -> String {
 
 pub fn force_remove_hook(ctx: &mut CommandContext, line: &mut LineReader) {
     line.set_prompt(LineData::default_prompt());
+    line.set_completion(true);
     line.pop_callback();
     end_forward(ctx);
 }

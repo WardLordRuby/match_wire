@@ -47,6 +47,7 @@ pub struct LineData {
     prompt_len: u16,
     input: String,
     len: u16,
+    comp_enabled: bool,
     err: bool,
 }
 
@@ -58,6 +59,7 @@ impl LineData {
         LineData {
             prompt_len: LineData::prompt_len(&prompt),
             prompt,
+            comp_enabled: true,
             ..Default::default()
         }
     }
@@ -95,6 +97,11 @@ impl LineData {
     #[inline]
     pub fn err(&self) -> bool {
         self.err
+    }
+
+    #[inline]
+    pub fn completion_enabled(&self) -> bool {
+        self.comp_enabled
     }
 }
 
@@ -165,6 +172,16 @@ impl<'a> LineReader<'a> {
             Message::Err(msg) => error!("{msg}"),
         }
         Ok(())
+    }
+
+    #[inline]
+    pub fn completion_enabled(&self) -> bool {
+        self.line.comp_enabled
+    }
+
+    #[inline]
+    pub fn set_completion(&mut self, enabled: bool) {
+        self.line.comp_enabled = enabled
     }
 
     /// Note: will panic if called when nothing is in the history
@@ -256,14 +273,18 @@ impl<'a> LineReader<'a> {
     pub fn insert_char(&mut self, c: char) {
         self.line.input.push(c);
         self.line.len = self.line.len.saturating_add(1);
-        self.update_completeion();
+        if self.line.comp_enabled {
+            self.update_completeion();
+        }
     }
 
     pub fn remove_char(&mut self) -> io::Result<()> {
         self.line.input.pop();
         self.move_to_beginning(self.line_len())?;
         self.line.len = self.line.len.saturating_sub(1);
-        self.update_completeion();
+        if self.line.comp_enabled {
+            self.update_completeion();
+        }
         Ok(())
     }
 

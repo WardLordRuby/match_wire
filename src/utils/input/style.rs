@@ -88,8 +88,20 @@ impl Display for LineData {
             PROMPT_END
                 .bold()
                 .stylize()
-                .with(if self.err() { Color::Red } else { Color::Reset }),
-            stylize_input(self.input())
+                .with(if self.completion_enabled() {
+                    if self.err() {
+                        Color::Red
+                    } else {
+                        Color::Reset
+                    }
+                } else {
+                    Color::Reset
+                }),
+            if self.completion_enabled() {
+                stylize_input(self.input())
+            } else {
+                self.input().to_string()
+            }
         )
     }
 }

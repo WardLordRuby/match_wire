@@ -331,6 +331,7 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
 
         let init = |handle: &mut LineReader<'_>| {
             handle.set_prompt(String::from("h2m-mod.exe"));
+            handle.set_completion(false);
             Ok(())
         };
 
@@ -345,6 +346,7 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
                     return Ok((EventLoop::Continue, false));
                 }
                 handle.set_prompt(LineData::default_prompt());
+                handle.set_completion(true);
                 Ok((EventLoop::Callback(Box::new(end_forward)), true))
             }
             Event::Key(KeyEvent {
@@ -360,6 +362,7 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
             }) => {
                 if handle.line.input().is_empty() {
                     handle.set_prompt(LineData::default_prompt());
+                    handle.set_completion(true);
                     return Ok((EventLoop::Callback(Box::new(end_forward)), true));
                 }
                 handle.remove_char()?;
