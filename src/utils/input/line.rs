@@ -18,7 +18,7 @@ use std::{
     io::{self, Stdout, Write},
     pin::Pin,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
 pub type LineCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
@@ -169,6 +169,7 @@ impl<'a> LineReader<'a> {
         match msg {
             Message::Str(msg) => println!("{msg}"),
             Message::Info(msg) => info!("{msg}"),
+            Message::Warn(msg) => warn!("{msg}"),
             Message::Err(msg) => error!("{msg}"),
         }
         Ok(())

@@ -18,6 +18,7 @@ pub mod utils {
 }
 
 use commands::handler::{end_forward, CommandContext};
+use crossterm::style::Stylize;
 use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Result},
@@ -44,9 +45,7 @@ pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub const CACHED_DATA: &str = "cache.json";
 
 // MARK: TODOS
-// 1. stylize terminal
-//    - colorize info warn and error level messages that are printed to the terminal
-// 2. make splash screen for startup
+// 1. make splash screen for startup
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -148,7 +147,10 @@ pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
                     .expect("Failed to create players2 folder");
-                println!("players2 folder is missing, a new one was created");
+                println!(
+                    "{}",
+                    "players2 folder is missing, a new one was created".green()
+                );
             }
             Ok(())
         }

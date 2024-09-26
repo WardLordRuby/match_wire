@@ -4,7 +4,7 @@ use commands::{
     handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
     launch_h2m::launch_h2m_pseudo,
 };
-use crossterm::{cursor, event::EventStream, execute, terminal};
+use crossterm::{cursor, event::EventStream, execute, style::Stylize, terminal};
 use h2m_favorites::*;
 use std::{
     path::{Path, PathBuf},
@@ -50,7 +50,7 @@ fn main() {
         let startup_data = match app_startup().await {
             Ok(data) => data,
             Err(err) => {
-                eprintln!("{err}");
+                eprintln!("{}", err.to_string().red());
                 await_user_for_end().await;
                 return;
             }
@@ -207,7 +207,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
         if let Err(err) = check_app_dir_exists(&mut dir) {
             error!(name: LOG_ONLY, "{err:?}");
         } else {
-            init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{err}"));
+            init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{}", err.to_string().red()));
             info!(name: LOG_ONLY, "App startup");
             local_dir = Some(dir);
             match read_cache(local_dir.as_ref().unwrap()).await {

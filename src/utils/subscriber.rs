@@ -13,19 +13,19 @@ use tracing_subscriber::{
 };
 
 #[cfg(not(debug_assertions))]
-struct CustomFormatter<E> {
+struct PanicFormatter<E> {
     inner: E,
 }
 
 #[cfg(not(debug_assertions))]
-impl<E> CustomFormatter<E> {
+impl<E> PanicFormatter<E> {
     fn new(inner: E) -> Self {
         Self { inner }
     }
 }
 
 #[cfg(not(debug_assertions))]
-impl<S, N, E> FormatEvent<S, N> for CustomFormatter<E>
+impl<S, N, E> FormatEvent<S, N> for PanicFormatter<E>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
     N: for<'a> FormatFields<'a> + 'static,
@@ -48,6 +48,53 @@ where
 }
 
 #[cfg(not(debug_assertions))]
+struct ColoredFormatter<E> {
+    inner: E,
+}
+
+#[cfg(not(debug_assertions))]
+impl<E> ColoredFormatter<E> {
+    fn new(inner: E) -> Self {
+        Self { inner }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+impl<S, N, E> FormatEvent<S, N> for ColoredFormatter<E>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+    E: FormatEvent<S, N>,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std::fmt::Result {
+        use crate::utils::input::style::{BLUE, GREEN, MAGENTA, RED, WHITE, YELLOW};
+
+        let meta = event.metadata();
+
+        write!(
+            writer,
+            "{}",
+            match *meta.level() {
+                Level::ERROR => RED,
+                Level::WARN => YELLOW,
+                Level::INFO => GREEN,
+                Level::DEBUG => BLUE,
+                Level::TRACE => MAGENTA,
+            }
+        )?;
+
+        self.inner.format_event(ctx, writer.by_ref(), event)?;
+
+        write!(writer, "{WHITE}")
+    }
+}
+
+#[cfg(not(debug_assertions))]
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
     use tracing_subscriber::{filter::DynFilterFn, Layer};
     let name = env!("CARGO_PKG_NAME");
@@ -59,8 +106,8 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
         .build(local_env_dir)
         .map_err(std::io::Error::other)?;
 
-    let file_layer = fmt::layer()
-        .event_format(CustomFormatter::new(
+    let log_layer = fmt::layer()
+        .event_format(PanicFormatter::new(
             fmt::format().with_target(false).with_ansi(false),
         ))
         .fmt_fields(PrettyFields::new())
@@ -70,16 +117,18 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
     let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != crate::LOG_ONLY);
 
     let stdout_layer = fmt::layer()
-        .with_target(false)
-        .without_time()
-        .with_ansi(false)
-        .with_level(false)
+        .event_format(ColoredFormatter::new(
+            fmt::format()
+                .with_target(false)
+                .without_time()
+                .with_level(false),
+        ))
         .with_writer(std::io::stdout)
         .with_filter(EnvFilter::new(format!("{name}=info")))
         .with_filter(exclude_log_only);
 
     tracing_subscriber::registry()
-        .with(file_layer)
+        .with(log_layer)
         .with(stdout_layer)
         .init();
 
@@ -88,14 +137,15 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
 
 #[cfg(debug_assertions)]
 pub fn init_subscriber(_local_env_dir: &std::path::Path) -> std::io::Result<()> {
-    use tracing_subscriber::filter::LevelFilter;
+    use tracing_subscriber::{filter::LevelFilter, Layer};
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_target(false).pretty())
         .with(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
+            fmt::layer().with_target(false).pretty().with_filter(
+                EnvFilter::builder()
+                    .with_default_directive(LevelFilter::INFO.into())
+                    .from_env_lossy(),
+            ),
         )
         .init();
     Ok(())

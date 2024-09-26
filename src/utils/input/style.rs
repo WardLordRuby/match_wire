@@ -3,8 +3,11 @@ use crossterm::style::{Color, Stylize};
 use std::fmt::Display;
 
 pub const PROMPT_END: &str = "> ";
-pub const YELLOW: &str = "\x1b[0;33m";
+pub const RED: &str = "\x1b[31m";
+pub const YELLOW: &str = "\x1b[33m";
+pub const GREEN: &str = "\x1b[92m";
 pub const BLUE: &str = "\x1b[38;5;38m";
+pub const MAGENTA: &str = "\x1b[35m";
 pub const GREY: &str = "\x1b[38;5;238m";
 pub const WHITE: &str = "\x1b[0m";
 

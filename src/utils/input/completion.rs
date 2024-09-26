@@ -521,7 +521,7 @@ impl From<&'static CommandScheme> for Completion {
 /// efficent lookups to the correct data that should be used to compute the best recomendations  
 /// for the user with any given input. `Completion` also holds the current line state in field `input`  
 /// `CompletionState` aims to provide accurate slices into the string `LineReader.line.input`  
-/// since this struct is nested within `LineReader` we manage str slicing by indexes and lens   
+/// since this struct is nested within `LineReader` we manage str slicing by indexes and lens  
 pub struct Completion {
     recomendations: Vec<&'static str>,
     rec_i: i8,

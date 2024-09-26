@@ -7,6 +7,7 @@ use crate::{
     LOG_ONLY,
 };
 
+use crossterm::style::Stylize;
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, info, instrument, trace};
@@ -95,7 +96,7 @@ pub async fn build_favorites(
     });
 
     if version < 1.0 && limit >= DEFAULT_SERVER_CAP {
-        println!("NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites")
+        println!("{}", "NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites".yellow())
     }
 
     let (mut servers, update_cache) = filter_server_list(args, cache)
@@ -104,7 +105,7 @@ pub async fn build_favorites(
 
     println!(
         "{} servers match the prameters in the current query",
-        servers.len()
+        servers.len().to_string().green()
     );
 
     if servers.len() > limit {
@@ -121,7 +122,10 @@ pub async fn build_favorites(
 
     serialize_json(&mut favorites_json, ips)?;
 
-    println!("{FAVORITES} updated with {ip_collected} entries");
+    println!(
+        "{FAVORITES} updated with {} entries",
+        ip_collected.to_string().green()
+    );
     Ok(update_cache)
 }
 
@@ -524,7 +528,10 @@ async fn filter_server_list(
     };
 
     if let Some(region) = args.region {
-        println!("Determining region of {} servers...", servers.len());
+        println!(
+            "Determining region of {} servers...",
+            servers.len().to_string().green()
+        );
 
         let mut server_list = Vec::new();
         let mut tasks = Vec::new();
@@ -598,7 +605,10 @@ async fn filter_server_list(
         }
 
         if failure_count > 0 {
-            eprintln!("Failed to resolve location for {failure_count} server hoster(s)")
+            eprintln!(
+                "Failed to resolve location for {} server hoster(s)",
+                failure_count.to_string().red()
+            )
         }
 
         return Ok((server_list, !new_lookups.is_empty()));

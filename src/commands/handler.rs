@@ -14,7 +14,10 @@ use crate::{
     CACHED_DATA,
 };
 use clap::Parser;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::{
+    event::{Event, KeyCode, KeyEvent, KeyModifiers},
+    style::Stylize,
+};
 use std::{
     ffi::OsString,
     fmt::Display,
@@ -25,13 +28,14 @@ use std::{
     },
 };
 use tokio::sync::{mpsc::Sender, Mutex, RwLock};
-use tracing::error;
+use tracing::{error, info};
 use winptyrs::PTY;
 
 pub enum Message {
     Str(String),
     Info(String),
     Err(String),
+    Warn(String),
 }
 
 pub struct CommandContext {
@@ -406,11 +410,11 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
 
     let history = context.h2m_console_history.lock().await;
     if !history.is_empty() {
-        println!("No active connection to H2M, displaying old logs");
+        info!("No active connection to H2M, displaying old logs");
         std::thread::sleep(std::time::Duration::from_secs(2));
         print!("{}", DisplayLogs(&history));
     } else {
-        println!("No active connection to H2M");
+        info!("No active connection to H2M");
     }
     CommandHandle::Processed
 }
@@ -435,8 +439,13 @@ fn print_version(h2m_v: f64) -> CommandHandle {
 async fn quit(context: &mut CommandContext) -> CommandHandle {
     if context.check_h2m_connection().await.is_ok() && h2m_running() {
         println!(
-            "Quitting {} will also close H2M-mod\nAre you sure you want to quit?",
-            env!("CARGO_PKG_NAME")
+            "{}{}",
+            format!(
+                "Quitting {} will also close H2M-mod",
+                env!("CARGO_PKG_NAME")
+            )
+            .red(),
+            "\nAre you sure you want to quit?".yellow()
         );
 
         let init = |handle: &mut LineReader<'_>| {
