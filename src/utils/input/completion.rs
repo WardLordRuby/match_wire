@@ -21,8 +21,9 @@ macro_rules! any_true {
 
 // MARK: IMPROVE
 // we could solve name-space collisions by making the data structure into a prefix-tree
+// this gets increasingly problematic to continue to support short arg syntax
 
-/// The current implementation only works when the name-space of commands, arguments, and their aliases do not overlap,  
+/// The current implementation only works when the name-space of commands, arguments, and their aliases/shorts do not overlap,  
 /// overlaping names must return the exact same `RecData`, help is special cased to work as both a command and argument  
 /// `inner` must ALWAYS contain the same number of elements as `commands.starting_alias`  
 pub struct CommandScheme {
@@ -59,15 +60,14 @@ struct InnerScheme {
     inner: Option<Vec<Self>>,
 }
 
-// MARK: TODO
-// add support for short arg syntax
-
 #[derive(PartialEq, Eq, Debug)]
 struct RecData {
     /// name of the parent entry
     parent: Option<&'static str>,
     /// required data if this node contains any aliases
     alias: Option<AliasData>,
+    /// required data if containing recs support a short arg syntax
+    short: Option<ShortData>,
     /// recomendations followed by recomendation aliases
     recs: Option<Vec<&'static str>>,
     /// kind of data stored
@@ -82,11 +82,18 @@ struct AliasData {
     rec_mapping: Vec<(usize, usize)>,
 }
 
+#[derive(PartialEq, Eq, Debug)]
+struct ShortData {
+    /// index of rec in `recs` -> short char
+    short_mapping: Vec<(usize, &'static str)>,
+}
+
 impl RecData {
     fn empty() -> Self {
         RecData {
             parent: None,
             alias: None,
+            short: None,
             recs: None,
             kind: RecKind::Null,
             end: true,
@@ -138,6 +145,7 @@ impl InnerScheme {
             data: RecData {
                 parent: Some(parent),
                 alias: None,
+                short: None,
                 recs: None,
                 kind,
                 end,
@@ -150,6 +158,7 @@ impl InnerScheme {
             data: RecData {
                 parent: Some(UNIVERSAL),
                 alias: None,
+                short: None,
                 recs: None,
                 kind: RecKind::Help,
                 end: true,
@@ -162,6 +171,7 @@ impl InnerScheme {
             data: RecData {
                 parent: Some(parent),
                 alias: None,
+                short: None,
                 recs: None,
                 kind: RecKind::Null,
                 end: true,
@@ -180,6 +190,7 @@ pub fn init_completion() -> CommandScheme {
             alias: Some(AliasData {
                 rec_mapping: vec![(4, 10), (4, 11), (5, 12), (6, 13)],
             }),
+            short: None,
             recs: Some(vec![
                 "filter",
                 "reconnect",
@@ -207,6 +218,18 @@ pub fn init_completion() -> CommandScheme {
                 data: RecData {
                     parent: Some(ROOT),
                     alias: None,
+                    short: Some(ShortData {
+                        short_mapping: vec![
+                            (0, "l"),
+                            (1, "p"),
+                            (2, "t"),
+                            (3, "r"),
+                            (4, "s"),
+                            (5, "i"),
+                            (6, "e"),
+                            (9, "h"),
+                        ],
+                    }),
                     recs: Some(vec![
                         "limit",
                         "player-min",
@@ -248,6 +271,7 @@ pub fn init_completion() -> CommandScheme {
                             alias: Some(AliasData {
                                 rec_mapping: vec![(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)],
                             }),
+                            short: None,
                             recs: Some(vec![
                                 "na",
                                 "eu",
@@ -270,6 +294,7 @@ pub fn init_completion() -> CommandScheme {
                             alias: Some(AliasData {
                                 rec_mapping: vec![(0, 2), (1, 3)],
                             }),
+                            short: None,
                             recs: Some(vec!["iw4-master", "hmw-master", "iw4", "hmw"]),
                             kind: RecKind::value_with_num_args(SOURCE_LEN),
                             end: false,
@@ -301,6 +326,9 @@ pub fn init_completion() -> CommandScheme {
                 data: RecData {
                     parent: Some(ROOT),
                     alias: None,
+                    short: Some(ShortData {
+                        short_mapping: vec![(0, "H"), (1, "c"), (2, "h")],
+                    }),
                     recs: Some(vec!["history", "connect", "help"]),
                     kind: RecKind::Argument,
                     end: false,
@@ -327,6 +355,7 @@ pub fn init_completion() -> CommandScheme {
                     alias: Some(AliasData {
                         rec_mapping: vec![(0, 2)],
                     }),
+                    short: None,
                     recs: Some(vec!["reset", "update", "clear"]),
                     kind: RecKind::value_with_num_args(1),
                     end: true,
@@ -386,6 +415,7 @@ impl From<&'static CommandScheme> for Completion {
                 RecData {
                     ref alias,
                     ref recs,
+                    ref short,
                     kind: RecKind::Argument,
                     ..
                 } => {
@@ -402,7 +432,14 @@ impl From<&'static CommandScheme> for Completion {
                         list.push(&inner.data);
                         let l_i = list.len() - 1;
                         insert_index(map, argument, l_i, &inner.data, list);
-                        if let Some(ref data) = alias {
+                        if let Some(data) = short {
+                            if let Some(&(_, short)) =
+                                data.short_mapping.iter().find(|(map_i, _)| *map_i == i)
+                            {
+                                insert_index(map, short, l_i, &inner.data, list);
+                            }
+                        }
+                        if let Some(data) = alias {
                             data.rec_mapping
                                 .iter()
                                 .filter(|(rec_i, _)| *rec_i == i)
@@ -421,12 +458,16 @@ impl From<&'static CommandScheme> for Completion {
                         walk_inner(inner, list, map, value_sets);
                     }
                 }
-                _ => assert!(inner.inner.is_none()),
+                _ => {
+                    assert!(inner.inner.is_none());
+                    assert!(inner.data.short.is_none());
+                }
             }
         }
 
         let expected_len = value.commands.unique_rec_end();
         assert_eq!(expected_len, value.inner.len());
+        assert!(value.commands.short.is_none());
         let mut rec_map = HashMap::new();
         let mut value_sets = HashMap::new();
         let mut rec_list = Vec::new();
