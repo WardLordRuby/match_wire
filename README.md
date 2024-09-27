@@ -11,7 +11,8 @@
 [![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/match_wire/total?label=Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
 [![GitHub License](https://img.shields.io/github/license/WardLordRuby/match_wire?label=License&labelColor=%2323282e)](LICENSE)  
 
-MatchWire is a game launcher that enhances the core H2M/HMW (Mw2 Remastered) experience by offering key quality-of-life improvements.  
+MatchWire is a game launcher that enhances the core H2M/HMW (Mw2 Remastered) experience by offering key quality-of-life improvements. From its core MatchWire is designed to be
+extremetly low overhead, providing no in game performance degradation with even the lowest end pc's.  
 
 It provides a server scraper that supports writing your own queries of Mw2 Remastered servers running [IW4Admin][iw4m-server-master] and/or servers found on the HMW master server,
 as well as a reconnect command to connect you to your last joined server.  
