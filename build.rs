@@ -10,7 +10,7 @@ const RELEASE: u64 = 0;
 fn main() {
     if cfg!(target_os = "windows") {
         let mut res = winresource::WindowsResource::new();
-        res.set_icon("assets/h2m_favorites.ico");
+        res.set_icon("assets/match_wire.ico");
         let version: u64 = (MAJOR << 48) | (MINOR << 32) | (PATCH << 16) | RELEASE;
         res.set_version_info(winresource::VersionInfo::FILEVERSION, version);
         res.compile().unwrap();

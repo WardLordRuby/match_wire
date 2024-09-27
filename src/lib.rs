@@ -137,14 +137,18 @@ pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
         OperationResult::Count((_, files)) => {
             if !files.contains(REQUIRED_FILES[0]) {
                 return new_io_error!(
-                std::io::ErrorKind::Other,
-                "Move h2m_favorites.exe into your 'Call of Duty Modern Warfare Remastered' directory"
-            );
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "Move {}.exe into your 'Call of Duty Modern Warfare Remastered' directory",
+                        env!("CARGO_PKG_NAME")
+                    )
+                );
             } else if !files.contains(REQUIRED_FILES[1]) {
                 return new_io_error!(
-                std::io::ErrorKind::Other,
-                "H2M mod files not found, h2m_favorites.exe must be placed in 'Call of Duty Modern Warfare Remastered' directory"
-            );
+                    std::io::ErrorKind::Other,
+                    "H2M mod files not found, H2M mod files are available to download for free through the Horizon MW launcher\n\
+                    https://discord.com/invite/HorizonMW"
+                );
             }
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
