@@ -18,7 +18,6 @@ pub mod utils {
 }
 
 use commands::handler::{end_forward, CommandContext};
-use crossterm::style::Stylize;
 use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Result},
@@ -27,7 +26,10 @@ use std::{
 };
 use tracing::info;
 use utils::{
-    input::line::{LineData, LineReader},
+    input::{
+        line::{LineData, LineReader},
+        style::{GREEN, WHITE},
+    },
     json_data::Version,
 };
 
@@ -147,10 +149,7 @@ pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
                     .expect("Failed to create players2 folder");
-                println!(
-                    "{}",
-                    "players2 folder is missing, a new one was created".green()
-                );
+                println!("{GREEN}players2 folder is missing, a new one was created{WHITE}");
             }
             Ok(())
         }
@@ -222,9 +221,13 @@ pub fn parse_hostname(name: &str) -> String {
     host_name
 }
 
-pub fn force_remove_hook(ctx: &mut CommandContext, line: &mut LineReader) {
+pub fn conditionally_remove_hook(ctx: &mut CommandContext, line: &mut LineReader, uid: usize) {
     line.set_prompt(LineData::default_prompt());
     line.set_completion(true);
-    line.pop_callback();
+    if let Some(callback) = line.next_callback() {
+        if callback.uid() == uid {
+            line.pop_callback();
+        }
+    }
     end_forward(ctx);
 }

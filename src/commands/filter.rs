@@ -3,11 +3,14 @@ use crate::{
     lowercase_vec,
     not_your_private_keys::LOCATION_PRIVATE_KEY,
     parse_hostname,
-    utils::{caching::Cache, json_data::*},
+    utils::{
+        caching::Cache,
+        input::style::{GREEN, RED, WHITE, YELLOW},
+        json_data::*,
+    },
     LOG_ONLY,
 };
 
-use crossterm::style::Stylize;
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, info, instrument, trace};
@@ -96,7 +99,7 @@ pub async fn build_favorites(
     });
 
     if version < 1.0 && limit >= DEFAULT_SERVER_CAP {
-        println!("{}", "NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites".yellow())
+        println!("{}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{}", YELLOW, WHITE)
     }
 
     let (mut servers, update_cache) = filter_server_list(args, cache)
@@ -104,8 +107,8 @@ pub async fn build_favorites(
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     println!(
-        "{} servers match the prameters in the current query",
-        servers.len().to_string().green()
+        "{GREEN}{}{WHITE} servers match the prameters in the current query",
+        servers.len()
     );
 
     if servers.len() > limit {
@@ -122,10 +125,7 @@ pub async fn build_favorites(
 
     serialize_json(&mut favorites_json, ips)?;
 
-    println!(
-        "{FAVORITES} updated with {} entries",
-        ip_collected.to_string().green()
-    );
+    println!("{GREEN}{FAVORITES} updated with {ip_collected} entries{WHITE}");
     Ok(update_cache)
 }
 
@@ -529,8 +529,8 @@ async fn filter_server_list(
 
     if let Some(region) = args.region {
         println!(
-            "Determining region of {} servers...",
-            servers.len().to_string().green()
+            "Determining region of {GREEN}{}{WHITE} servers...",
+            servers.len()
         );
 
         let mut server_list = Vec::new();
@@ -605,10 +605,7 @@ async fn filter_server_list(
         }
 
         if failure_count > 0 {
-            eprintln!(
-                "Failed to resolve location for {} server hoster(s)",
-                failure_count.to_string().red()
-            )
+            eprintln!("{RED}Failed to resolve location for {failure_count} server hoster(s){WHITE}")
         }
 
         return Ok((server_list, !new_lookups.is_empty()));

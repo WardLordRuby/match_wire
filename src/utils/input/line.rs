@@ -14,9 +14,11 @@ use crossterm::{
 };
 use std::{
     collections::VecDeque,
+    fmt::Display,
     future::Future,
     io::{self, Stdout, Write},
     pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use tracing::{error, info, warn};
 
@@ -26,7 +28,7 @@ pub type CtxCallback = dyn Fn(&mut CommandContext);
 pub type AsyncCtxCallback =
     dyn for<'a> FnOnce(
         &'a mut CommandContext,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + '_>>;
 
 pub struct LineReader<'a> {
     pub completion: Completion,
@@ -38,7 +40,51 @@ pub struct LineReader<'a> {
     uneventful: bool,
     cursor_at_start: bool,
     command_entered: bool,
-    callback: VecDeque<Box<InputEventHook>>,
+    callback: VecDeque<InputHook>,
+}
+
+pub struct InputHook {
+    uid: usize,
+    callback: Box<InputEventHook>,
+}
+
+impl InputHook {
+    pub fn uid(&self) -> usize {
+        self.uid
+    }
+}
+
+pub struct InputHookErr {
+    uid: usize,
+    err: String,
+}
+
+impl InputHookErr {
+    pub fn new(uid: usize, err: String) -> Self {
+        InputHookErr { uid, err }
+    }
+    pub fn uid(&self) -> usize {
+        self.uid
+    }
+}
+
+impl Display for InputHookErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.err)
+    }
+}
+
+static CALLBACK_UID: AtomicUsize = AtomicUsize::new(0);
+
+impl InputHook {
+    pub fn new(uid: usize, callback: Box<InputEventHook>) -> Self {
+        assert_ne!(uid, CALLBACK_UID.load(Ordering::SeqCst));
+        InputHook { uid, callback }
+    }
+    #[inline]
+    pub fn new_uid() -> usize {
+        CALLBACK_UID.fetch_add(1, Ordering::SeqCst)
+    }
 }
 
 #[derive(Default)]
@@ -119,10 +165,6 @@ pub struct History {
 
 pub enum EventLoop {
     Continue,
-    // MARK: IMPROVE
-    // this could be taken care of by giving `InputLineHook` unique ids
-    /// executing a callback and marking the calling `InputLineHook` as finished will lead to  
-    /// undefined behavior if the callback returns an error
     AsyncCallback(Box<AsyncCtxCallback>),
     Callback(Box<CtxCallback>),
     Break,
@@ -199,14 +241,20 @@ impl<'a> LineReader<'a> {
     }
 
     #[inline]
-    pub fn register_callback(&mut self, f: Box<InputEventHook>) {
-        self.callback.push_back(f);
+    pub fn register_callback(&mut self, callback: InputHook) {
+        self.callback.push_back(callback);
     }
 
     #[inline]
     /// pops the first queued callback
-    pub fn pop_callback(&mut self) -> Option<Box<InputEventHook>> {
+    pub fn pop_callback(&mut self) -> Option<InputHook> {
         self.callback.pop_front()
+    }
+
+    #[inline]
+    /// references the first queued callback
+    pub fn next_callback(&mut self) -> Option<&InputHook> {
+        self.callback.front()
     }
 
     #[inline]
@@ -371,10 +419,11 @@ impl<'a> LineReader<'a> {
                 ..
             }) = event
             {
-                let callback = self.pop_callback().expect("outer if");
+                let hook = self.pop_callback().expect("outer if");
+                let callback = &hook.callback;
                 let (event_loop, finished) = callback(self, event)?;
                 if !finished {
-                    self.callback.push_front(callback);
+                    self.callback.push_front(hook);
                 }
                 return Ok(event_loop);
             }

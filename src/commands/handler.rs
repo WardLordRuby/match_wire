@@ -7,17 +7,18 @@ use crate::{
     },
     utils::{
         caching::{build_cache, Cache},
-        input::line::{
-            AsyncCtxCallback, EventLoop, InputEventHook, LineCallback, LineData, LineReader,
+        input::{
+            line::{
+                AsyncCtxCallback, EventLoop, InputHook, InputHookErr, LineCallback, LineData,
+                LineReader,
+            },
+            style::{RED, WHITE, YELLOW},
         },
     },
     CACHED_DATA,
 };
 use clap::Parser;
-use crossterm::{
-    event::{Event, KeyCode, KeyEvent, KeyModifiers},
-    style::Stylize,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::{
     ffi::OsString,
     fmt::Display,
@@ -28,7 +29,7 @@ use std::{
     },
 };
 use tokio::sync::{mpsc::Sender, Mutex, RwLock};
-use tracing::{error, info};
+use tracing::error;
 use winptyrs::PTY;
 
 pub enum Message {
@@ -175,7 +176,7 @@ impl CommandContextBuilder {
 
 pub enum CommandHandle {
     Processed,
-    Callback((Box<LineCallback>, Box<InputEventHook>)),
+    Callback((Box<LineCallback>, InputHook)),
     Exit,
 }
 
@@ -333,13 +334,15 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
             print!("{}", DisplayLogs(&history));
         }
 
+        let uid = InputHook::new_uid();
+
         let init = |handle: &mut LineReader<'_>| {
             handle.set_prompt(String::from("h2m-mod.exe"));
             handle.set_completion(false);
             Ok(())
         };
 
-        let input_hook = |handle: &mut LineReader<'_>, event: Event| match event {
+        let input_hook = move |handle: &mut LineReader<'_>, event: Event| match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
@@ -383,38 +386,41 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
                 let cmd = handle.line.take_input();
                 handle.new_line()?;
 
-                let send_cmd: Box<AsyncCtxCallback> = Box::new(|context: &mut CommandContext| {
-                    Box::pin(async move {
-                        context
-                            .check_h2m_connection()
-                            .await
-                            .map_err(|err| format!("Could not send command: {err}"))?;
+                let send_cmd: Box<AsyncCtxCallback> =
+                    Box::new(move |context: &mut CommandContext| {
+                        Box::pin(async move {
+                            context.check_h2m_connection().await.map_err(|err| {
+                                InputHookErr::new(uid, format!("Could not send command: {err}"))
+                            })?;
 
-                        let pty_handle = context.pty_handle().expect("above guard");
-                        let h2m_console = pty_handle.write().await;
+                            let pty_handle = context.pty_handle().expect("above guard");
+                            let h2m_console = pty_handle.write().await;
 
-                        if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
-                            error!("failed to write command to h2m console");
-                        }
-                        Ok(())
-                    })
-                });
+                            if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
+                                error!("failed to write command to h2m console");
+                            }
+                            Ok(())
+                        })
+                    });
 
                 Ok((EventLoop::AsyncCallback(send_cmd), false))
             }
             _ => Ok((EventLoop::Continue, false)),
         };
 
-        return CommandHandle::Callback((Box::new(init), Box::new(input_hook)));
+        return CommandHandle::Callback((
+            Box::new(init),
+            InputHook::new(uid, Box::new(input_hook)),
+        ));
     }
 
     let history = context.h2m_console_history.lock().await;
     if !history.is_empty() {
-        info!("No active connection to H2M, displaying old logs");
+        println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
         std::thread::sleep(std::time::Duration::from_secs(2));
         print!("{}", DisplayLogs(&history));
     } else {
-        info!("No active connection to H2M");
+        println!("{YELLOW}No active connection to H2M{WHITE}");
     }
     CommandHandle::Processed
 }
@@ -439,13 +445,8 @@ fn print_version(h2m_v: f64) -> CommandHandle {
 async fn quit(context: &mut CommandContext) -> CommandHandle {
     if context.check_h2m_connection().await.is_ok() && h2m_running() {
         println!(
-            "{}{}",
-            format!(
-                "Quitting {} will also close H2M-mod",
-                env!("CARGO_PKG_NAME")
-            )
-            .red(),
-            "\nAre you sure you want to quit?".yellow()
+            "{RED}Quitting {} will also close H2M-mod\n{YELLOW}Are you sure you want to quit?{WHITE}",
+            env!("CARGO_PKG_NAME")
         );
 
         let init = |handle: &mut LineReader<'_>| {
@@ -469,7 +470,10 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
             }
         };
 
-        return CommandHandle::Callback((Box::new(init), Box::new(input_hook)));
+        return CommandHandle::Callback((
+            Box::new(init),
+            InputHook::new(InputHook::new_uid(), Box::new(input_hook)),
+        ));
     }
     CommandHandle::Exit
 }
