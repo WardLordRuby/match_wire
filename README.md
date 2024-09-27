@@ -13,8 +13,8 @@
 
 MatchWire is a game launcher that enhances the core H2M/HMW (Mw2 Remastered) experience by offering key quality-of-life improvements.  
 
-It provides a server scraper that supports writing your own queries of H2M servers running [IW4Admin][iw4m-server-master] and/or servers found on the HMW master server, as well as
-a reconnect command to connect you to your last joined server.  
+It provides a server scraper that supports writing your own queries of Mw2 Remastered servers running [IW4Admin][iw4m-server-master] and/or servers found on the HMW master server,
+as well as a reconnect command to connect you to your last joined server.  
 
 The server scraper fixes the H2M server browser! By limiting favorites.json to 100 entries you will no longer join random servers when trying to connect using the in game browser.
 On Horizon MW this issue is fixed and no limit is applied to the number of servers MatchWire will add to your favorites.json. MatchWire keeps track of the previous 6 joined servers
@@ -50,21 +50,22 @@ A help page is available for every command, to access it use: `<COMMAND_NAME> --
 ![help][filter-help]
 
 ### Custom queries
-Filtering H2M servers is easy by adding your own arguments. Any combination of filters is valid  
+Filtering Mw2 Remastered servers is easy by adding your own arguments. Any combination of filters is valid  
 
 Examples:
      
   ```
   filter --team-size-max 6 --exclude trick shot 
   ```
-  This query will filter all H2M servers to only include servers with a max team size of 6 and exclude all servers with trick or shot in their title.
+  This query will filter all Mw2 Remastered servers to only include servers with a max team size of 6 and exclude all servers with trick or shot in their title.
   ```
   filter --region na --player-min 2
   ```
-  This query will filter all H2M servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered results to your favorites.json.
+  This query will filter all Mw2 Remastered servers to only include servers hosted in North America and have a minimum number of connected players of 2, then save the filtered 
+  results to your favorites.json.
 
 #### Tips:
-- After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list (bottom right of the H2M server browser)
+- After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list (bottom right of the server browser)
 - Argmuents can be shortened to a single character for example `--includes` can be shortened to `-i`
 - To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
