@@ -48,6 +48,7 @@ pub enum Command {
     Quit,
 
     /// Print version
+    #[command(alias = "Version")]
     Version,
 
     /// Open the current local data directory
