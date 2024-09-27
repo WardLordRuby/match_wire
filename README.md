@@ -1,28 +1,34 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[filter-help]: https://i.imgur.com/13Ni21N.png "query arguments"
-[reconnect-help]: https://i.imgur.com/bKSbsBL.png "history arguments"
-[latest-dl]: https://github.com/WardLordRuby/H2M_favorites/releases/download/v0.4.2/h2m_favorites.exe
+[filter-help]: https://i.imgur.com/Ln1ENad.png "query arguments"
+[reconnect-help]: https://i.imgur.com/fvRZ7PW.png "history arguments"
+[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.0/h2m_favorites.exe
+[hmw-discord]: https://discord.com/invite/HorizonMW
 <div align="center">
     <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
 </div>
 
-# H2M Favorites
-[![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/H2M_favorites/total?label=Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
-[![GitHub License](https://img.shields.io/github/license/WardLordRuby/H2M_favorites?label=License&labelColor=%2323282e)](LICENSE)  
+# MatchWire
+[![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/match_wire/total?label=Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
+[![GitHub License](https://img.shields.io/github/license/WardLordRuby/match_wire?label=License&labelColor=%2323282e)](LICENSE)  
 
-H2M Favorites (name-change-pending) is a launcher that aims to provide quality of life improvements to the base H2M experience.  
+MatchWire is a game launcher that enhances the core H2M/HMW (Mw2 Remastered) experience by offering key quality-of-life improvements.  
 
-It provides a server scraper that supports writing your own queries of H2M servers running [IW4Admin][iw4m-server-master], and a reconnect command to connect you to your last joined server.  
+It provides a server scraper that supports writing your own queries of H2M servers running [IW4Admin][iw4m-server-master] and/or servers found on the HMW master server, as well as
+a reconnect command to connect you to your last joined server.  
 
 The server scraper fixes the H2M server browser! By limiting favorites.json to 100 entries you will no longer join random servers when trying to connect using the in game browser.
-The launcher keeps track of the previous 6 joined servers allowing you to use the reconnect command to easily join back if you happen to not make it into the server during a map change.  
+On Horizon MW this issue is fixed and no limit is applied to the number of servers MatchWire will add to your favorites.json. MatchWire keeps track of the previous 6 joined servers
+allowing you to use the reconnect command to easily join back if you happen to not make it into the server during a map change.  
 
 ## Installation
-1. Download [h2m_favorites.exe][latest-dl]
-2. Place h2m_favorites.exe in your MWR(2017) game directory
+1. Locate / Install Modern Warefare Remastered (2017)
+2. Install Horizon MW via the launcher found on their [Discord][hmw-discord]
+3. Download [match_wire.exe][latest-dl]
+4. Place match_wire.exe in your MWR(2017) game directory and run
 
 ## Usage
-Launch h2m_favorites.exe once it is inside your game directory and it will automatically start H2M-Mod for you. The terminal window will provide you a place to enter commands.
+Launch match_wire.exe once it is inside your game directory and it will automatically start Mw2 Remastered for you. The terminal window will provide you a place to enter commands.
+MatchWire includes a command auto-complete feature just use the tab key to walk through available commands and command options  
 
 ### Commands  
 | Commands                     | Alias     | Description                                                                   |
@@ -30,10 +36,10 @@ Launch h2m_favorites.exe once it is inside your game directory and it will autom
 | [filter](#query-help)        | Filter    | Create a new favorites.json using various filter options                      |
 | [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)               |
 | launch                       | Launch    | Launch H2M-Mod (reconnect only works if H2M is spawned by this app)           |
-| update-cache                 | Reset     | Force cache to reset (useful if reconnect can not find server name in cache)  |
-| display-logs                 | Logs      | Display H2M console output                                                    |
+| cache                        | Cache     | Reset / Clear cache (useful if reconnect can not find server name in cache)   |
+| console                      | Logs      | Display and interact with H2M console                                         |
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                     |
-| local-env                    | Localenv  | Opens the local environment directory (where logs and cache is saved)         |
+| local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)        |
 | quit                         | Quit      | Closes game and launcher                                                      |
 | help                         | -         | Displays helpful information                                                  |
 
@@ -44,7 +50,6 @@ A help page is available for every command, to access it use: `<COMMAND_NAME> --
 
 ### Custom queries
 Filtering H2M servers is easy by adding your own arguments. Any combination of filters is valid  
-The filter command with no added arguments will give you the top 100 most populated servers  
 
 Examples:
      
