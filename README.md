@@ -31,17 +31,17 @@ Launch match_wire.exe once it is inside your game directory and it will automati
 MatchWire includes a command auto-complete feature just use the tab key to walk through available commands and command options  
 
 ### Commands  
-| Commands                     | Alias     | Description                                                                   |
-| ---------------------------- | --------- | ----------------------------------------------------------------------------- |
-| [filter](#query-help)        | Filter    | Create a new favorites.json using various filter options                      |
-| [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)               |
-| launch                       | Launch    | Launch H2M-Mod (reconnect only works if H2M is spawned by this app)           |
-| cache                        | Cache     | Reset / Clear cache (useful if reconnect can not find server name in cache)   |
-| console                      | Logs      | Display and interact with H2M console                                         |
-| game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                     |
-| local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)        |
-| quit                         | Quit      | Closes game and launcher                                                      |
-| help                         | -         | Displays helpful information                                                  |
+| Commands                     | Alias     | Description                                                                     |
+| ---------------------------- | --------- | ------------------------------------------------------------------------------- |
+| [filter](#query-help)        | Filter    | Create a new favorites.json using various filter options                        |
+| [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)                 |
+| launch                       | Launch    | Launch Mw2 Remastered (reconnect only works if the game is spawned by this app) |
+| cache                        | Cache     | Reset / Clear cache (useful if reconnect can not find server name in cache)     |
+| console                      | Logs      | Display and interact with the Mw2 Remastered console                            |
+| game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                       |
+| local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)          |
+| quit                         | Quit      | Closes game and launcher                                                        |
+| help                         | -         | Displays helpful information                                                    |
 
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
 
