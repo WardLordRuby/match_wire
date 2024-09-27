@@ -41,6 +41,7 @@ MatchWire includes a command auto-complete feature just use the tab key to walk 
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                       |
 | local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)          |
 | quit                         | Quit      | Closes game and launcher                                                        |
+| version                      | Version   | Displays version of MatchWire and Mw2 Remastered                                |
 | help                         | -         | Displays helpful information                                                    |
 
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
