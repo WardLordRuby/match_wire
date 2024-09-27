@@ -188,7 +188,7 @@ pub fn init_completion() -> CommandScheme {
         commands: RecData {
             parent: None,
             alias: Some(AliasData {
-                rec_mapping: vec![(4, 10), (4, 11), (5, 12), (6, 13)],
+                rec_mapping: vec![(4, 10), (5, 11), (6, 12)],
             }),
             short: None,
             recs: Some(vec![
@@ -196,13 +196,12 @@ pub fn init_completion() -> CommandScheme {
                 "reconnect",
                 "launch",
                 "cache",
-                "game-console",
+                "console",
                 "game-dir",
                 "local-env",
                 "quit",
                 "version",
                 "help",
-                "console",
                 "logs",
                 "gamedir",
                 "localenv",

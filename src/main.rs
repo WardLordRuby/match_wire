@@ -1,16 +1,15 @@
-use clap::CommandFactory;
-use cli::UserCommand;
 use commands::{
     handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
     launch_h2m::launch_h2m_pseudo,
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
-use h2m_favorites::*;
+use match_wire::*;
 use std::{
+    io,
     path::{Path, PathBuf},
     sync::{atomic::Ordering, LazyLock},
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 use utils::{
@@ -57,11 +56,15 @@ fn main() {
             }
         };
 
+        startup_data.splash_task.await.unwrap().unwrap();
+
+        let launch_res = startup_data.launch_task.await.unwrap_or_else(|err| Err(err.to_string()));
+
         let (message_tx, mut message_rx) = mpsc::channel(200);
 
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
-            .launch_res(startup_data.launch_res)
+            .launch_res(launch_res)
             .exe_dir(startup_data.exe_dir)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
@@ -87,8 +90,7 @@ fn main() {
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
-        UserCommand::command().print_help().expect("Failed to print help");
-        println!();
+        print_help();
 
         execute!(term, cursor::Show).unwrap();
 
@@ -180,9 +182,10 @@ fn main() {
 
 struct StartupData {
     cache: Cache,
-    launch_res: Result<(PTY, f64), String>,
     exe_dir: PathBuf,
     local_dir: Option<PathBuf>,
+    splash_task: JoinHandle<io::Result<()>>,
+    launch_task: JoinHandle<Result<(PTY, f64), String>>,
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -197,7 +200,16 @@ async fn app_startup() -> std::io::Result<StartupData> {
     #[cfg(not(debug_assertions))]
     contains_required_files(&exe_dir)?;
 
-    let launch_res = launch_h2m_pseudo(&exe_dir).await;
+    let splash_task = tokio::task::spawn(splash_screen());
+
+    let launch_task = tokio::task::spawn({
+        let exe_dir = exe_dir.clone();
+        async move {
+            // delay h2m doesn't block splash screen
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            launch_h2m_pseudo(&exe_dir)
+        }
+    });
 
     let mut local_dir = None;
     let mut connection_history = None;
@@ -206,7 +218,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
         let mut dir = PathBuf::from(path);
 
         if let Err(err) = check_app_dir_exists(&mut dir) {
-            error!(name: LOG_ONLY, "{err:?}");
+            eprintln!("{RED}{err}{WHITE}");
         } else {
             init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{RED}{err}{WHITE}"));
             info!(name: LOG_ONLY, "App startup");
@@ -215,20 +227,21 @@ async fn app_startup() -> std::io::Result<StartupData> {
                 Ok(cache) => {
                     return Ok(StartupData {
                         cache,
-                        launch_res,
                         exe_dir,
                         local_dir,
+                        splash_task,
+                        launch_task,
                     })
                 }
                 Err(err) => {
-                    info!("{err}");
+                    warn!("{err}");
                     connection_history = err.connection_history;
                     region_cache = err.region_cache;
                 }
             }
         }
     } else {
-        error!(name: LOG_ONLY, "Could not find %appdata%/local");
+        eprintln!("{RED}Could not find %appdata%/local{WHITE}");
         if cfg!(debug_assertions) {
             init_subscriber(Path::new("")).unwrap();
         }
@@ -244,9 +257,10 @@ async fn app_startup() -> std::io::Result<StartupData> {
                 }
                 return Ok(StartupData {
                     cache: Cache::from(cache_file),
-                    launch_res,
                     exe_dir,
                     local_dir,
+                    splash_task,
+                    launch_task,
                 });
             }
             Err(err) => error!("{err}"),
@@ -254,8 +268,9 @@ async fn app_startup() -> std::io::Result<StartupData> {
     }
     Ok(StartupData {
         cache: Cache::from(cache_file),
-        launch_res,
         exe_dir,
         local_dir,
+        splash_task,
+        launch_task,
     })
 }

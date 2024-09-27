@@ -70,7 +70,7 @@ impl InputHookErr {
 
 impl Display for InputHookErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.err)
+        write!(f, "{}", self.err)
     }
 }
 

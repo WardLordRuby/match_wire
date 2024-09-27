@@ -12,7 +12,7 @@ use crate::{
                 AsyncCtxCallback, EventLoop, InputHook, InputHookErr, LineCallback, LineData,
                 LineReader,
             },
-            style::{RED, WHITE, YELLOW},
+            style::{GREEN, RED, WHITE, YELLOW},
         },
     },
     CACHED_DATA,
@@ -29,7 +29,7 @@ use std::{
     },
 };
 use tokio::sync::{mpsc::Sender, Mutex, RwLock};
-use tracing::error;
+use tracing::{error, info};
 use winptyrs::PTY;
 
 pub enum Message {
@@ -192,7 +192,7 @@ pub async fn try_execute_command(
             Command::Reconnect { args } => reconnect(args, context).await,
             Command::Launch => launch_handler(context).await,
             Command::Cache { option } => modify_cache(context, option).await,
-            Command::GameConsole => open_h2m_console(context).await,
+            Command::Console => open_h2m_console(context).await,
             Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
             Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
             Command::Version => print_version(context.h2m_version),
@@ -272,8 +272,9 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
 }
 
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
-    match launch_h2m_pseudo(&context.exe_dir).await {
+    match launch_h2m_pseudo(&context.exe_dir) {
         Ok((conpty, version)) => {
+            info!("Launching H2M-mod...");
             context.init_pty(conpty);
             context.h2m_version = version;
             if let Err(err) = listener_routine(context).await {
@@ -437,8 +438,14 @@ fn open_dir(path: Option<&Path>) -> CommandHandle {
 }
 
 fn print_version(h2m_v: f64) -> CommandHandle {
-    println!("{} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-    println!("h2m-mod.exe v{h2m_v}");
+    println!(
+        "{}.exe {GREEN}v{}{WHITE}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
+    if h2m_v != 1.0 {
+        println!("h2m-mod.exe {GREEN}v{h2m_v}{WHITE}")
+    }
     CommandHandle::Processed
 }
 

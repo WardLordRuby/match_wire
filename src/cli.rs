@@ -36,8 +36,8 @@ pub enum Command {
     },
 
     /// Opens H2M/HMW game console
-    #[command(aliases(["Logs", "logs", "console"]))]
-    GameConsole,
+    #[command(aliases(["Logs", "logs", "Console"]))]
+    Console,
 
     /// Open MWR(2017) directory
     #[command(aliases(["Gamedir", "gamedir", "GameDir"]))]
@@ -91,11 +91,11 @@ pub struct Filters {
     #[arg(long, group = "bots")]
     pub without_bots: bool,
 
-    /// Specify region [Default: include all regions]
+    /// Specify region [Default: include all]
     #[arg(short, long, value_enum)]
     pub region: Option<Region>,
 
-    /// Specify source [Default: include all sources]
+    /// Specify source [Default: include all]
     #[arg(short, long, value_enum, num_args(1..=SOURCE_LEN))]
     pub source: Option<Vec<Source>>,
 

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use h2m_favorites::commands::launch_h2m::HostName;
+    use match_wire::commands::launch_h2m::HostName;
 
     #[test]
     fn parse_hostnames() {

@@ -192,7 +192,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     Ok(())
 }
 
-pub async fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
+pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
     if h2m_running() {
@@ -223,7 +223,6 @@ pub async fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
             H2M_NAMES[1]
         }
     };
-    info!("Launching H2M-mod...");
     let spawned_path = exe_dir.join(spawned);
     let version = get_exe_version(&spawned_path).unwrap_or_else(|| {
         error!("Failed to get versoin of {spawned}");

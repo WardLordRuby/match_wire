@@ -17,10 +17,13 @@ pub mod utils {
     pub mod subscriber;
 }
 
+use clap::CommandFactory;
+use cli::UserCommand;
 use commands::handler::{end_forward, CommandContext};
+use crossterm::{cursor, execute, terminal};
 use std::{
     collections::HashSet,
-    io::{self, BufRead, BufReader, Result},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -45,9 +48,6 @@ pub const REQUIRED_FILES: [&str; 3] = ["h1_mp64_ship.exe", "h2m-mod", "players2"
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub const CACHED_DATA: &str = "cache.json";
-
-// MARK: TODOS
-// 1. make splash screen for startup
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -91,7 +91,7 @@ pub fn does_dir_contain<'a, T>(
     dir: &Path,
     operation: Operation,
     list: &'a [T],
-) -> Result<OperationResult<'a>>
+) -> io::Result<OperationResult<'a>>
 where
     T: std::borrow::Borrow<str> + std::cmp::Eq + std::hash::Hash,
 {
@@ -165,16 +165,23 @@ pub async fn await_user_for_end() {
 }
 
 /// Validates local/app_dir exists and modifies input if valid
-pub fn check_app_dir_exists(local: &mut PathBuf) -> Result<()> {
+pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
+    const PREV_NAME: &str = "h2m_favorites";
     let app_name = env!("CARGO_PKG_NAME");
-    match does_dir_contain(local, Operation::All, &[app_name]) {
-        Ok(OperationResult::Bool(true)) => {
+    let local_dir = local.clone();
+
+    match does_dir_contain(local, Operation::Count, &[app_name, PREV_NAME]) {
+        Ok(OperationResult::Count((_, files))) => {
             local.push(app_name);
+
+            if !files.contains(app_name) {
+                std::fs::create_dir(&local)?;
+            }
+
+            if files.contains(PREV_NAME) {
+                std::fs::remove_dir_all(local_dir.join(PREV_NAME))?;
+            }
             Ok(())
-        }
-        Ok(OperationResult::Bool(false)) => {
-            local.push(app_name);
-            std::fs::create_dir(local)
         }
         Err(err) => Err(err),
         _ => unreachable!(),
@@ -230,4 +237,50 @@ pub fn conditionally_remove_hook(ctx: &mut CommandContext, line: &mut LineReader
         }
     }
     end_forward(ctx);
+}
+
+pub fn print_help() {
+    if cursor::position().unwrap() != (0, 0) {
+        println!()
+    }
+    UserCommand::command()
+        .print_help()
+        .expect("Failed to print help");
+    println!();
+}
+
+pub async fn splash_screen() -> io::Result<()> {
+    // font: 4Max - patorjk.com
+    let text = r#"
+        8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888       
+        88b  d88   dPYb     88   dP   `" 88  88      Yb  db  dP  88 88__dP 88__         
+        88YbdP88  dP__Yb    88   Yb      888888       YbdPYbdP   88 88"Yb  88""         
+        88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888       "#;
+
+    let mut stdout = std::io::stdout();
+
+    execute!(stdout, terminal::EnterAlternateScreen)?;
+
+    let (width, height) = terminal::size()?;
+
+    let lines = text.lines().collect::<Vec<_>>();
+
+    let start_y = height.saturating_sub(lines.len() as u16) / 2;
+
+    for (i, line) in lines.iter().enumerate() {
+        let start_x = width.saturating_sub(line.len() as u16) / 2;
+        execute!(
+            stdout,
+            cursor::MoveTo(start_x, start_y + i as u16),
+            crossterm::style::Print(line)
+        )?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(160)).await;
+    }
+
+    stdout.flush()?;
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    execute!(stdout, terminal::LeaveAlternateScreen)?;
+
+    Ok(())
 }

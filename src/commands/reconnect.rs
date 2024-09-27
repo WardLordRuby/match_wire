@@ -7,7 +7,7 @@ use crate::{
 };
 use std::{collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, info};
 use winptyrs::PTY;
 
 pub const HISTORY_MAX: i64 = 6;
@@ -67,11 +67,10 @@ struct DisplayHistoryErr(usize);
 impl Display for DisplayHistoryErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0 == 1 {
-            writeln!(f, "History only contains 1 entry")?;
+            write!(f, "History only contains 1 entry")
         } else {
-            writeln!(f, "History only contains {} entries", self.0)?;
+            write!(f, "History only contains {} entries", self.0)
         }
-        Ok(())
     }
 }
 
@@ -79,7 +78,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     let cache_arc = context.cache();
     let mut cache = cache_arc.lock().await;
     if cache.connection_history.is_empty() {
-        error!("No joined servers in history, connect to a server to add it to history");
+        info!("No joined servers in history, connect to a server to add it to history");
         return CommandHandle::Processed;
     }
     if args.history {

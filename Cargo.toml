@@ -1,18 +1,18 @@
 [package]
-name = "h2m_favorites"
-version = "0.4.2"
+name = "match_wire"
+version = "0.5.0"
 authors = ["WardLordRuby"]
 description = """
-This launcher provides quality of life improvements to the base H2M experience. Provides a Server Scraper
-that creates a valid favorites.json, supporting custom server queries, making the in game server browser
-function as it was intended to. Adds functionality to easily reconnect to previously joined servers.
+MatchWire enhances the core H2M/HMW experience by offering key quality-of-life improvements.
+Featuring a robust Server Scraper with extensive filtering options. Additionally, MatchWire
+makes it simple to reconnect to previously joined servers, streamlining your gameplay experience.
 Created by: WardLordRuby <@7thWardLord Discord>"""
 edition = "2021"
 
 [package.metadata.winresource]
-ProductName = "H2M Favorites"
+ProductName = "Match Wire"
 FileDescription = "H2M-mod launcher"
-ProductVersion = "0.4.2"
+ProductVersion = "0.5.0"
 
 [profile.release]
 strip = "debuginfo"

@@ -7,7 +7,10 @@ use crate::{
         reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
-    utils::json_data::{CacheFile, ServerCache},
+    utils::{
+        input::style::{GREEN, WHITE},
+        json_data::{CacheFile, ServerCache},
+    },
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use std::{
@@ -111,7 +114,7 @@ pub async fn build_cache(
     connection_history: Option<&[HostName]>,
     regions: Option<&HashMap<IpAddr, [char; 2]>>,
 ) -> Result<CacheFile, &'static str> {
-    println!("Updating cache...");
+    println!("{GREEN}Updating cache...{WHITE}");
 
     let mut servers = iw4_servers(None).await.unwrap_or_else(|err| {
         error!("{err}");
@@ -223,7 +226,7 @@ impl From<serde_json::Error> for ReadCacheErr {
 
 impl Display for ReadCacheErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.err)
+        write!(f, "{}", self.err)
     }
 }
 

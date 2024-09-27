@@ -99,7 +99,7 @@ pub async fn build_favorites(
     });
 
     if version < 1.0 && limit >= DEFAULT_SERVER_CAP {
-        println!("{}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{}", YELLOW, WHITE)
+        println!("{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{WHITE}")
     }
 
     let (mut servers, update_cache) = filter_server_list(args, cache)
