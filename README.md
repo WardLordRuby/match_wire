@@ -29,7 +29,7 @@ allowing you to use the reconnect command to easily join back if you happen to n
 
 ## Usage
 Launch match_wire.exe once it is inside your game directory and it will automatically start Mw2 Remastered for you. The terminal window will provide you a place to enter commands.
-MatchWire includes a command auto-complete feature just use the tab key to walk through available commands and command options  
+MatchWire includes a command auto-complete feature, just use the tab key to walk through available commands and command options.  
 
 ### Commands  
 | Commands                     | Alias     | Description                                                                     |
@@ -51,7 +51,7 @@ A help page is available for every command, to access it use: `<COMMAND_NAME> --
 ![help][filter-help]
 
 ### Custom queries
-Filtering Mw2 Remastered servers is easy by adding your own arguments. Any combination of filters is valid  
+Filtering Mw2 Remastered servers is easy by adding your own arguments. Any combination of filters is valid.  
 
 Examples:
      
