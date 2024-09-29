@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [filter-help]: https://i.imgur.com/Ln1ENad.png "query arguments"
 [reconnect-help]: https://i.imgur.com/fvRZ7PW.png "history arguments"
-[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.0/match_wire.exe
+[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.1/match_wire.exe
 [hmw-discord]: https://discord.com/invite/HorizonMW
 <div align="center">
     <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
