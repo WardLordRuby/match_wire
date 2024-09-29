@@ -45,6 +45,9 @@ const CONNECT_CHARS: &str = "Connecti";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
+const RESET_COLOR: [u16; 3] = [27, 91, 109];
+const ESCAPE: u16 = 27;
+const COLOR_END: u16 = 109;
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 
@@ -82,7 +85,7 @@ fn strip_ansi_codes(input: &str) -> String {
 }
 
 fn strip_cursor_visibility_commands(input: &[u16]) -> String {
-    let re = regex::Regex::new(r"\[(\?25[hl])(\])?").unwrap();
+    let re = regex::Regex::new(r"\x1b\[(\?25[hl])(\])?").unwrap();
     re.replace_all(&String::from_utf16_lossy(input), "")
         .to_string()
 }
@@ -112,6 +115,8 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
     tokio::spawn(async move {
         let mut buffer = OsString::new();
+        let mut prev_color = None;
+
         const BUFFER_SIZE: usize = 16384; // 16 KB
         const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 
@@ -151,11 +156,27 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             let start = console_history.len();
 
             for byte in buffer.encode_wide() {
-                if byte == NEW_LINE {
-                    continue;
-                }
-                if byte == CARRIAGE_RETURN {
-                    if !wide_encode_buf.is_empty() {
+                if byte == CARRIAGE_RETURN || byte == NEW_LINE {
+                    if wide_encode_buf.len() > 3 {
+                        // copy color codes since background printing doesn't support contiguous colors
+                        // Note: h2m console ouput _rarely_ expects colors to be carried over from previous lines
+                        if wide_encode_buf
+                            .windows(RESET_COLOR.len())
+                            .any(|window| window == RESET_COLOR)
+                        {
+                            prev_color = None;
+                        } else if wide_encode_buf.starts_with(&[ESCAPE]) {
+                            if let Some(j) =
+                                wide_encode_buf.iter().position(|&byte| byte == COLOR_END)
+                            {
+                                prev_color = Some(wide_encode_buf[..=j].to_vec())
+                            }
+                        } else if let Some(ref color) = prev_color {
+                            let mut copied = color.to_vec();
+                            copied.extend_from_slice(&wide_encode_buf);
+                            wide_encode_buf = copied;
+                        }
+
                         if wide_encode_buf
                             .windows(JOIN_BYTES.len())
                             .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
@@ -165,7 +186,10 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                             add_to_history(&mut cache.connection_history, &wide_encode_buf);
                             cache_needs_update.store(true, Ordering::Relaxed);
                         }
-                        console_history.push(strip_cursor_visibility_commands(&wide_encode_buf));
+                        let line = strip_cursor_visibility_commands(&wide_encode_buf);
+                        if !line.is_empty() {
+                            console_history.push(line);
+                        }
                         wide_encode_buf.clear();
                     }
                     continue;
