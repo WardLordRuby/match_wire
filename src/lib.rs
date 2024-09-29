@@ -27,7 +27,6 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use tracing::info;
 use utils::{
     input::{
         line::{LineData, LineReader},
@@ -56,7 +55,7 @@ macro_rules! new_io_error {
     };
 }
 
-pub async fn get_latest_version() -> reqwest::Result<()> {
+pub async fn get_latest_version() -> reqwest::Result<Option<String>> {
     let current_version = env!("CARGO_PKG_VERSION");
     let client = reqwest::Client::new();
     let version = client
@@ -67,9 +66,9 @@ pub async fn get_latest_version() -> reqwest::Result<()> {
         .json::<Version>()
         .await?;
     if current_version != version.latest {
-        info!("{}", version.message)
+        return Ok(Some(version.message));
     }
-    Ok(())
+    Ok(None)
 }
 
 #[derive(Debug)]

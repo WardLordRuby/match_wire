@@ -55,8 +55,15 @@ fn main() {
                 return;
             }
         };
-
+        
         startup_data.splash_task.await.unwrap().unwrap();
+
+        match startup_data.version_task.await {
+            Ok(Ok(Some(msg))) => info!("{msg}"),
+            Ok(Ok(None)) => (),
+            Ok(Err(err)) => error!("{err}"),
+            Err(err) => error!("{err}"),
+        };
 
         let launch_res = startup_data.launch_task.await.unwrap_or_else(|err| Err(err.to_string()));
 
@@ -186,19 +193,18 @@ struct StartupData {
     local_dir: Option<PathBuf>,
     splash_task: JoinHandle<io::Result<()>>,
     launch_task: JoinHandle<Result<(PTY, f64), String>>,
+    version_task: JoinHandle<reqwest::Result<Option<String>>>,
 }
 
 #[instrument(level = "trace", skip_all)]
 async fn app_startup() -> std::io::Result<StartupData> {
-    get_latest_version()
-        .await
-        .unwrap_or_else(|err| error!("{err}"));
-
     let exe_dir = std::env::current_dir()
         .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
 
     #[cfg(not(debug_assertions))]
     contains_required_files(&exe_dir)?;
+
+    let version_task = tokio::task::spawn(get_latest_version());
 
     let splash_task = tokio::task::spawn(splash_screen());
 
@@ -231,6 +237,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                         local_dir,
                         splash_task,
                         launch_task,
+                        version_task,
                     })
                 }
                 Err(err) => {
@@ -246,6 +253,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
             init_subscriber(Path::new("")).unwrap();
         }
     }
+
     let cache_file = build_cache(connection_history.as_deref(), region_cache.as_ref())
         .await
         .map_err(std::io::Error::other)?;
@@ -261,6 +269,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
                     local_dir,
                     splash_task,
                     launch_task,
+                    version_task,
                 });
             }
             Err(err) => error!("{err}"),
@@ -272,5 +281,6 @@ async fn app_startup() -> std::io::Result<StartupData> {
         local_dir,
         splash_task,
         launch_task,
+        version_task,
     })
 }
