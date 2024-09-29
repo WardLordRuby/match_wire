@@ -106,6 +106,10 @@ impl CommandContext {
         self.msg_sender.clone()
     }
     #[inline]
+    pub fn h2m_version(&self) -> f64 {
+        self.h2m_version
+    }
+    #[inline]
     fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }

@@ -41,12 +41,13 @@ struct VS_FIXEDFILEINFO {
 const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
 const H2M_WINDOW_NAMES: [&str; 2] = ["h2m-mod", "h2m-revived"];
 const JOIN_CHARS: &str = "Joining ";
-const CONNECT_CHARS: &str = "Connecti";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
+// "Connecti"
 const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const RESET_COLOR: [u16; 3] = [27, 91, 109];
 const ESCAPE: u16 = 27;
+const ESCAPE_CHAR: char = '\x1b';
 const COLOR_END: u16 = 109;
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
@@ -57,10 +58,10 @@ pub struct HostName {
     pub raw: String,
 }
 
-impl From<&[u16]> for HostName {
-    fn from(value: &[u16]) -> Self {
+impl HostName {
+    pub fn from(value: &[u16], version: f64) -> Self {
         let host_name = String::from_utf16_lossy(value);
-        let host_name = strip_ansi_codes(&host_name);
+        let host_name = strip_ansi_codes(&host_name, version);
         HostName {
             parsed: parse_hostname(&host_name),
             raw: host_name,
@@ -68,30 +69,28 @@ impl From<&[u16]> for HostName {
     }
 }
 
-fn strip_ansi_codes(input: &str) -> String {
+fn strip_ansi_codes(input: &str, version: f64) -> String {
     let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
     let input = re.replace_all(input, "");
 
-    if input.starts_with(JOIN_CHARS) {
+    if version < 1.0 {
         input.trim_start_matches(JOIN_CHARS).trim_end_matches('.')
-    } else if input.starts_with(CONNECT_CHARS) {
-        input
-            .split_once(": ")
-            .map_or(input.as_ref(), |(_, suf)| suf)
     } else {
-        &input
+        input
+            .split_once("} ")
+            .map_or(input.as_ref(), |(_, suf)| suf)
     }
     .to_string()
 }
 
-fn strip_cursor_visibility_commands(input: &[u16]) -> String {
+fn strip_ansi_private_modes(input: &[u16]) -> String {
     let re = regex::Regex::new(r"\x1b\[(\?25[hl])(\])?").unwrap();
     re.replace_all(&String::from_utf16_lossy(input), "")
         .to_string()
 }
 
-fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16]) {
-    let host_name = HostName::from(wide_encode);
+fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16], version: f64) {
+    let host_name = HostName::from(wide_encode, version);
     if let Some(index) = history.iter().position(|prev| prev.raw == host_name.raw) {
         let history_last = history.len() - 1;
         if index != history_last {
@@ -112,10 +111,17 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     let forward_logs_arc = context.forward_logs();
     let msg_sender_arc = context.msg_sender();
     let pty = context.pty_handle().unwrap();
+    let version = context.h2m_version();
 
     tokio::spawn(async move {
         let mut buffer = OsString::new();
         let mut prev_color = None;
+
+        let connecting_bytes = if version < 1.0 {
+            JOIN_BYTES
+        } else {
+            CONNECT_BYTES
+        };
 
         const BUFFER_SIZE: usize = 16384; // 16 KB
         const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -155,7 +161,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             let mut console_history = console_history_arc.lock().await;
             let start = console_history.len();
 
-            for byte in buffer.encode_wide() {
+            'byte_iter: for byte in buffer.encode_wide() {
                 if byte == CARRIAGE_RETURN || byte == NEW_LINE {
                     if wide_encode_buf.len() > 3 {
                         // copy color codes since background printing doesn't support contiguous colors
@@ -179,15 +185,27 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
                         if wide_encode_buf
                             .windows(JOIN_BYTES.len())
-                            .any(|window| window == JOIN_BYTES || window == CONNECT_BYTES)
+                            .any(|window| window == connecting_bytes)
                             && !wide_encode_buf.starts_with(&ERROR_BYTES)
                         {
                             let mut cache = cache_arc.lock().await;
-                            add_to_history(&mut cache.connection_history, &wide_encode_buf);
+                            add_to_history(
+                                &mut cache.connection_history,
+                                &wide_encode_buf,
+                                version,
+                            );
                             cache_needs_update.store(true, Ordering::Relaxed);
                         }
-                        let line = strip_cursor_visibility_commands(&wide_encode_buf);
+                        let line = strip_ansi_private_modes(&wide_encode_buf);
                         if !line.is_empty() {
+                            let mut chars = line.chars().peekable();
+                            while let Some(ESCAPE_CHAR) = chars.next() {
+                                chars.find(|c| c.is_alphabetic());
+                                if chars.peek().is_none() {
+                                    wide_encode_buf.clear();
+                                    continue 'byte_iter;
+                                }
+                            }
                             console_history.push(line);
                         }
                         wide_encode_buf.clear();

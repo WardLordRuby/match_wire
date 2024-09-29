@@ -26,7 +26,7 @@ mod tests {
 
         for (i, host) in INPUT.iter().enumerate() {
             let wide_bytes = host.encode_utf16().collect::<Vec<_>>();
-            let data = HostName::from(&wide_bytes[..]);
+            let data = HostName::from(&wide_bytes[..], 0.4);
             assert_eq!(data.parsed, OUTPUT[i].0);
             assert_eq!(data.raw, OUTPUT[i].1);
         }
