@@ -113,6 +113,13 @@ fn main() {
             if !line_handle.uneventful() {
                 line_handle.render().unwrap();
             }
+            if let Some(event) = line_handle.try_init_callback() {
+                match event {
+                    EventLoop::Continue => continue,
+                    EventLoop::Break => break,
+                    _ => unreachable!("not supported here")
+                }
+            };
             tokio::select! {
                 Some(_) = update_cache_rx.recv() => {
                     write_cache(&command_context).await
@@ -152,13 +159,7 @@ fn main() {
                                     };
                                     match command_handle {
                                         CommandHandle::Processed => (),
-                                        CommandHandle::Callback((init_callback, input_hook)) => {
-                                            if let Err(err) = init_callback(&mut line_handle) {
-                                                error!("{err}");
-                                                break;
-                                            }
-                                            line_handle.register_callback(input_hook);
-                                        },
+                                        CommandHandle::Callback(input_hook) => line_handle.register_callback(input_hook),
                                         CommandHandle::Exit => break,
                                     }
                                 }

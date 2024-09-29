@@ -8,10 +8,7 @@ use crate::{
     utils::{
         caching::{build_cache, Cache},
         input::{
-            line::{
-                AsyncCtxCallback, EventLoop, InputHook, InputHookErr, LineCallback, LineData,
-                LineReader,
-            },
+            line::{AsyncCtxCallback, EventLoop, InputHook, InputHookErr, LineData, LineReader},
             style::{GREEN, RED, WHITE, YELLOW},
         },
     },
@@ -180,7 +177,7 @@ impl CommandContextBuilder {
 
 pub enum CommandHandle {
     Processed,
-    Callback((Box<LineCallback>, InputHook)),
+    Callback(InputHook),
     Exit,
 }
 
@@ -413,9 +410,10 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
             _ => Ok((EventLoop::Continue, false)),
         };
 
-        return CommandHandle::Callback((
-            Box::new(init),
-            InputHook::new(uid, Box::new(input_hook)),
+        return CommandHandle::Callback(InputHook::new(
+            uid,
+            Some(Box::new(init)),
+            Box::new(input_hook),
         ));
     }
 
@@ -481,9 +479,10 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
             }
         };
 
-        return CommandHandle::Callback((
-            Box::new(init),
-            InputHook::new(InputHook::new_uid(), Box::new(input_hook)),
+        return CommandHandle::Callback(InputHook::new(
+            InputHook::new_uid(),
+            Some(Box::new(init)),
+            Box::new(input_hook),
         ));
     }
     CommandHandle::Exit

@@ -45,7 +45,8 @@ pub struct LineReader<'a> {
 
 pub struct InputHook {
     uid: usize,
-    callback: Box<InputEventHook>,
+    init: Option<Box<LineCallback>>,
+    event_hook: Box<InputEventHook>,
 }
 
 impl InputHook {
@@ -77,9 +78,17 @@ impl Display for InputHookErr {
 static CALLBACK_UID: AtomicUsize = AtomicUsize::new(0);
 
 impl InputHook {
-    pub fn new(uid: usize, callback: Box<InputEventHook>) -> Self {
+    pub fn new(
+        uid: usize,
+        init: Option<Box<LineCallback>>,
+        event_hook: Box<InputEventHook>,
+    ) -> Self {
         assert_ne!(uid, CALLBACK_UID.load(Ordering::SeqCst));
-        InputHook { uid, callback }
+        InputHook {
+            uid,
+            init,
+            event_hook,
+        }
     }
     #[inline]
     pub fn new_uid() -> usize {
@@ -204,6 +213,20 @@ impl<'a> LineReader<'a> {
         .await;
         self.term.queue(cursor::Show)?;
         Ok(())
+    }
+
+    /// makes sure next callback in the queue is initialized
+    pub fn try_init_callback(&mut self) -> Option<EventLoop> {
+        if let Some(callback) = self.callback.front_mut() {
+            if let Some(init) = callback.init.take() {
+                if let Err(err) = init(self) {
+                    error!("{err}");
+                    return Some(EventLoop::Break);
+                }
+                return Some(EventLoop::Continue);
+            }
+        }
+        None
     }
 
     pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {
@@ -420,7 +443,8 @@ impl<'a> LineReader<'a> {
             }) = event
             {
                 let hook = self.pop_callback().expect("outer if");
-                let callback = &hook.callback;
+                let callback = &hook.event_hook;
+                debug_assert!(hook.init.is_none());
                 let (event_loop, finished) = callback(self, event)?;
                 if !finished {
                     self.callback.push_front(hook);
