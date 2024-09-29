@@ -1,4 +1,7 @@
-use crate::{cli::SOURCE_LEN, utils::input::line::LineReader};
+use crate::{
+    cli::{REGION_LEN, SOURCE_LEN},
+    utils::input::line::LineReader,
+};
 use std::{
     collections::{HashMap, HashSet},
     io,
@@ -281,7 +284,7 @@ pub fn init_completion() -> CommandScheme {
                                 "pacific",
                                 "asiapacific",
                             ]),
-                            kind: RecKind::value_with_num_args(1),
+                            kind: RecKind::value_with_num_args(REGION_LEN),
                             end: false,
                         },
                         inner: None,

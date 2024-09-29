@@ -55,7 +55,7 @@ fn main() {
                 return;
             }
         };
-        
+
         startup_data.splash_task.await.unwrap().unwrap();
 
         match startup_data.version_task.await {

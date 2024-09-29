@@ -93,8 +93,8 @@ pub struct Filters {
     pub without_bots: bool,
 
     /// Specify region [Default: include all]
-    #[arg(short, long, value_enum)]
-    pub region: Option<Region>,
+    #[arg(short, long, value_enum, num_args(1..=REGION_LEN))]
+    pub region: Option<Vec<Region>>,
 
     /// Specify source [Default: include all]
     #[arg(short, long, value_enum, num_args(1..=SOURCE_LEN))]
@@ -112,6 +112,8 @@ pub struct Filters {
     #[arg(short, long, num_args(1..))]
     pub excludes: Option<Vec<String>>,
 }
+
+pub const REGION_LEN: usize = 3;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum Region {

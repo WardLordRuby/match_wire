@@ -527,7 +527,7 @@ async fn filter_server_list(
         to_server(servers)
     };
 
-    if let Some(region) = args.region {
+    if let Some(ref regions) = args.region {
         println!(
             "Determining region of {GREEN}{}{WHITE} servers...",
             servers.len()
@@ -543,13 +543,14 @@ async fn filter_server_list(
 
         for server in servers {
             if let Some(cached_region) = cache.ip_to_region.get(&server.socket_addr.ip()) {
-                if region.matches(*cached_region) {
+                if regions.iter().any(|region| region.matches(*cached_region)) {
                     server_list.push(server);
                 }
                 continue;
             }
             if new_lookups.insert(server.socket_addr.ip()) {
                 let client = client.clone();
+                let regions_clone = regions.clone();
                 trace!("Requsting location data for: {}", server.socket_addr.ip());
                 tasks.push(tokio::spawn(async move {
                     let location = match try_location_lookup(&server.socket_addr.ip(), client).await
@@ -557,7 +558,10 @@ async fn filter_server_list(
                         Ok(loc) => loc,
                         Err(err) => return Task::Err(err),
                     };
-                    if region.matches(location.code) {
+                    if regions_clone
+                        .iter()
+                        .any(|region| region.matches(location.code))
+                    {
                         return Task::Allowed((server, location.code));
                     }
                     Task::Filtered((server, location.code))
@@ -598,7 +602,7 @@ async fn filter_server_list(
 
         for server in check_again {
             if let Some(cached_region) = cache.ip_to_region.get(&server.socket_addr.ip()) {
-                if region.matches(*cached_region) {
+                if regions.iter().any(|region| region.matches(*cached_region)) {
                     server_list.push(server)
                 }
             }
