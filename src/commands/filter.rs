@@ -129,12 +129,6 @@ pub async fn build_favorites(
     Ok(update_cache)
 }
 
-enum Task {
-    Allowed((Server, [char; 2])),
-    Filtered((Server, [char; 2])),
-    Err(io::Error),
-}
-
 pub struct Server {
     pub source: Sourced,
     pub socket_addr: SocketAddr,
@@ -550,21 +544,11 @@ async fn filter_server_list(
             }
             if new_lookups.insert(server.socket_addr.ip()) {
                 let client = client.clone();
-                let regions_clone = regions.clone();
                 trace!("Requsting location data for: {}", server.socket_addr.ip());
                 tasks.push(tokio::spawn(async move {
-                    let location = match try_location_lookup(&server.socket_addr.ip(), client).await
-                    {
-                        Ok(loc) => loc,
-                        Err(err) => return Task::Err(err),
-                    };
-                    if regions_clone
-                        .iter()
-                        .any(|region| region.matches(location.code))
-                    {
-                        return Task::Allowed((server, location.code));
-                    }
-                    Task::Filtered((server, location.code))
+                    try_location_lookup(&server.socket_addr.ip(), client)
+                        .await
+                        .map(|location| (server, location.code))
                 }))
             } else {
                 check_again.push(server)
@@ -576,14 +560,15 @@ async fn filter_server_list(
         for task in tasks {
             match task.await {
                 Ok(result) => match result {
-                    Task::Allowed((server, region)) => {
-                        cache.ip_to_region.insert(server.socket_addr.ip(), region);
-                        server_list.push(server)
+                    Ok((server, cont_code)) => {
+                        cache
+                            .ip_to_region
+                            .insert(server.socket_addr.ip(), cont_code);
+                        if regions.iter().any(|region| region.matches(cont_code)) {
+                            server_list.push(server)
+                        }
                     }
-                    Task::Filtered((server, region)) => {
-                        cache.ip_to_region.insert(server.socket_addr.ip(), region);
-                    }
-                    Task::Err(err) => {
+                    Err(err) => {
                         error!(name: LOG_ONLY, "{err}");
                         failure_count += 1
                     }
