@@ -65,10 +65,7 @@ pub async fn get_latest_version() -> reqwest::Result<Option<String>> {
         .await?
         .json::<Version>()
         .await?;
-    if current_version != version.latest {
-        return Ok(Some(version.message));
-    }
-    Ok(None)
+    Ok((current_version != version.latest).then_some(version.message))
 }
 
 #[derive(Debug)]

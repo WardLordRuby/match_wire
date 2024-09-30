@@ -45,12 +45,12 @@ const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 // "Connecti"
 const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
-const RESET_COLOR: [u16; 3] = [27, 91, 109];
-const ESCAPE: u16 = 27;
 const ESCAPE_CHAR: char = '\x1b';
-const COLOR_END: u16 = 109;
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
+// const RESET_COLOR: [u16; 3] = [27, 91, 109];
+// const ESCAPE: u16 = 27;
+// const COLOR_END: u16 = 109;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HostName {
@@ -115,7 +115,6 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
     tokio::spawn(async move {
         let mut buffer = OsString::new();
-        let mut prev_color = None;
 
         let connecting_bytes = if version < 1.0 {
             JOIN_BYTES
@@ -163,67 +162,38 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
             'byte_iter: for byte in buffer.encode_wide() {
                 if byte == CARRIAGE_RETURN || byte == NEW_LINE {
-                    if wide_encode_buf.len() > 3 {
-                        // copy color codes since background printing doesn't support contiguous colors
-                        // Note: h2m console ouput _rarely_ expects colors to be carried over from previous lines
-                        if wide_encode_buf
-                            .windows(RESET_COLOR.len())
-                            .any(|window| window == RESET_COLOR)
-                        {
-                            prev_color = None;
-                        } else if wide_encode_buf.starts_with(&[ESCAPE]) {
-                            if let Some(j) =
-                                wide_encode_buf.iter().position(|&byte| byte == COLOR_END)
-                            {
-                                prev_color = Some(wide_encode_buf[..=j].to_vec())
-                            }
-                        } else if let Some(ref color) = prev_color {
-                            let mut copied = color.to_vec();
-                            copied.extend_from_slice(&wide_encode_buf);
-                            wide_encode_buf = copied;
-                        }
-
-                        if wide_encode_buf
-                            .windows(JOIN_BYTES.len())
-                            .any(|window| window == connecting_bytes)
-                            && !wide_encode_buf.starts_with(&ERROR_BYTES)
-                        {
-                            let mut cache = cache_arc.lock().await;
-                            add_to_history(
-                                &mut cache.connection_history,
-                                &wide_encode_buf,
-                                version,
-                            );
-                            cache_needs_update.store(true, Ordering::Relaxed);
-                        }
-                        let line = strip_ansi_private_modes(&wide_encode_buf);
-                        if !line.is_empty() {
-                            let mut chars = line.chars().peekable();
-                            while let Some(ESCAPE_CHAR) = chars.next() {
-                                chars.find(|c| c.is_alphabetic());
-                                if chars.peek().is_none() {
-                                    wide_encode_buf.clear();
-                                    continue 'byte_iter;
-                                }
-                            }
-                            console_history.push(line);
-                        }
-                        wide_encode_buf.clear();
+                    if wide_encode_buf
+                        .windows(JOIN_BYTES.len())
+                        .any(|window| window == connecting_bytes)
+                        && !wide_encode_buf.starts_with(&ERROR_BYTES)
+                    {
+                        let mut cache = cache_arc.lock().await;
+                        add_to_history(&mut cache.connection_history, &wide_encode_buf, version);
+                        cache_needs_update.store(true, Ordering::Relaxed);
                     }
+                    let line = strip_ansi_private_modes(&wide_encode_buf);
+                    if !line.is_empty() {
+                        // don't store lines that that _only_ contain an ansi escape command
+                        let mut chars = line.chars().peekable();
+                        while let Some(ESCAPE_CHAR) = chars.next() {
+                            chars.find(|c| c.is_alphabetic());
+                            if chars.peek().is_none() {
+                                wide_encode_buf.clear();
+                                continue 'byte_iter;
+                            }
+                        }
+                        console_history.push(line);
+                    }
+                    wide_encode_buf.clear();
                     continue;
                 }
                 wide_encode_buf.push(byte);
             }
 
             if forward_logs_arc.load(Ordering::Acquire) && start < console_history.len() {
-                for i in start..console_history.len() {
-                    if msg_sender_arc
-                        .send(Message::Str(console_history[i].clone()))
-                        .await
-                        .is_err()
-                    {
-                        forward_logs_arc.store(false, Ordering::SeqCst);
-                    }
+                let msg = console_history[start..].join("\n");
+                if msg_sender_arc.send(Message::Str(msg)).await.is_err() {
+                    forward_logs_arc.store(false, Ordering::SeqCst);
                 }
             }
 

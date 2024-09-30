@@ -67,7 +67,7 @@ fn main() {
 
         let launch_res = startup_data.launch_task.await.unwrap_or_else(|err| Err(err.to_string()));
 
-        let (message_tx, mut message_rx) = mpsc::channel(200);
+        let (message_tx, mut message_rx) = mpsc::channel(50);
 
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
@@ -112,30 +112,23 @@ fn main() {
             }
             if !line_handle.uneventful() {
                 line_handle.render().unwrap();
-            }
-            if let Some(event) = line_handle.try_init_callback() {
-                match event {
-                    EventLoop::Continue => continue,
-                    EventLoop::Break => break,
-                    _ => unreachable!("not supported here")
-                }
-            };
-            tokio::select! {
-                Some(_) = update_cache_rx.recv() => {
-                    write_cache(&command_context).await
-                        .unwrap_or_else(|err| error!("{err}"));
-                }
-                Some(msg) = message_rx.recv() => {
-                    if let Err(err) = line_handle.print_background_msg(msg) {
-                        error!("{err}");
-                        break;
+                if let Some(event) = line_handle.try_init_callback() {
+                    match event {
+                        EventLoop::Continue => continue,
+                        EventLoop::Break => break,
+                        _ => unreachable!("not supported here")
                     }
-                }
+                };
+            }
+            tokio::select! {
+                biased;
+
                 _ = close_listener.recv() => {
                     info!(name: LOG_ONLY, "app shutdown");
                     terminal::disable_raw_mode().unwrap();
                     return;
                 }
+                
                 Some(event_result) = reader.next() => {
                     match event_result {
                         Ok(event) => {
@@ -174,6 +167,18 @@ fn main() {
                             break;
                         },
                     }
+                }
+
+                Some(msg) = message_rx.recv() => {
+                    if let Err(err) = line_handle.print_background_msg(msg) {
+                        error!("{err}");
+                        break;
+                    }
+                }
+
+                Some(_) = update_cache_rx.recv() => {
+                    write_cache(&command_context).await
+                        .unwrap_or_else(|err| error!("{err}"));
                 }
             }
         }
