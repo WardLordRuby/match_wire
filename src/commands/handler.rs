@@ -296,17 +296,24 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
         tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
         if let Some(lock) = pty {
             let handle = lock.read().await;
-            let msg = match handle.is_alive() {
-                Ok(true) => Message::Info(String::from("Connected to H2M-mod console")),
+            let messages = match handle.is_alive() {
+                Ok(true) => vec![Message::Info(String::from("Connected to H2M-mod console"))],
                 Ok(false) => {
-                    Message::Err(String::from("Could not establish connection to H2M-mod, use command `launch` to re-launch game"))
+                    vec![
+                        Message::Err(String::from("Could not establish connection to H2M-mod")),
+                        Message::Str(format!(
+                            "use command `{YELLOW}launch{WHITE}` to re-launch game"
+                        )),
+                    ]
                 }
-                Err(err) => Message::Err(err.to_string_lossy().to_string()),
+                Err(err) => vec![Message::Err(err.to_string_lossy().to_string())],
             };
-            msg_sender
-                .send(msg)
-                .await
-                .unwrap_or_else(|err| error!("{err}"));
+            for msg in messages {
+                msg_sender
+                    .send(msg)
+                    .await
+                    .unwrap_or_else(|err| error!("{err}"));
+            }
         }
     });
     Ok(())
