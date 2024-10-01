@@ -40,6 +40,9 @@ struct VS_FIXEDFILEINFO {
 
 const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
 const H2M_WINDOW_NAME: &str = "h2m";
+// console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
+// game class = "H1" || splash screen class = "H2M Splash Screen"
+const H2M_WINDOW_CLASS_NAMES: [&str; 2] = ["H1", "H2M Splash Screen"];
 const JOIN_CHARS: &str = "Joining ";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 // "Connecti"
@@ -349,13 +352,13 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         return 1;
     }
 
-    // Convert the C string to a Rust &str
     let class_name_str = CStr::from_ptr(class_name.as_ptr()).to_str().unwrap_or("");
 
-    // Check if the window class name indicates it is the console window or game window
-    // game class = "H1" || splash screen class = "H2M Splash Screen"
-    // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
-    if class_name_str == "H1" || class_name_str == "H2M Splash Screen" {
+    // Check if the window class name indicates it is the game window or the game's splash screen
+    if H2M_WINDOW_CLASS_NAMES
+        .iter()
+        .any(|&h2m_class| class_name_str == h2m_class)
+    {
         let result = &mut *(lparam as *mut bool);
         *result = true;
         return 0; // Break
