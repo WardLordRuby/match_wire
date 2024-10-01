@@ -293,21 +293,32 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
     let pty = context.pty_handle();
     let msg_sender = context.msg_sender();
     tokio::task::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
-        if let Some(lock) = pty {
-            let handle = lock.read().await;
-            let messages = match handle.is_alive() {
-                Ok(true) => vec![Message::Info(String::from("Connected to H2M-mod console"))],
-                Ok(false) => {
-                    vec![
-                        Message::Err(String::from("Could not establish connection to H2M-mod")),
-                        Message::Str(format!(
-                            "use command `{YELLOW}launch{WHITE}` to re-launch game"
-                        )),
-                    ]
+        const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
+        if let Some(handle) = pty {
+            let mut attempt = 1;
+            let messages = loop {
+                tokio::time::sleep(SLEEP * attempt).await;
+                match handle.read().await.is_alive() {
+                    Ok(true) => {
+                        if attempt == 3 {
+                            break vec![Message::Info(String::from(
+                                "Connected to H2M-mod console",
+                            ))];
+                        }
+                    }
+                    Ok(false) => {
+                        break vec![
+                            Message::Err(String::from("Could not establish connection to H2M-mod")),
+                            Message::Str(format!(
+                                "use command `{YELLOW}launch{WHITE}` to re-launch game"
+                            )),
+                        ];
+                    }
+                    Err(err) => break vec![Message::Err(err.to_string_lossy().to_string())],
                 }
-                Err(err) => vec![Message::Err(err.to_string_lossy().to_string())],
+                attempt += 1;
             };
+
             for msg in messages {
                 msg_sender
                     .send(msg)

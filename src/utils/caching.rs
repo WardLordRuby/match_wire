@@ -2,7 +2,7 @@ use crate::{
     cli::Source,
     commands::{
         filter::{hmw_servers, iw4_servers, queue_info_requests, Server, Sourced},
-        handler::{CommandContext, Message},
+        handler::CommandContext,
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
     },
@@ -22,7 +22,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use tracing::{error, instrument, trace};
+use tracing::{error, info, instrument, trace};
 
 pub struct Cache {
     pub host_to_connect: HashMap<String, SocketAddr>,
@@ -297,10 +297,6 @@ pub async fn write_cache<'a>(context: &CommandContext) -> io::Result<()> {
         }
     };
     serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
-    context
-        .msg_sender()
-        .send(Message::Info(String::from("Cache saved locally")))
-        .await
-        .unwrap_or_else(|err| error!("{err}"));
+    info!(name: LOG_ONLY, "Cache saved locally");
     Ok(())
 }
