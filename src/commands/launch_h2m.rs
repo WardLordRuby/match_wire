@@ -1,6 +1,6 @@
 use crate::{
     commands::handler::{CommandContext, Message},
-    parse_hostname, LOG_ONLY,
+    parse_hostname,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,7 +9,7 @@ use std::{
     path::Path,
     sync::atomic::Ordering,
 };
-use tracing::{error, info};
+use tracing::error;
 use winapi::{
     shared::{minwindef::DWORD, windef::HWND},
     um::{
@@ -46,6 +46,7 @@ const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const ESCAPE_CHAR: char = '\x1b';
+const COLOR_CMD: char = 'm';
 const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 // const RESET_COLOR: [u16; 3] = [27, 91, 109];
@@ -144,7 +145,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                         buffer.push(os_string);
                     }
                     Err(err) => {
-                        error!("{err:?}");
+                        let _ = msg_sender_arc.send(Message::Err(format!("{err:?}"))).await;
                         break 'task;
                     }
                 }
@@ -173,12 +174,22 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     }
                     let line = strip_ansi_private_modes(&wide_encode_buf);
                     if !line.is_empty() {
-                        // don't store lines that that _only_ contain an ansi escape command
+                        // don't store lines that that _only_ contain an ansi escape command except if it is a color command
                         let mut chars = line.chars().peekable();
+                        let mut color_cmd = false;
                         while let Some(ESCAPE_CHAR) = chars.next() {
-                            chars.find(|c| c.is_alphabetic());
+                            chars.find(|&c| {
+                                c.is_alphabetic() && {
+                                    if c == COLOR_CMD {
+                                        color_cmd = true;
+                                    }
+                                    true
+                                }
+                            });
                             if chars.peek().is_none() {
-                                wide_encode_buf.clear();
+                                if !color_cmd {
+                                    wide_encode_buf.clear();
+                                }
                                 continue 'byte_iter;
                             }
                         }
@@ -199,7 +210,11 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
             buffer = OsString::from_wide(&wide_encode_buf);
         }
-        info!(name: LOG_ONLY, "No longer reading h2m console ouput")
+        let _ = msg_sender_arc
+            .send(Message::Warn(String::from(
+                "No longer reading H2M console ouput",
+            )))
+            .await;
     });
     Ok(())
 }
