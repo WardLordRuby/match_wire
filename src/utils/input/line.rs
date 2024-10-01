@@ -215,18 +215,11 @@ impl<'a> LineReader<'a> {
         Ok(())
     }
 
-    /// makes sure next callback in the queue is initialized
-    pub fn try_init_callback(&mut self) -> Option<EventLoop> {
-        if let Some(callback) = self.callback.front_mut() {
-            if let Some(init) = callback.init.take() {
-                if let Err(err) = init(self) {
-                    error!("{err}");
-                    return Some(EventLoop::Break);
-                }
-                return Some(EventLoop::Continue);
-            }
-        }
-        None
+    /// makes sure the current callback's initializer has been executed
+    pub fn try_init_callback(&mut self) -> Option<io::Result<()>> {
+        let callback = self.callback.front_mut()?;
+        let init = callback.init.take()?;
+        Some(init(self))
     }
 
     pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {

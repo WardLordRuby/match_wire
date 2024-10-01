@@ -111,14 +111,11 @@ fn main() {
                 line_handle.clear_unwanted_inputs(&mut reader).await.unwrap();
             }
             if !line_handle.uneventful() {
-                line_handle.render().unwrap();
-                if let Some(event) = line_handle.try_init_callback() {
-                    match event {
-                        EventLoop::Continue => continue,
-                        EventLoop::Break => break,
-                        _ => unreachable!("not supported here")
-                    }
+                if let Some(Err(err)) = line_handle.try_init_callback() {
+                    error!("{err}");
+                    break
                 };
+                line_handle.render().unwrap();
             }
             tokio::select! {
                 biased;
@@ -128,7 +125,7 @@ fn main() {
                     terminal::disable_raw_mode().unwrap();
                     return;
                 }
-                
+
                 Some(event_result) = reader.next() => {
                     match event_result {
                         Ok(event) => {
