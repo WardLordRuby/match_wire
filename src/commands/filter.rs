@@ -580,9 +580,8 @@ async fn filter_server_list(
             }
         }
 
-        match new_lookups.len() {
-            0 => (),
-            len => info!("Made {len} new location requests"),
+        if !new_lookups.is_empty() {
+            info!("Made {} new location requests", new_lookups.len());
         }
 
         for server in check_again {

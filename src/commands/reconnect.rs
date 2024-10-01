@@ -4,6 +4,7 @@ use crate::{
         handler::{CommandContext, CommandHandle},
         launch_h2m::HostName,
     },
+    utils::input::style::{WHITE, YELLOW},
 };
 use std::{collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
 use tokio::sync::RwLock;
@@ -113,7 +114,8 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
             .await
             .unwrap_or_else(|err| error!("{err}"));
     } else {
-        error!("Could not find server in cache")
+        error!("Could not find server in cache");
+        println!("use command '{YELLOW}cache update{WHITE}' to attempt to locate missing server");
     }
     CommandHandle::Processed
 }
