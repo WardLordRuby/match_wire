@@ -39,7 +39,7 @@ struct VS_FIXEDFILEINFO {
 }
 
 const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
-const H2M_WINDOW_NAMES: [&str; 2] = ["h2m-mod", "h2m-revived"];
+const H2M_WINDOW_NAME: &str = "h2m";
 const JOIN_CHARS: &str = "Joining ";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 // "Connecti"
@@ -174,7 +174,8 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     }
                     let line = strip_ansi_private_modes(&wide_encode_buf);
                     if !line.is_empty() {
-                        // don't store lines that that _only_ contain an ansi escape command except if it is a color command
+                        // don't store lines that that _only_ contain an ansi escape command
+                        // unless it is a color command then we append to next line
                         let mut chars = line.chars().peekable();
                         let mut color_cmd = false;
                         while let Some(ESCAPE_CHAR) = chars.next() {
@@ -337,10 +338,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         .to_string_lossy()
         .to_ascii_lowercase();
 
-    if !H2M_WINDOW_NAMES
-        .iter()
-        .any(|h2m_name| window_title.contains(h2m_name))
-    {
+    if !window_title.contains(H2M_WINDOW_NAME) {
         return 1;
     }
 
@@ -355,12 +353,9 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     let class_name_str = CStr::from_ptr(class_name.as_ptr()).to_str().unwrap_or("");
 
     // Check if the window class name indicates it is the console window or game window
-    // game class = "H1"
+    // game class = "H1" || splash screen class = "H2M Splash Screen"
     // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
-    // MARK: NOTE
-    // temp fix, to get around our process being picked up as the game process
-    // would like to add the console window types back in
-    if class_name_str == "H1" {
+    if class_name_str == "H1" || class_name_str == "H2M Splash Screen" {
         let result = &mut *(lparam as *mut bool);
         *result = true;
         return 0; // Break
