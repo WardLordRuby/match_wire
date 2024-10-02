@@ -30,7 +30,7 @@ use std::{
 use utils::{
     input::{
         line::{LineData, LineReader},
-        style::{GREEN, WHITE},
+        style::{GREEN, WHITE, YELLOW},
     },
     json_data::Version,
 };
@@ -53,6 +53,11 @@ macro_rules! new_io_error {
     ($kind:expr, $msg:expr) => {
         Err(std::io::Error::new($kind, $msg))
     };
+}
+
+#[inline]
+pub fn print_h2m_connection_help() {
+    println!("Close H2M and use command `{YELLOW}launch{WHITE}` to establish valid connection");
 }
 
 pub async fn get_latest_version() -> reqwest::Result<Option<String>> {

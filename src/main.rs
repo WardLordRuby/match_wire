@@ -1,6 +1,6 @@
 use commands::{
     handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
-    launch_h2m::launch_h2m_pseudo,
+    launch_h2m::{launch_h2m_pseudo, LaunchError},
 };
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::*;
@@ -65,7 +65,7 @@ fn main() {
             Err(err) => error!("{err}"),
         };
 
-        let launch_res = startup_data.launch_task.await.unwrap_or_else(|err| Err(err.to_string()));
+        let launch_res = startup_data.launch_task.await;
 
         let (message_tx, mut message_rx) = mpsc::channel(50);
 
@@ -93,7 +93,7 @@ fn main() {
             }
         });
 
-        listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!("{err}"));
+        listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!(name: LOG_ONLY, "{err}"));
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
@@ -195,7 +195,7 @@ struct StartupData {
     exe_dir: PathBuf,
     local_dir: Option<PathBuf>,
     splash_task: JoinHandle<io::Result<()>>,
-    launch_task: JoinHandle<Result<(PTY, f64), String>>,
+    launch_task: JoinHandle<Result<(PTY, f64), LaunchError>>,
     version_task: JoinHandle<reqwest::Result<Option<String>>>,
 }
 

@@ -4,6 +4,7 @@ use crate::{
         handler::{CommandContext, CommandHandle},
         launch_h2m::HostName,
     },
+    print_h2m_connection_help,
     utils::input::style::{WHITE, YELLOW},
 };
 use std::{collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
@@ -88,6 +89,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     }
     if let Err(err) = context.check_h2m_connection().await {
         error!("{err}");
+        print_h2m_connection_help();
         return CommandHandle::Processed;
     }
     let history_len = cache.connection_history.len();

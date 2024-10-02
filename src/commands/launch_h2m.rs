@@ -5,6 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
+    fmt::Display,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
     sync::atomic::Ordering,
@@ -223,13 +224,26 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     Ok(())
 }
 
-pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
+pub enum LaunchError {
+    Running(&'static str),
+    SpawnErr(OsString),
+}
+
+impl Display for LaunchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let display = match self {
+            LaunchError::Running(msg) => *msg,
+            LaunchError::SpawnErr(err) => &err.to_string_lossy(),
+        };
+        write!(f, "{display}")
+    }
+}
+
+pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), LaunchError> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
     if h2m_running() {
-        return Err(String::from(
-            "Close H2M and relaunch using 'launch' command",
-        ));
+        return Err(LaunchError::Running("H2M is already running"));
     }
 
     let pty_args = PTYArgs {
@@ -247,10 +261,10 @@ pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), String> {
 
     let spawned = match conpty.spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None) {
         Ok(_) => H2M_NAMES[0],
-        Err(_) => {
+        Err(err) => {
             conpty
                 .spawn(exe_dir.join(H2M_NAMES[1]).into(), None, None, None)
-                .map_err(|err| err.to_string_lossy().to_string())?;
+                .map_err(|_| LaunchError::SpawnErr(err))?;
             H2M_NAMES[1]
         }
     };

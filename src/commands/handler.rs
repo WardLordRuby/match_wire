@@ -2,9 +2,10 @@ use crate::{
     cli::{CacheCmd, Command, Filters, UserCommand},
     commands::{
         filter::build_favorites,
-        launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo},
+        launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
         reconnect::reconnect,
     },
+    print_h2m_connection_help,
     utils::{
         caching::{build_cache, Cache},
         input::{
@@ -25,7 +26,10 @@ use std::{
         Arc,
     },
 };
-use tokio::sync::{mpsc::Sender, Mutex, RwLock};
+use tokio::{
+    sync::{mpsc::Sender, Mutex, RwLock},
+    task::JoinError,
+};
 use tracing::{error, info};
 use winptyrs::PTY;
 
@@ -66,21 +70,19 @@ impl CommandContext {
         self.forward_logs.clone()
     }
     pub async fn check_h2m_connection(&mut self) -> Result<(), String> {
-        let mut error = String::from("No Pseudoconsole set");
         if let Some(ref lock) = self.pty_handle {
             let handle = lock.read().await;
-            match handle.is_alive() {
-                Ok(true) => return Ok(()),
-                Ok(false) => {
-                    return Err(String::from(
-                        "No connection to H2M is active, use 'launch' command to start H2M",
-                    ))
+            return match handle.is_alive() {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(String::from("No connection to H2M is active")),
+                Err(err) => {
+                    drop(handle);
+                    self.pty_handle = None;
+                    Err(err.to_string_lossy().to_string())
                 }
-                Err(err) => error = err.to_string_lossy().to_string(),
-            }
+            };
         }
-        self.pty_handle = None;
-        Err(error)
+        Err(String::from("No Pseudoconsole set"))
     }
     #[inline]
     pub fn local_dir(&self) -> Option<Arc<PathBuf>> {
@@ -112,10 +114,12 @@ impl CommandContext {
     }
 }
 
+type LaunchResult = Result<Result<(PTY, f64), LaunchError>, JoinError>;
+
 #[derive(Default)]
 pub struct CommandContextBuilder {
     cache: Option<Cache>,
-    launch_res: Option<Result<(PTY, f64), String>>,
+    launch_res: Option<LaunchResult>,
     exe_dir: Option<PathBuf>,
     msg_sender: Option<Sender<Message>>,
     local_dir: Option<PathBuf>,
@@ -141,19 +145,24 @@ impl CommandContextBuilder {
         self.local_dir = local_dir;
         self
     }
-    pub fn launch_res(mut self, res: Result<(PTY, f64), String>) -> Self {
+    pub fn launch_res(mut self, res: LaunchResult) -> Self {
         self.launch_res = Some(res);
         self
     }
 
     pub fn build(self) -> Result<CommandContext, &'static str> {
-        let (handle, version) = match self.launch_res {
-            Some(Ok((handle, version))) => (Some(handle), Some(version)),
-            Some(Err(err)) => {
-                error!("{err}");
-                (None, None)
+        let (handle, version) = if let Some(Ok(Ok((handle, version)))) = self.launch_res {
+            (Some(handle), Some(version))
+        } else {
+            if let Some(join_res) = self.launch_res {
+                let err = match join_res {
+                    Err(join_err) => join_err.to_string(),
+                    Ok(Err(launch_err)) => launch_err.to_string(),
+                    _ => unreachable!("by outer if"),
+                };
+                error!("Could not launch H2M as child process: {err}");
             }
-            None => (None, None),
+            (None, None)
         };
         Ok(CommandContext {
             cache: self
@@ -282,7 +291,17 @@ pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
                 error!("{err}")
             }
         }
-        Err(err) => error!("{err}"),
+        Err(err) => match err {
+            LaunchError::Running(msg) => {
+                if context.check_h2m_connection().await.is_err() {
+                    error!("{msg}");
+                    print_h2m_connection_help();
+                } else {
+                    info!("Connection already active")
+                }
+            }
+            LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),
+        },
     };
     CommandHandle::Processed
 }
