@@ -111,7 +111,7 @@ fn main() {
                 line_handle.clear_unwanted_inputs(&mut reader).await.unwrap();
             }
             if !line_handle.uneventful() {
-                if let Some(Err(err)) = line_handle.try_init_callback() {
+                if let Some(Err(err)) = line_handle.try_init_input_hook() {
                     error!("{err}");
                     break
                 };
@@ -136,7 +136,7 @@ fn main() {
                                 Ok(EventLoop::AsyncCallback(callback)) => {
                                     if let Err(err) = callback(&mut command_context).await {
                                         error!("{err}");
-                                        conditionally_remove_hook(&mut command_context, &mut line_handle, err.uid());
+                                        line_handle.conditionally_remove_hook(&mut command_context, err.uid());
                                     }
                                 },
                                 Ok(EventLoop::TryProcessCommand) => {
@@ -149,7 +149,7 @@ fn main() {
                                     };
                                     match command_handle {
                                         CommandHandle::Processed => (),
-                                        CommandHandle::Callback(input_hook) => line_handle.register_callback(input_hook),
+                                        CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
                                         CommandHandle::Exit => break,
                                     }
                                 }

@@ -1,5 +1,5 @@
 use crate::{
-    commands::handler::{CommandContext, Message},
+    commands::handler::{end_forward, CommandContext, Message},
     utils::input::{
         completion::{CommandScheme, Completion},
         style::PROMPT_END,
@@ -40,7 +40,7 @@ pub struct LineReader<'a> {
     uneventful: bool,
     cursor_at_start: bool,
     command_entered: bool,
-    callback: VecDeque<InputHook>,
+    input_hooks: VecDeque<InputHook>,
 }
 
 pub struct InputHook {
@@ -195,7 +195,7 @@ impl<'a> LineReader<'a> {
             cursor_at_start: false,
             command_entered: true,
             completion: Completion::from(name_ctx),
-            callback: VecDeque::new(),
+            input_hooks: VecDeque::new(),
         };
         new.term.queue(cursor::EnableBlinking)?;
         Ok(new)
@@ -215,11 +215,39 @@ impl<'a> LineReader<'a> {
         Ok(())
     }
 
-    /// makes sure the current callback's initializer has been executed
-    pub fn try_init_callback(&mut self) -> Option<io::Result<()>> {
-        let callback = self.callback.front_mut()?;
+    /// makes sure the current `input_hook`'s initializer has been executed
+    pub fn try_init_input_hook(&mut self) -> Option<io::Result<()>> {
+        let callback = self.input_hooks.front_mut()?;
         let init = callback.init.take()?;
         Some(init(self))
+    }
+
+    #[inline]
+    pub fn register_input_hook(&mut self, input_hook: InputHook) {
+        self.input_hooks.push_back(input_hook);
+    }
+
+    #[inline]
+    /// pops the first queued `input_hook`
+    pub fn pop_input_hook(&mut self) -> Option<InputHook> {
+        self.input_hooks.pop_front()
+    }
+
+    #[inline]
+    /// references the first queued `input_hook`
+    pub fn next_input_hook(&mut self) -> Option<&InputHook> {
+        self.input_hooks.front()
+    }
+
+    pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: usize) {
+        self.set_prompt(LineData::default_prompt());
+        self.set_completion(true);
+        if let Some(callback) = self.next_input_hook() {
+            if callback.uid() == uid {
+                self.pop_input_hook();
+            }
+        }
+        end_forward(ctx);
     }
 
     pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {
@@ -254,23 +282,6 @@ impl<'a> LineReader<'a> {
     pub fn set_prompt(&mut self, prompt: String) {
         self.line.prompt_len = LineData::prompt_len(&prompt);
         self.line.prompt = prompt;
-    }
-
-    #[inline]
-    pub fn register_callback(&mut self, callback: InputHook) {
-        self.callback.push_back(callback);
-    }
-
-    #[inline]
-    /// pops the first queued callback
-    pub fn pop_callback(&mut self) -> Option<InputHook> {
-        self.callback.pop_front()
-    }
-
-    #[inline]
-    /// references the first queued callback
-    pub fn next_callback(&mut self) -> Option<&InputHook> {
-        self.callback.front()
     }
 
     #[inline]
@@ -429,18 +440,17 @@ impl<'a> LineReader<'a> {
     }
 
     pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop> {
-        if !self.callback.is_empty() {
+        if !self.input_hooks.is_empty() {
             if let Event::Key(KeyEvent {
                 kind: KeyEventKind::Press,
                 ..
             }) = event
             {
-                let hook = self.pop_callback().expect("outer if");
-                let callback = &hook.event_hook;
+                let hook = self.pop_input_hook().expect("outer if");
                 debug_assert!(hook.init.is_none());
-                let (event_loop, finished) = callback(self, event)?;
+                let (event_loop, finished) = (hook.event_hook)(self, event)?;
                 if !finished {
-                    self.callback.push_front(hook);
+                    self.input_hooks.push_front(hook);
                 }
                 return Ok(event_loop);
             }

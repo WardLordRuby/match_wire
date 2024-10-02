@@ -19,7 +19,6 @@ pub mod utils {
 
 use clap::CommandFactory;
 use cli::UserCommand;
-use commands::handler::{end_forward, CommandContext};
 use crossterm::{cursor, execute, terminal};
 use std::{
     collections::HashSet,
@@ -28,10 +27,7 @@ use std::{
     time::Duration,
 };
 use utils::{
-    input::{
-        line::{LineData, LineReader},
-        style::{GREEN, WHITE, YELLOW},
-    },
+    input::style::{GREEN, WHITE, YELLOW},
     json_data::Version,
 };
 
@@ -231,17 +227,6 @@ pub fn parse_hostname(name: &str) -> String {
         }
     }
     host_name
-}
-
-pub fn conditionally_remove_hook(ctx: &mut CommandContext, line: &mut LineReader, uid: usize) {
-    line.set_prompt(LineData::default_prompt());
-    line.set_completion(true);
-    if let Some(callback) = line.next_callback() {
-        if callback.uid() == uid {
-            line.pop_callback();
-        }
-    }
-    end_forward(ctx);
 }
 
 pub fn print_help() {

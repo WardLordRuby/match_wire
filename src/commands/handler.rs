@@ -158,7 +158,7 @@ impl CommandContextBuilder {
                 let err = match join_res {
                     Err(join_err) => join_err.to_string(),
                     Ok(Err(launch_err)) => launch_err.to_string(),
-                    _ => unreachable!("by outer if"),
+                    Ok(Ok(_)) => unreachable!("by happy path"),
                 };
                 error!("Could not launch H2M as child process: {err}");
             }
@@ -186,7 +186,7 @@ impl CommandContextBuilder {
 
 pub enum CommandHandle {
     Processed,
-    Callback(InputHook),
+    InsertHook(InputHook),
     Exit,
 }
 
@@ -293,11 +293,11 @@ pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
         }
         Err(err) => match err {
             LaunchError::Running(msg) => {
-                if context.check_h2m_connection().await.is_err() {
+                if context.check_h2m_connection().await.is_ok() {
+                    info!("Connection already active")
+                } else {
                     error!("{msg}");
                     print_h2m_connection_help();
-                } else {
-                    info!("Connection already active")
                 }
             }
             LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),
@@ -447,7 +447,7 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
             _ => Ok((EventLoop::Continue, false)),
         };
 
-        return CommandHandle::Callback(InputHook::new(
+        return CommandHandle::InsertHook(InputHook::new(
             uid,
             Some(Box::new(init)),
             Box::new(input_hook),
@@ -496,7 +496,9 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
         );
 
         let init = |handle: &mut LineReader<'_>| {
-            handle.set_prompt(String::from("Press (y) or (ctrl_c) to close"));
+            handle.set_prompt(format!(
+                "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
+            ));
             Ok(())
         };
 
@@ -516,7 +518,7 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
             }
         };
 
-        return CommandHandle::Callback(InputHook::new(
+        return CommandHandle::InsertHook(InputHook::new(
             InputHook::new_uid(),
             Some(Box::new(init)),
             Box::new(input_hook),

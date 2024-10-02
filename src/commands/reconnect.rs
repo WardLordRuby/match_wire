@@ -117,7 +117,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
             .unwrap_or_else(|err| error!("{err}"));
     } else {
         error!("Could not find server in cache");
-        println!("use command '{YELLOW}cache update{WHITE}' to attempt to locate missing server");
+        println!("use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server");
     }
     CommandHandle::Processed
 }
