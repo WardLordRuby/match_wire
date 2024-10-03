@@ -55,7 +55,7 @@ const CARRIAGE_RETURN: u16 = 13;
 const NEW_LINE: u16 = 10;
 // const RESET_COLOR: [u16; 3] = [27, 91, 109];
 // const ESCAPE: u16 = 27;
-// const COLOR_END: u16 = 109;
+// const COLOR_CMD_BYTE: u16 = 109;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HostName {
@@ -167,6 +167,8 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
             'byte_iter: for byte in buffer.encode_wide() {
                 if byte == CARRIAGE_RETURN || byte == NEW_LINE {
+                    // MARK: TODO
+                    // support for direct connect strings
                     if wide_encode_buf
                         .windows(JOIN_BYTES.len())
                         .any(|window| window == connecting_bytes)
@@ -181,18 +183,35 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                         // don't store lines that that _only_ contain an ansi escape command
                         // unless it is a color command then we append to next line
                         let mut chars = line.chars().peekable();
-                        let mut color_cmd = false;
+                        let mut color_cmd = None;
                         while let Some(ESCAPE_CHAR) = chars.next() {
+                            let mut curr = ESCAPE_CHAR.to_string();
                             chars.find(|&c| {
+                                curr.push(c);
                                 c.is_alphabetic() && {
                                     if c == COLOR_CMD {
-                                        color_cmd = true;
+                                        color_cmd = Some(std::mem::take(&mut curr));
                                     }
                                     true
                                 }
                             });
                             if chars.peek().is_none() {
-                                if !color_cmd {
+                                if let Some(cmd) = color_cmd {
+                                    if line != cmd {
+                                        // line contains no text but multiple ansi escape commands, only add the color cmd to the next line
+                                        let mut char_buf = [0; 2];
+                                        let start_byte = line
+                                            .chars()
+                                            .next()
+                                            .expect("outer if")
+                                            .encode_utf16(&mut char_buf);
+                                        let i = wide_encode_buf.windows(start_byte.len())
+                                            .position(|window| window == start_byte)
+                                            .expect("the `strip_ansi_private_modes` regex left this cmd in the buf");
+                                        wide_encode_buf.truncate(i);
+                                        wide_encode_buf.extend(cmd.encode_utf16());
+                                    }
+                                } else {
                                     wide_encode_buf.clear();
                                 }
                                 continue 'byte_iter;
