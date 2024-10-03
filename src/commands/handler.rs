@@ -9,7 +9,10 @@ use crate::{
     utils::{
         caching::{build_cache, Cache},
         input::{
-            line::{AsyncCtxCallback, EventLoop, InputHook, InputHookErr, LineData, LineReader},
+            line::{
+                AsyncCtxCallback, EventLoop, InputEventHook, InputHook, InputHookErr, LineCallback,
+                LineData,
+            },
             style::{GREEN, RED, WHITE, YELLOW},
         },
     },
@@ -375,13 +378,13 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
 
         let uid = InputHook::new_uid();
 
-        let init = |handle: &mut LineReader<'_>| {
+        let init: Box<LineCallback> = Box::new(|handle| {
             handle.set_prompt(String::from("h2m-mod.exe"));
             handle.set_completion(false);
             Ok(())
-        };
+        });
 
-        let input_hook = move |handle: &mut LineReader<'_>, event: Event| match event {
+        let input_hook: Box<InputEventHook> = Box::new(move |handle, event| match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
@@ -425,33 +428,28 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
                 let cmd = handle.line.take_input();
                 handle.new_line()?;
 
-                let send_cmd: Box<AsyncCtxCallback> =
-                    Box::new(move |context: &mut CommandContext| {
-                        Box::pin(async move {
-                            context.check_h2m_connection().await.map_err(|err| {
-                                InputHookErr::new(uid, format!("Could not send command: {err}"))
-                            })?;
+                let send_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
+                    Box::pin(async move {
+                        context.check_h2m_connection().await.map_err(|err| {
+                            InputHookErr::new(uid, format!("Could not send command: {err}"))
+                        })?;
 
-                            let pty_handle = context.pty_handle().expect("above guard");
-                            let h2m_console = pty_handle.write().await;
+                        let pty_handle = context.pty_handle().expect("above guard");
+                        let h2m_console = pty_handle.write().await;
 
-                            if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
-                                error!("failed to write command to h2m console");
-                            }
-                            Ok(())
-                        })
-                    });
+                        if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
+                            error!("failed to write command to h2m console");
+                        }
+                        Ok(())
+                    })
+                });
 
                 Ok((EventLoop::AsyncCallback(send_cmd), false))
             }
             _ => Ok((EventLoop::Continue, false)),
-        };
+        });
 
-        return CommandHandle::InsertHook(InputHook::new(
-            uid,
-            Some(Box::new(init)),
-            Box::new(input_hook),
-        ));
+        return CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook));
     }
 
     let history = context.h2m_console_history.lock().await;
@@ -495,14 +493,14 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
             env!("CARGO_PKG_NAME")
         );
 
-        let init = |handle: &mut LineReader<'_>| {
+        let init: Box<LineCallback> = Box::new(|handle| {
             handle.set_prompt(format!(
                 "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
             ));
             Ok(())
-        };
+        });
 
-        let input_hook = |handle: &mut LineReader<'_>, event: Event| match event {
+        let input_hook: Box<InputEventHook> = Box::new(|handle, event| match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
@@ -516,13 +514,9 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
                 handle.set_prompt(LineData::default_prompt());
                 Ok((EventLoop::Continue, true))
             }
-        };
+        });
 
-        return CommandHandle::InsertHook(InputHook::new(
-            InputHook::new_uid(),
-            Some(Box::new(init)),
-            Box::new(input_hook),
-        ));
+        return CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook));
     }
     CommandHandle::Exit
 }

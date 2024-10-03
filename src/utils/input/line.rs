@@ -78,7 +78,7 @@ impl Display for InputHookErr {
 static CALLBACK_UID: AtomicUsize = AtomicUsize::new(0);
 
 impl InputHook {
-    pub fn new(
+    pub fn from(
         uid: usize,
         init: Option<Box<LineCallback>>,
         event_hook: Box<InputEventHook>,
@@ -86,6 +86,13 @@ impl InputHook {
         assert_ne!(uid, CALLBACK_UID.load(Ordering::SeqCst));
         InputHook {
             uid,
+            init,
+            event_hook,
+        }
+    }
+    pub fn with_new_uid(init: Option<Box<LineCallback>>, event_hook: Box<InputEventHook>) -> Self {
+        InputHook {
+            uid: Self::new_uid(),
             init,
             event_hook,
         }
