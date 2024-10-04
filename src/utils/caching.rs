@@ -25,6 +25,7 @@ use std::{
 use tracing::{error, info, instrument, trace};
 
 pub struct Cache {
+    /// Key: host name with cod color codes
     pub host_to_connect: HashMap<String, SocketAddr>,
     pub ip_to_region: HashMap<IpAddr, [char; 2]>,
     pub connection_history: Vec<HostName>,

@@ -1,15 +1,25 @@
 use crate::{
-    commands::handler::{CommandContext, Message},
+    commands::{
+        filter::{try_get_info, Sourced},
+        handler::{CommandContext, Message},
+    },
     parse_hostname,
+    utils::caching::Cache,
+    LOG_ONLY,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
     fmt::Display,
+    net::SocketAddr,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
-    sync::atomic::Ordering,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
+use tokio::sync::Mutex;
 use tracing::error;
 use winapi::{
     shared::{minwindef::DWORD, windef::HWND},
@@ -44,10 +54,12 @@ const H2M_WINDOW_NAME: &str = "h2m";
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
 const H2M_WINDOW_CLASS_NAMES: [&str; 2] = ["H1", "H2M Splash Screen"];
-const JOIN_CHARS: &str = "Joining ";
-const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
-// "Connecti"
-const CONNECT_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
+// const JOIN_CHARS: &str = "Joining";
+const JOIN_BYTES: [u16; 7] = [74, 111, 105, 110, 105, 110, 103];
+// "Connect"
+const CONNECTING_BYTES: [u16; 7] = [67, 111, 110, 110, 101, 99, 116];
+// "onnect "
+const CONNECT_BYTES: [u16; 7] = [111, 110, 110, 101, 99, 116, 32];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
@@ -64,26 +76,60 @@ pub struct HostName {
 }
 
 impl HostName {
-    pub fn from(value: &[u16], version: f64) -> Self {
-        let host_name = String::from_utf16_lossy(value);
-        let host_name = strip_ansi_codes(&host_name, version);
+    pub fn from_browser(value: &[u16], version: f64) -> Self {
+        let host_name = strip_ansi_codes(String::from_utf16_lossy(value), version);
         HostName {
             parsed: parse_hostname(&host_name),
             raw: host_name,
         }
     }
+    async fn from_request(
+        value: &[u16],
+        cache_arc: &Arc<Mutex<Cache>>,
+        update_cache: &Arc<AtomicBool>,
+    ) -> Result<Self, String> {
+        let input = String::from_utf16_lossy(value);
+        let ip_str = input
+            .split_once(' ')
+            .map(|(_, suf)| suf)
+            .expect("CONNECT_BYTES ends in space")
+            .trim();
+        let socket_addr = ip_str
+            .parse::<SocketAddr>()
+            .map_err(|err| err.to_string())?;
+        // `Sourced::Failed` since additional features of `try_get_info` are not used here
+        let server_info = try_get_info(socket_addr, Sourced::Failed, reqwest::Client::new())
+            .await
+            .map_err(|meta| meta.err)?;
+        let host_name = server_info.info.expect("request returned `Ok`").host_name;
+        let mut cache = cache_arc.lock().await;
+        if cache
+            .host_to_connect
+            .insert(host_name.clone(), socket_addr)
+            .is_none()
+        {
+            update_cache.store(true, Ordering::Relaxed);
+        }
+        Ok(HostName {
+            parsed: parse_hostname(&host_name),
+            raw: host_name,
+        })
+    }
 }
 
-fn strip_ansi_codes(input: &str, version: f64) -> String {
+fn strip_ansi_codes(input: String, version: f64) -> String {
     let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
-    let input = re.replace_all(input, "");
+    let input = re.replace_all(&input, "");
+
+    let delimiter = if version < 1.0 { " " } else { "} " };
+    let stripped = input
+        .split_once(delimiter)
+        .map_or(input.as_ref(), |(_, suf)| suf);
 
     if version < 1.0 {
-        input.trim_start_matches(JOIN_CHARS).trim_end_matches('.')
+        stripped.trim_end_matches('.')
     } else {
-        input
-            .split_once("} ")
-            .map_or(input.as_ref(), |(_, suf)| suf)
+        stripped
     }
     .to_string()
 }
@@ -94,16 +140,73 @@ fn strip_ansi_private_modes(input: &[u16]) -> String {
         .to_string()
 }
 
-fn add_to_history(history: &mut Vec<HostName>, wide_encode: &[u16], version: f64) {
-    let host_name = HostName::from(wide_encode, version);
-    if let Some(index) = history.iter().position(|prev| prev.raw == host_name.raw) {
-        let history_last = history.len() - 1;
-        if index != history_last {
-            let entry = history.remove(index);
-            history.push(entry);
+#[derive(Default)]
+enum Connection {
+    #[default]
+    Browser,
+    Direct,
+}
+
+async fn add_to_history(
+    cache_arc: &Arc<Mutex<Cache>>,
+    update_cache: &Arc<AtomicBool>,
+    wide_encode: &[u16],
+    kind: Connection,
+    version: f64,
+) {
+    async fn cache_insert(
+        cache_arc: &Arc<Mutex<Cache>>,
+        update_cache: &Arc<AtomicBool>,
+        host_name: HostName,
+    ) {
+        let mut cache = cache_arc.lock().await;
+        let modified = if let Some(index) = cache
+            .connection_history
+            .iter()
+            .position(|prev| prev.raw == host_name.raw)
+        {
+            let history_last = cache.connection_history.len() - 1;
+            if index != history_last {
+                let entry = cache.connection_history.remove(index);
+                cache.connection_history.push(entry);
+                true
+            } else {
+                false
+            }
+        } else {
+            cache.connection_history.push(host_name);
+            true
+        };
+        if modified {
+            update_cache.store(true, Ordering::Relaxed);
         }
-    } else {
-        history.push(host_name);
+    }
+
+    match kind {
+        Connection::Browser => {
+            cache_insert(
+                cache_arc,
+                update_cache,
+                HostName::from_browser(wide_encode, version),
+            )
+            .await;
+        }
+        Connection::Direct => {
+            let cache_arc = cache_arc.clone();
+            let update_cache = update_cache.clone();
+            let wide_encode = wide_encode.to_vec();
+            tokio::task::spawn(async move {
+                let host_name =
+                    match HostName::from_request(&wide_encode, &cache_arc, &update_cache).await {
+                        Ok(name) => name,
+                        Err(err) => {
+                            error!(name: LOG_ONLY, "{err}");
+                            return;
+                        }
+                    };
+                cache_insert(&cache_arc, &update_cache, host_name).await;
+            });
+        }
     }
 }
 
@@ -124,7 +227,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         let connecting_bytes = if version < 1.0 {
             JOIN_BYTES
         } else {
-            CONNECT_BYTES
+            CONNECTING_BYTES
         };
 
         const BUFFER_SIZE: usize = 16384; // 16 KB
@@ -167,16 +270,31 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
             'byte_iter: for byte in buffer.encode_wide() {
                 if byte == CARRIAGE_RETURN || byte == NEW_LINE {
-                    // MARK: TODO
-                    // support for direct connect strings
+                    let mut connect_kind = Connection::default();
+                    let window_search = |window: &[u16]| -> bool {
+                        if window == connecting_bytes {
+                            // default `Connection`
+                            return true;
+                        }
+                        if window == CONNECT_BYTES {
+                            connect_kind = Connection::Direct;
+                            return true;
+                        }
+                        false
+                    };
                     if wide_encode_buf
-                        .windows(JOIN_BYTES.len())
-                        .any(|window| window == connecting_bytes)
+                        .windows(connecting_bytes.len())
+                        .any(window_search)
                         && !wide_encode_buf.starts_with(&ERROR_BYTES)
                     {
-                        let mut cache = cache_arc.lock().await;
-                        add_to_history(&mut cache.connection_history, &wide_encode_buf, version);
-                        cache_needs_update.store(true, Ordering::Relaxed);
+                        add_to_history(
+                            &cache_arc,
+                            &cache_needs_update,
+                            &wide_encode_buf,
+                            connect_kind,
+                            version,
+                        )
+                        .await;
                     }
                     let line = strip_ansi_private_modes(&wide_encode_buf);
                     if !line.is_empty() {
