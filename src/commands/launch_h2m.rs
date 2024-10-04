@@ -9,6 +9,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     ffi::{CStr, OsStr, OsString},
     fmt::Display,
     net::SocketAddr,
@@ -54,11 +55,11 @@ const H2M_WINDOW_NAME: &str = "h2m";
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
 const H2M_WINDOW_CLASS_NAMES: [&str; 2] = ["H1", "H2M Splash Screen"];
-// const JOIN_CHARS: &str = "Joining";
+// const JOIN_STR: &str = "Joining";
 const JOIN_BYTES: [u16; 7] = [74, 111, 105, 110, 105, 110, 103];
-// "Connect"
+// const CONNECTING_STR: &str = "Connect";
 const CONNECTING_BYTES: [u16; 7] = [67, 111, 110, 110, 101, 99, 116];
-// "onnect "
+const CONNECT_STR: &str = "onnect ";
 const CONNECT_BYTES: [u16; 7] = [111, 110, 110, 101, 99, 116, 32];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const ESCAPE_CHAR: char = '\x1b';
@@ -75,24 +76,56 @@ pub struct HostName {
     pub raw: String,
 }
 
-impl HostName {
-    pub fn from_browser(value: &[u16], version: f64) -> Self {
-        let host_name = strip_ansi_codes(String::from_utf16_lossy(value), version);
-        HostName {
-            parsed: parse_hostname(&host_name),
-            raw: host_name,
+pub struct HostNameRequestMeta {
+    pub host_name: HostName,
+    pub socket_addr: Option<SocketAddr>,
+}
+
+impl HostNameRequestMeta {
+    fn new(host_name_raw: String, socket_addr: Option<SocketAddr>) -> Self {
+        HostNameRequestMeta {
+            host_name: HostName {
+                parsed: parse_hostname(&host_name_raw),
+                raw: host_name_raw,
+            },
+            socket_addr,
         }
     }
-    async fn from_request(
-        value: &[u16],
-        cache_arc: &Arc<Mutex<Cache>>,
-        update_cache: &Arc<AtomicBool>,
-    ) -> Result<Self, String> {
+}
+
+impl HostName {
+    pub fn from_browser(value: &[u16], version: f64) -> HostNameRequestMeta {
+        let input_string = String::from_utf16_lossy(value);
+        let stripped = strip_ansi_codes(&input_string);
+
+        let (host_name, socket_addr) = if version < 1.0 {
+            (
+                stripped
+                    .split_once(' ')
+                    .map_or(stripped.as_ref(), |(_, suf)| suf)
+                    .trim_end_matches('.')
+                    .to_string(),
+                None,
+            )
+        } else {
+            let (ip_str, host_name) = match stripped.split_once("} ") {
+                Some((pre, host_name)) => pre
+                    .rsplit_once('{')
+                    .map_or((None, host_name), |(_, ip_str)| (Some(ip_str), host_name)),
+                None => return HostNameRequestMeta::new(stripped.into_owned(), None),
+            };
+            (host_name.to_string(), ip_str.and_then(|ip| ip.parse().ok()))
+        };
+
+        HostNameRequestMeta::new(host_name, socket_addr)
+    }
+
+    async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, String> {
         let input = String::from_utf16_lossy(value);
         let ip_str = input
-            .split_once(' ')
+            .split_once(CONNECT_STR)
             .map(|(_, suf)| suf)
-            .expect("CONNECT_BYTES ends in space")
+            .expect("`from_request` only called when `Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
             .trim();
         let socket_addr = ip_str
             .parse::<SocketAddr>()
@@ -102,42 +135,18 @@ impl HostName {
             .await
             .map_err(|meta| meta.err)?;
         let host_name = server_info.info.expect("request returned `Ok`").host_name;
-        let mut cache = cache_arc.lock().await;
-        if cache
-            .host_to_connect
-            .insert(host_name.clone(), socket_addr)
-            .is_none()
-        {
-            update_cache.store(true, Ordering::Relaxed);
-        }
-        Ok(HostName {
-            parsed: parse_hostname(&host_name),
-            raw: host_name,
-        })
+        Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
     }
 }
 
-fn strip_ansi_codes(input: String, version: f64) -> String {
+fn strip_ansi_codes(input: &str) -> Cow<'_, str> {
     let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
-    let input = re.replace_all(&input, "");
-
-    let delimiter = if version < 1.0 { " " } else { "} " };
-    let stripped = input
-        .split_once(delimiter)
-        .map_or(input.as_ref(), |(_, suf)| suf);
-
-    if version < 1.0 {
-        stripped.trim_end_matches('.')
-    } else {
-        stripped
-    }
-    .to_string()
+    re.replace_all(input, "")
 }
 
-fn strip_ansi_private_modes(input: &[u16]) -> String {
+fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
     let re = regex::Regex::new(r"\x1b\[(\?25[hl])(\])?").unwrap();
-    re.replace_all(&String::from_utf16_lossy(input), "")
-        .to_string()
+    re.replace_all(input, "")
 }
 
 #[derive(Default)]
@@ -157,25 +166,37 @@ async fn add_to_history(
     async fn cache_insert(
         cache_arc: &Arc<Mutex<Cache>>,
         update_cache: &Arc<AtomicBool>,
-        host_name: HostName,
+        host_name_meta: HostNameRequestMeta,
     ) {
         let mut cache = cache_arc.lock().await;
-        let modified = if let Some(index) = cache
+        let mut modified = true;
+        if let Some(ip) = host_name_meta.socket_addr {
+            cache
+                .host_to_connect
+                .entry(host_name_meta.host_name.raw.clone())
+                .and_modify(|cache_ip| {
+                    if *cache_ip == ip {
+                        modified = false;
+                    } else {
+                        *cache_ip = ip
+                    }
+                })
+                .or_insert(ip);
+        }
+        if let Some(index) = cache
             .connection_history
             .iter()
-            .position(|prev| prev.raw == host_name.raw)
+            .position(|prev| prev.raw == host_name_meta.host_name.raw)
         {
             let history_last = cache.connection_history.len() - 1;
             if index != history_last {
                 let entry = cache.connection_history.remove(index);
                 cache.connection_history.push(entry);
-                true
-            } else {
-                false
+                modified = true;
             }
         } else {
-            cache.connection_history.push(host_name);
-            true
+            cache.connection_history.push(host_name_meta.host_name);
+            modified = true
         };
         if modified {
             update_cache.store(true, Ordering::Relaxed);
@@ -184,27 +205,22 @@ async fn add_to_history(
 
     match kind {
         Connection::Browser => {
-            cache_insert(
-                cache_arc,
-                update_cache,
-                HostName::from_browser(wide_encode, version),
-            )
-            .await;
+            let meta = HostName::from_browser(wide_encode, version);
+            cache_insert(cache_arc, update_cache, meta).await;
         }
         Connection::Direct => {
             let cache_arc = cache_arc.clone();
             let update_cache = update_cache.clone();
             let wide_encode = wide_encode.to_vec();
             tokio::task::spawn(async move {
-                let host_name =
-                    match HostName::from_request(&wide_encode, &cache_arc, &update_cache).await {
-                        Ok(name) => name,
-                        Err(err) => {
-                            error!(name: LOG_ONLY, "{err}");
-                            return;
-                        }
-                    };
-                cache_insert(&cache_arc, &update_cache, host_name).await;
+                let meta = match HostName::from_request(&wide_encode).await {
+                    Ok(data) => data,
+                    Err(err) => {
+                        error!(name: LOG_ONLY, "{err}");
+                        return;
+                    }
+                };
+                cache_insert(&cache_arc, &update_cache, meta).await;
             });
         }
     }
@@ -298,7 +314,8 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     .await;
                 }
 
-                let line = strip_ansi_private_modes(&wide_encode_buf);
+                let cur = String::from_utf16_lossy(&wide_encode_buf);
+                let line = strip_ansi_private_modes(&cur);
                 if !line.is_empty() {
                     // don't store lines that that _only_ contain ansi escape commands,
                     // unless a color command is found then append it to the next line
@@ -325,7 +342,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                             continue 'byte_iter;
                         }
                     }
-                    console_history.push(line);
+                    console_history.push(line.into_owned());
                 }
 
                 wide_encode_buf.clear();
