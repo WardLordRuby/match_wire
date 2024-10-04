@@ -182,15 +182,13 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     if !line.is_empty() {
                         // don't store lines that that _only_ contain an ansi escape command
                         // unless it is a color command then we append to next line
-                        let mut chars = line.chars().peekable();
+                        let mut chars = line.char_indices().peekable();
                         let mut color_cmd = None;
-                        while let Some(ESCAPE_CHAR) = chars.next() {
-                            let mut curr = ESCAPE_CHAR.to_string();
-                            chars.find(|&c| {
-                                curr.push(c);
+                        while let Some((i, ESCAPE_CHAR)) = chars.next() {
+                            chars.find(|&(j, c)| {
                                 c.is_alphabetic() && {
                                     if c == COLOR_CMD {
-                                        color_cmd = Some(std::mem::take(&mut curr));
+                                        color_cmd = Some(&line[i..=j]);
                                     }
                                     true
                                 }
@@ -199,17 +197,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                                 if let Some(cmd) = color_cmd {
                                     if line != cmd {
                                         // line contains no text but multiple ansi escape commands, only add the color cmd to the next line
-                                        let mut char_buf = [0; 2];
-                                        let start_byte = line
-                                            .chars()
-                                            .next()
-                                            .expect("outer if")
-                                            .encode_utf16(&mut char_buf);
-                                        let i = wide_encode_buf.windows(start_byte.len())
-                                            .position(|window| window == start_byte)
-                                            .expect("the `strip_ansi_private_modes` regex left this cmd in the buf");
-                                        wide_encode_buf.truncate(i);
-                                        wide_encode_buf.extend(cmd.encode_utf16());
+                                        wide_encode_buf = cmd.encode_utf16().collect();
                                     }
                                 } else {
                                     wide_encode_buf.clear();
