@@ -269,66 +269,66 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             let start = console_history.len();
 
             'byte_iter: for byte in buffer.encode_wide() {
-                if byte == CARRIAGE_RETURN || byte == NEW_LINE {
-                    let mut connect_kind = Connection::default();
-                    let window_search = |window: &[u16]| -> bool {
-                        if window == connecting_bytes {
-                            // default `Connection`
-                            return true;
-                        }
-                        if window == CONNECT_BYTES {
-                            connect_kind = Connection::Direct;
-                            return true;
-                        }
-                        false
-                    };
-                    if wide_encode_buf
-                        .windows(connecting_bytes.len())
-                        .any(window_search)
-                        && !wide_encode_buf.starts_with(&ERROR_BYTES)
-                    {
-                        add_to_history(
-                            &cache_arc,
-                            &cache_needs_update,
-                            &wide_encode_buf,
-                            connect_kind,
-                            version,
-                        )
-                        .await;
-                    }
-                    let line = strip_ansi_private_modes(&wide_encode_buf);
-                    if !line.is_empty() {
-                        // don't store lines that that _only_ contain an ansi escape command
-                        // unless it is a color command then we append to next line
-                        let mut chars = line.char_indices().peekable();
-                        let mut color_cmd = None;
-                        while let Some((i, ESCAPE_CHAR)) = chars.next() {
-                            chars.find(|&(j, c)| {
-                                c.is_alphabetic() && {
-                                    if c == COLOR_CMD {
-                                        color_cmd = Some(&line[i..=j]);
-                                    }
-                                    true
-                                }
-                            });
-                            if chars.peek().is_none() {
-                                if let Some(cmd) = color_cmd {
-                                    if line != cmd {
-                                        // line contains no text but multiple ansi escape commands, only add the color cmd to the next line
-                                        wide_encode_buf = cmd.encode_utf16().collect();
-                                    }
-                                } else {
-                                    wide_encode_buf.clear();
-                                }
-                                continue 'byte_iter;
-                            }
-                        }
-                        console_history.push(line);
-                    }
-                    wide_encode_buf.clear();
+                if byte != CARRIAGE_RETURN && byte != NEW_LINE {
+                    wide_encode_buf.push(byte);
                     continue;
                 }
-                wide_encode_buf.push(byte);
+
+                let mut connect_kind = Connection::default();
+                if wide_encode_buf
+                    .windows(connecting_bytes.len())
+                    .any(|window| {
+                        window == connecting_bytes || {
+                            let direct = window == CONNECT_BYTES;
+                            if direct {
+                                connect_kind = Connection::Direct;
+                            }
+                            direct
+                        }
+                    })
+                    && !wide_encode_buf.starts_with(&ERROR_BYTES)
+                {
+                    add_to_history(
+                        &cache_arc,
+                        &cache_needs_update,
+                        &wide_encode_buf,
+                        connect_kind,
+                        version,
+                    )
+                    .await;
+                }
+
+                let line = strip_ansi_private_modes(&wide_encode_buf);
+                if !line.is_empty() {
+                    // don't store lines that that _only_ contain ansi escape commands,
+                    // unless a color command is found then append it to the next line
+                    let mut chars = line.char_indices().peekable();
+                    let mut color_cmd = None;
+                    while let Some((i, ESCAPE_CHAR)) = chars.next() {
+                        chars.find(|&(j, c)| {
+                            c.is_alphabetic() && {
+                                if c == COLOR_CMD {
+                                    color_cmd = Some(&line[i..=j]);
+                                }
+                                true
+                            }
+                        });
+                        if chars.peek().is_none() {
+                            if let Some(cmd) = color_cmd {
+                                if line != cmd {
+                                    // line must contain multiple ansi escape commands, only add the color cmd to the next line
+                                    wide_encode_buf = cmd.encode_utf16().collect();
+                                }
+                            } else {
+                                wide_encode_buf.clear();
+                            }
+                            continue 'byte_iter;
+                        }
+                    }
+                    console_history.push(line);
+                }
+
+                wide_encode_buf.clear();
             }
 
             if forward_logs_arc.load(Ordering::Acquire) && start < console_history.len() {

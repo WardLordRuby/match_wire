@@ -180,9 +180,8 @@ fn main() {
             }
         }
         if command_context.cache_needs_update().load(Ordering::SeqCst) {
-            match write_cache(&command_context).await {
-                Ok(_) => info!(name: LOG_ONLY, "Cache updated locally"),
-                Err(err) => error!(name: LOG_ONLY, "{err}")
+            if let Err(err) =  write_cache(&command_context).await {
+                error!(name: LOG_ONLY, "{err}");
             }
         }
         info!(name: LOG_ONLY, "app shutdown");
