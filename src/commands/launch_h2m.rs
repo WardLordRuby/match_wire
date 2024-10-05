@@ -56,12 +56,13 @@ const H2M_WINDOW_NAME: &str = "h2m";
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
 const H2M_WINDOW_CLASS_NAMES: [&str; 2] = ["H1", "H2M Splash Screen"];
-const JOIN_STR: &str = "Joining";
-const JOIN_BYTES: [u16; 7] = [74, 111, 105, 110, 105, 110, 103];
-// const CONNECTING_STR: &str = "Connect";
-const CONNECTING_BYTES: [u16; 7] = [67, 111, 110, 110, 101, 99, 116];
-const CONNECT_STR: &str = "onnect ";
-const CONNECT_BYTES: [u16; 7] = [111, 110, 110, 101, 99, 116, 32];
+const JOIN_STR: &str = "Joining ";
+const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
+// const CONNECTING_STR: &str = "Connecti";
+const CONNECTING_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
+const CONNECT_STR: &str = "connect "; // | "CONNECT "
+const CONNECT_BYTES_LOWER: [u16; 8] = [99, 111, 110, 110, 101, 99, 116, 32];
+const CONNECT_BYTES_UPPER: [u16; 8] = [67, 79, 78, 78, 69, 67, 84, 32];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
@@ -70,6 +71,16 @@ const NEW_LINE: u16 = 10;
 // const RESET_COLOR: [u16; 3] = [27, 91, 109];
 // const ESCAPE: u16 = 27;
 // const COLOR_CMD_BYTE: u16 = 109;
+
+#[inline]
+fn case_insensitve_cmp_direct(window: &[u16]) -> bool {
+    for (i, &byte) in window.iter().enumerate() {
+        if byte != CONNECT_BYTES_LOWER[i] && byte != CONNECT_BYTES_UPPER[i] {
+            return false;
+        }
+    }
+    true
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HostName {
@@ -146,7 +157,7 @@ impl HostName {
     }
 
     async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, HostRequestErr> {
-        let input = String::from_utf16_lossy(value);
+        let input = String::from_utf16_lossy(value).to_lowercase();
         let ip_str = input
             .split_once(CONNECT_STR)
             .map(|(_, suf)| suf)
@@ -316,7 +327,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     .windows(connecting_bytes.len())
                     .any(|window| {
                         window == connecting_bytes || {
-                            let direct = window == CONNECT_BYTES;
+                            let direct = case_insensitve_cmp_direct(window);
                             if direct {
                                 connect_kind = Connection::Direct;
                             }
