@@ -148,10 +148,10 @@ pub async fn build_cache(
                         regions.and_then(|cache| cache.get(&server.socket_addr.ip()).copied());
                     cache.push(server, region)
                 }
-                Err(info) => {
-                    error!(name: LOG_ONLY, "{}", info.err);
-                    let source = info.meta.to_valid_source();
-                    if let Sourced::Iw4(data) = info.meta {
+                Err(mut err) => {
+                    error!(name: LOG_ONLY, "{}", err.with_addr().with_source());
+                    let source = err.meta.to_valid_source();
+                    if let Sourced::Iw4(data) = err.meta {
                         if let Ok(ip) = data.server.ip.parse() {
                             if let Some(source) = source {
                                 cache.insert_ports(ip, &[data.server.port], source);

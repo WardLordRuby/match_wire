@@ -155,8 +155,27 @@ impl Server {
 }
 
 pub struct GetInfoErr {
-    pub err: String,
+    err: String,
+    pub addr: SocketAddr,
     pub meta: Sourced,
+}
+
+impl GetInfoErr {
+    pub fn with_addr(&mut self) -> &mut Self {
+        self.err = format!("{}, with ip: {}", self.err, self.addr);
+        self
+    }
+
+    pub fn with_source(&mut self) -> &mut Self {
+        self.err = format!("{}, with source: {}", self.err, self.meta);
+        self
+    }
+}
+
+impl Display for GetInfoErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.err)
+    }
 }
 
 pub async fn try_get_info(
@@ -169,8 +188,9 @@ pub async fn try_get_info(
         Ok(res) => res,
         Err(err) => {
             return Err(GetInfoErr {
-                err: format!("{err}, with ip: {socket_addr}, from source: {meta}"),
+                err: err.without_url().to_string(),
                 meta,
+                addr: socket_addr,
             })
         }
     };
@@ -181,8 +201,9 @@ pub async fn try_get_info(
             info: Some(info),
         }),
         Err(err) => Err(GetInfoErr {
-            err: err.to_string(),
+            err: err.without_url().to_string(),
             meta,
+            addr: socket_addr,
         }),
     }
 }
@@ -443,10 +464,10 @@ async fn filter_server_list(
             match task.await {
                 Ok(result) => match result {
                     Ok(server) => host_list.push(server),
-                    Err(info) => {
-                        error!(name: LOG_ONLY, "{}", info.err);
+                    Err(mut err) => {
+                        error!(name: LOG_ONLY, "{}", err.with_addr().with_source());
                         if !args.with_bots && !args.without_bots {
-                            if let Sourced::Iw4(meta) = info.meta {
+                            if let Sourced::Iw4(meta) = err.meta {
                                 if let Some(server) = Server::from(meta) {
                                     host_list.push(server);
                                 }
@@ -602,28 +623,28 @@ async fn filter_server_list(
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn try_location_lookup(ip: &IpAddr, client: reqwest::Client) -> io::Result<Continent> {
+pub async fn try_location_lookup(
+    ip: &IpAddr,
+    client: reqwest::Client,
+) -> Result<Continent, String> {
     let location_api_url = format!("{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}", ip);
 
     let api_response = client
         .get(location_api_url.as_str())
         .send()
         .await
-        .map_err(|err| io::Error::other(format!("{err:?}, outbound url: {location_api_url}",)))?;
+        .map_err(|err| format!("{}, ip: {ip}", err.without_url()))?;
 
     match api_response.json::<ServerLocation>().await {
         Ok(json) => {
             if let Some(code) = json.continent {
                 return Ok(code);
             }
-            Err(io::Error::other(
-                json.message
-                    .unwrap_or_else(|| String::from("unknown error")),
-            ))
+            Err(json
+                .message
+                .unwrap_or_else(|| String::from("unknown error")))
         }
-        Err(err) => Err(io::Error::other(format!(
-            "{err:?}, outbound url: {location_api_url}",
-        ))),
+        Err(err) => Err(format!("{}, ip: {ip}", err.without_url())),
     }
 }
 

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
     fmt::Display,
-    net::SocketAddr,
+    net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
     sync::{
@@ -20,7 +20,7 @@ use std::{
     },
 };
 use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{error, trace};
 use winapi::{
     shared::{minwindef::DWORD, windef::HWND},
     um::{
@@ -30,6 +30,8 @@ use winapi::{
     },
 };
 use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
+
+use super::filter::GetInfoErr;
 
 #[repr(C)]
 #[allow(non_snake_case, non_camel_case_types)]
@@ -92,6 +94,25 @@ impl HostNameRequestMeta {
     }
 }
 
+enum HostRequestErr {
+    #[allow(dead_code)]
+    AddrParseErr(AddrParseError),
+    RequestErr(String),
+}
+
+impl From<AddrParseError> for HostRequestErr {
+    fn from(value: AddrParseError) -> Self {
+        HostRequestErr::AddrParseErr(value)
+    }
+}
+
+impl From<GetInfoErr> for HostRequestErr {
+    fn from(mut value: GetInfoErr) -> Self {
+        // meta data discarded since the caller doesn't use it / avoids triggering large enum variant size diff
+        HostRequestErr::RequestErr(value.with_addr().to_string())
+    }
+}
+
 impl HostName {
     pub fn from_browser(value: &[u16], version: f64) -> HostNameRequestMeta {
         let input_string = String::from_utf16_lossy(value);
@@ -119,20 +140,17 @@ impl HostName {
         HostNameRequestMeta::new(host_name, socket_addr)
     }
 
-    async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, String> {
+    async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, HostRequestErr> {
         let input = String::from_utf16_lossy(value);
         let ip_str = input
             .split_once(CONNECT_STR)
             .map(|(_, suf)| suf)
             .expect("`from_request` only called when `Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
             .trim();
-        let socket_addr = ip_str
-            .parse::<SocketAddr>()
-            .map_err(|err| err.to_string())?;
+        let socket_addr = ip_str.parse::<SocketAddr>()?;
         // `Sourced::Failed` since additional features of `try_get_info` are not used here
-        let server_info = try_get_info(socket_addr, Sourced::Failed, reqwest::Client::new())
-            .await
-            .map_err(|meta| meta.err)?;
+        let server_info =
+            try_get_info(socket_addr, Sourced::Failed, reqwest::Client::new()).await?;
         let host_name = server_info.info.expect("request returned `Ok`").host_name;
         Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
     }
@@ -202,8 +220,12 @@ async fn add_to_history(
             tokio::task::spawn(async move {
                 let meta = match HostName::from_request(&wide_encode).await {
                     Ok(data) => data,
-                    Err(err) => {
-                        error!(name: LOG_ONLY, "{err}");
+                    Err(request_err) => {
+                        match request_err {
+                            // NOTE: disregard `AddrParseErr` because of partial read of pseudo console input bug
+                            HostRequestErr::AddrParseErr(err) => trace!("{err}"),
+                            HostRequestErr::RequestErr(err) => error!(name: LOG_ONLY, "{err}"),
+                        }
                         return;
                     }
                 };
