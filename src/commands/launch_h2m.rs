@@ -3,13 +3,12 @@ use crate::{
         filter::{try_get_info, Sourced},
         handler::{CommandContext, Message},
     },
-    parse_hostname,
+    parse_hostname, strip_ansi_codes, strip_ansi_private_modes,
     utils::caching::Cache,
     LOG_ONLY,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     ffi::{CStr, OsStr, OsString},
     fmt::Display,
     net::SocketAddr,
@@ -137,16 +136,6 @@ impl HostName {
         let host_name = server_info.info.expect("request returned `Ok`").host_name;
         Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
     }
-}
-
-fn strip_ansi_codes(input: &str) -> Cow<'_, str> {
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
-    re.replace_all(input, "")
-}
-
-fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
-    let re = regex::Regex::new(r"\x1b\[(\?25[hl])(\])?").unwrap();
-    re.replace_all(input, "")
 }
 
 enum Connection {

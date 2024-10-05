@@ -21,6 +21,7 @@ use clap::CommandFactory;
 use cli::UserCommand;
 use crossterm::{cursor, execute, terminal};
 use std::{
+    borrow::Cow,
     collections::HashSet,
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -227,6 +228,16 @@ pub fn parse_hostname(name: &str) -> String {
         }
     }
     host_name
+}
+
+pub fn strip_ansi_codes(input: &str) -> Cow<'_, str> {
+    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\[(\?25[hl])(\])?").unwrap();
+    re.replace_all(input, "")
+}
+
+pub fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
+    let re = regex::Regex::new(r"\x1b\[(\?25[hl])(\])?").unwrap();
+    re.replace_all(input, "")
 }
 
 pub fn print_help() {
