@@ -149,9 +149,7 @@ fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
     re.replace_all(input, "")
 }
 
-#[derive(Default)]
 enum Connection {
-    #[default]
     Browser,
     Direct,
 }
@@ -290,7 +288,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     continue;
                 }
 
-                let mut connect_kind = Connection::default();
+                let mut connect_kind = Connection::Browser;
                 if wide_encode_buf
                     .windows(connecting_bytes.len())
                     .any(|window| {

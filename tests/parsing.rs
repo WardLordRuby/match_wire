@@ -27,8 +27,8 @@ mod tests {
         for (i, host) in INPUT.iter().enumerate() {
             let wide_bytes = host.encode_utf16().collect::<Vec<_>>();
             let data = HostName::from_browser(&wide_bytes[..], 0.4);
-            assert_eq!(data.parsed, OUTPUT[i].0);
-            assert_eq!(data.raw, OUTPUT[i].1);
+            assert_eq!(data.host_name.parsed, OUTPUT[i].0);
+            assert_eq!(data.host_name.raw, OUTPUT[i].1);
         }
     }
 }
