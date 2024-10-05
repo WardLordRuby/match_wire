@@ -10,7 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
-    fmt::Display,
+    fmt::{Debug, Display},
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
@@ -19,7 +19,7 @@ use std::{
         Arc,
     },
 };
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc::Sender, Mutex};
 use tracing::{error, trace};
 use winapi::{
     shared::{minwindef::DWORD, windef::HWND},
@@ -56,7 +56,7 @@ const H2M_WINDOW_NAME: &str = "h2m";
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
 const H2M_WINDOW_CLASS_NAMES: [&str; 2] = ["H1", "H2M Splash Screen"];
-// const JOIN_STR: &str = "Joining";
+const JOIN_STR: &str = "Joining";
 const JOIN_BYTES: [u16; 7] = [74, 111, 105, 110, 105, 110, 103];
 // const CONNECTING_STR: &str = "Connect";
 const CONNECTING_BYTES: [u16; 7] = [67, 111, 110, 110, 101, 99, 116];
@@ -114,30 +114,35 @@ impl From<GetInfoErr> for HostRequestErr {
 }
 
 impl HostName {
-    pub fn from_browser(value: &[u16], version: f64) -> HostNameRequestMeta {
+    pub fn from_browser(value: &[u16], version: f64) -> Result<HostNameRequestMeta, String> {
         let input_string = String::from_utf16_lossy(value);
         let stripped = strip_ansi_codes(&input_string);
 
         let (host_name, socket_addr) = if version < 1.0 {
             (
                 stripped
-                    .split_once(' ')
-                    .map_or(stripped.as_ref(), |(_, suf)| suf)
+                    .split_once(JOIN_STR)
+                    .map(|(_, suf)| suf)
+                    .expect("`Connection::Browser` is found and client is 'origional h2m', meaning `JOIN_BYTES` were found in the `value` array")
+                    .trim_start()
                     .trim_end_matches('.')
                     .to_string(),
                 None,
             )
         } else {
-            let (ip_str, host_name) = match stripped.split_once("} ") {
-                Some((pre, host_name)) => pre
-                    .rsplit_once('{')
-                    .map_or((None, host_name), |(_, ip_str)| (Some(ip_str), host_name)),
-                None => return HostNameRequestMeta::new(stripped.into_owned(), None),
-            };
-            (host_name.to_string(), ip_str.and_then(|ip| ip.parse().ok()))
+            let (pre, host_name) = stripped.split_once("} ").ok_or_else(|| {
+                    format!("Unexpected HMW console output found. ansi_stripped_input: '{stripped}', does not contain: '}} '")
+            })?;
+            let (_, ip_str) = pre.rsplit_once('{').ok_or_else(|| {
+                    format!("Unexpected HMW console output found. left_stripped_split: '{pre}', does not contain '{{'")
+            })?;
+            let ip = ip_str
+                .parse::<SocketAddr>()
+                .map_err(|err| err.to_string())?;
+            (host_name.to_string(), Some(ip))
         };
 
-        HostNameRequestMeta::new(host_name, socket_addr)
+        Ok(HostNameRequestMeta::new(host_name, socket_addr))
     }
 
     async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, HostRequestErr> {
@@ -145,7 +150,7 @@ impl HostName {
         let ip_str = input
             .split_once(CONNECT_STR)
             .map(|(_, suf)| suf)
-            .expect("`from_request` only called when `Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
+            .expect("`Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
             .trim();
         let socket_addr = ip_str.parse::<SocketAddr>()?;
         // `Sourced::Failed` since additional features of `try_get_info` are not used here
@@ -164,6 +169,7 @@ enum Connection {
 async fn add_to_history(
     cache_arc: &Arc<Mutex<Cache>>,
     update_cache: &Arc<AtomicBool>,
+    background_msg: &Arc<Sender<Message>>,
     wide_encode: &[u16],
     kind: Connection,
     version: f64,
@@ -210,7 +216,13 @@ async fn add_to_history(
 
     match kind {
         Connection::Browser => {
-            let meta = HostName::from_browser(wide_encode, version);
+            let meta = match HostName::from_browser(wide_encode, version) {
+                Ok(data) => data,
+                Err(err) => {
+                    let _ = background_msg.send(Message::Err(err)).await;
+                    return;
+                }
+            };
             cache_insert(cache_arc, update_cache, meta).await;
         }
         Connection::Direct => {
@@ -316,6 +328,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     add_to_history(
                         &cache_arc,
                         &cache_needs_update,
+                        &msg_sender_arc,
                         &wide_encode_buf,
                         connect_kind,
                         version,
