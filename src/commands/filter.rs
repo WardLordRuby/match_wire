@@ -484,6 +484,7 @@ async fn filter_server_list(
         || args.team_size_max.is_some()
         || args.with_bots
         || args.without_bots
+        || !args.include_unresponsive
     {
         let mut tasks = Vec::with_capacity(servers.len());
         let mut host_list = Vec::with_capacity(servers.len());
@@ -501,7 +502,7 @@ async fn filter_server_list(
                     Ok(server) => host_list.push(server),
                     Err(mut err) => {
                         error!(name: LOG_ONLY, "{}", err.with_addr().with_source());
-                        if !args.with_bots && !args.without_bots {
+                        if !args.with_bots && !args.without_bots && args.include_unresponsive {
                             if let Sourced::Iw4(meta) = err.meta {
                                 if let Some(server) = Server::from(meta) {
                                     host_list.push(server);

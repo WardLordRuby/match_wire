@@ -92,6 +92,10 @@ pub struct Filters {
     #[arg(long, group = "bots")]
     pub without_bots: bool,
 
+    /// Include servers that do not respond to a 'getInfo' request
+    #[arg(long)]
+    pub include_unresponsive: bool,
+
     /// Specify region [Default: include all]
     #[arg(short, long, value_enum, num_args(1..=REGION_LEN))]
     pub region: Option<Vec<Region>>,

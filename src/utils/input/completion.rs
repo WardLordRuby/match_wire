@@ -229,7 +229,7 @@ pub fn init_completion() -> CommandScheme {
                             (4, "s"),
                             (5, "i"),
                             (6, "e"),
-                            (9, "h"),
+                            (10, "h"),
                         ],
                     }),
                     recs: Some(vec![
@@ -242,6 +242,7 @@ pub fn init_completion() -> CommandScheme {
                         "excludes",
                         "with-bots",
                         "without-bots",
+                        "include-unresponsive",
                         "help",
                     ]),
                     kind: RecKind::Argument,
@@ -318,6 +319,8 @@ pub fn init_completion() -> CommandScheme {
                     // with-bots
                     InnerScheme::empty_with("filter", RecKind::Null, false),
                     // without-bots
+                    InnerScheme::empty_with("filter", RecKind::Null, false),
+                    // include-unresponsive
                     InnerScheme::empty_with("filter", RecKind::Null, false),
                     // help
                     InnerScheme::help(),
