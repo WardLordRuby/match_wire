@@ -410,7 +410,7 @@ impl<'a> LineReader<'a> {
             .push(std::mem::take(&mut self.line.input));
         self.reset_history_idx();
         self.new_line()?;
-        self.term.queue(cursor::Hide)?;
+        self.term.queue(cursor::Hide)?.flush()?;
         self.command_entered = true;
         Ok(())
     }
