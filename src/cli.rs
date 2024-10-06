@@ -64,7 +64,7 @@ pub struct HistoryArgs {
     pub history: bool,
 
     /// Connect to numbered entry in history
-    #[arg(short, long, value_parser = value_parser!(u8).range(1..=HISTORY_MAX))]
+    #[arg(short, long, value_parser = value_parser!(u8).range(1..=HISTORY_MAX as i64))]
     pub connect: Option<u8>,
 }
 

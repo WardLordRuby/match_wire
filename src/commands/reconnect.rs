@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use winptyrs::PTY;
 
-pub const HISTORY_MAX: i64 = 6;
+pub const HISTORY_MAX: usize = 6;
 
 struct DisplayHistory<'a>(&'a [HostName], &'a [String]);
 
@@ -24,7 +24,7 @@ impl<'a> Display for DisplayHistory<'a> {
             .0
             .iter()
             .rev()
-            .take(HISTORY_MAX as usize)
+            .take(HISTORY_MAX)
             .enumerate()
             .map(|(i, host)| {
                 let host_ip = self.1[i].as_str();
@@ -53,7 +53,7 @@ async fn display_history<'a>(
     let ips = history
         .iter()
         .rev()
-        .take(HISTORY_MAX as usize)
+        .take(HISTORY_MAX)
         .map(|entry| {
             host_to_connect.get(&entry.raw).map_or_else(
                 || String::from("Server not found in cache"),

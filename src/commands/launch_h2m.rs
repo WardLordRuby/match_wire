@@ -74,6 +74,7 @@ const NEW_LINE: u16 = 10;
 
 #[inline]
 fn case_insensitve_cmp_direct(window: &[u16]) -> bool {
+    debug_assert_eq!(window.len(), CONNECT_BYTES_LOWER.len());
     for (i, &byte) in window.iter().enumerate() {
         if byte != CONNECT_BYTES_LOWER[i] && byte != CONNECT_BYTES_UPPER[i] {
             return false;
@@ -278,7 +279,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             CONNECTING_BYTES
         };
 
-        const BUFFER_SIZE: usize = 16384; // 16 KB
+        const BUFFER_SIZE: u32 = 16384; // 16 KB
         const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
@@ -292,7 +293,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             let start_time = tokio::time::Instant::now();
 
             while start_time.elapsed() < PROCESS_INTERVAL {
-                match handle.read(BUFFER_SIZE as u32, false) {
+                match handle.read(BUFFER_SIZE, false) {
                     Ok(os_string) => {
                         if os_string.is_empty() {
                             break;

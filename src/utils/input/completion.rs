@@ -1049,14 +1049,7 @@ impl LineReader<'_> {
                         }
                     };
                 }
-                RecKind::UserDefined(_) => {
-                    if line_trim_start[arg.byte_start + arg.slice_len..]
-                        .trim_start()
-                        .ends_with(char::is_whitespace)
-                    {
-                        self.completion.input.curr_argument = None;
-                    }
-                }
+                RecKind::UserDefined(_) => self.completion.input.curr_argument = None,
                 _ => (),
             }
         }

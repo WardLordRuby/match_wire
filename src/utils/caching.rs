@@ -289,9 +289,8 @@ pub async fn write_cache<'a>(context: &CommandContext) -> io::Result<()> {
                 regions: cache.ip_to_region.clone(),
                 host_names: cache.host_to_connect.clone(),
             },
-            connection_history: if cache.connection_history.len() > HISTORY_MAX as usize {
-                cache.connection_history[cache.connection_history.len() - HISTORY_MAX as usize..]
-                    .to_vec()
+            connection_history: if cache.connection_history.len() > HISTORY_MAX {
+                cache.connection_history[cache.connection_history.len() - HISTORY_MAX..].to_vec()
             } else {
                 cache.connection_history.clone()
             },
