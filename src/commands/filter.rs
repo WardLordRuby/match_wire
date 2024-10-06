@@ -156,25 +156,60 @@ impl Server {
 
 pub struct GetInfoErr {
     err: String,
+    display_addr: bool,
+    display_source: bool,
     pub addr: SocketAddr,
     pub meta: Sourced,
 }
 
 impl GetInfoErr {
+    pub fn new(err: String, addr: SocketAddr, meta: Sourced) -> Self {
+        GetInfoErr {
+            err,
+            display_addr: false,
+            display_source: false,
+            addr,
+            meta,
+        }
+    }
+
+    #[inline]
     pub fn with_addr(&mut self) -> &mut Self {
-        self.err = format!("{}, with ip: {}", self.err, self.addr);
+        self.display_addr = true;
         self
     }
 
+    #[inline]
     pub fn with_source(&mut self) -> &mut Self {
-        self.err = format!("{}, with source: {}", self.err, self.meta);
+        self.display_source = true;
+        self
+    }
+
+    #[inline]
+    /// `GetInfoErr` default display is without addr
+    pub fn without_addr(&mut self) -> &mut Self {
+        self.display_addr = false;
+        self
+    }
+
+    #[inline]
+    /// `GetInfoErr` default display is without source
+    pub fn without_source(&mut self) -> &mut Self {
+        self.display_source = false;
         self
     }
 }
 
 impl Display for GetInfoErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.err)
+        write!(f, "{}", self.err)?;
+        if self.display_addr {
+            write!(f, ", with ip: {}", self.addr)?;
+        }
+        if self.display_source {
+            write!(f, ", with source: {}", self.meta)?;
+        }
+        Ok(())
     }
 }
 
@@ -187,11 +222,11 @@ pub async fn try_get_info(
     let server_responce = match client.get(&addr).send().await {
         Ok(res) => res,
         Err(err) => {
-            return Err(GetInfoErr {
-                err: err.without_url().to_string(),
+            return Err(GetInfoErr::new(
+                err.without_url().to_string(),
+                socket_addr,
                 meta,
-                addr: socket_addr,
-            })
+            ))
         }
     };
     match server_responce.json::<GetInfo>().await {
@@ -200,11 +235,11 @@ pub async fn try_get_info(
             socket_addr,
             info: Some(info),
         }),
-        Err(err) => Err(GetInfoErr {
-            err: err.without_url().to_string(),
+        Err(err) => Err(GetInfoErr::new(
+            err.without_url().to_string(),
+            socket_addr,
             meta,
-            addr: socket_addr,
-        }),
+        )),
     }
 }
 

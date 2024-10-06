@@ -28,7 +28,7 @@ static COMPLETION: LazyLock<CommandScheme> = LazyLock::new(init_completion);
 fn main() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        error!(name: "PANIC", "{}", format_panic_info(info));
+        error!(name: "PANIC", "{}", DisplayPanic(info));
         prev(info);
     }));
 

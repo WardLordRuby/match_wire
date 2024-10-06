@@ -23,6 +23,7 @@ use crossterm::{cursor, execute, terminal};
 use std::{
     borrow::Cow,
     collections::HashSet,
+    fmt::Display,
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     time::Duration,
@@ -190,23 +191,28 @@ pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     }
 }
 
-pub fn format_panic_info(info: &std::panic::PanicInfo) -> String {
-    let payload_str = if let Some(location) = info.location() {
-        format!(
-            "PANIC {}:{}:{}:",
-            location.file(),
-            location.line(),
-            location.column(),
-        )
-    } else {
-        String::from("PANIC:")
-    };
-    if let Some(msg) = info.payload().downcast_ref::<&str>() {
-        format!("{payload_str} {msg}")
-    } else if let Some(msg) = info.payload().downcast_ref::<String>() {
-        format!("{payload_str} {msg}")
-    } else {
-        format!("{payload_str} no attached message")
+pub struct DisplayPanic<'a>(pub &'a std::panic::PanicInfo<'a>);
+
+impl Display for DisplayPanic<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(location) = self.0.location() {
+            write!(
+                f,
+                "PANIC {}:{}:{}: ",
+                location.file(),
+                location.line(),
+                location.column(),
+            )?;
+        } else {
+            write!(f, "PANIC: ")?;
+        }
+        if let Some(msg) = self.0.payload().downcast_ref::<&str>() {
+            write!(f, "{msg}")
+        } else if let Some(msg) = self.0.payload().downcast_ref::<String>() {
+            write!(f, "{msg}")
+        } else {
+            write!(f, "no attached message")
+        }
     }
 }
 
