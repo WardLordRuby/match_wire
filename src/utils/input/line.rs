@@ -1,6 +1,6 @@
 use crate::{
     commands::handler::{end_forward, CommandContext, Message},
-    strip_ansi_codes,
+    strip_ansi_sequences,
     utils::input::{
         completion::{CommandScheme, Completion},
         style::PROMPT_END,
@@ -129,7 +129,7 @@ impl LineData {
 
     #[inline]
     fn prompt_len(prompt: &str) -> u16 {
-        let stripped = strip_ansi_codes(prompt);
+        let stripped = strip_ansi_sequences(prompt);
         stripped.chars().count() as u16 + PROMPT_END.chars().count() as u16
     }
 

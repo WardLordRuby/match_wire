@@ -1,16 +1,16 @@
 use crate::{
     commands::{
-        filter::{try_get_info, Sourced},
+        filter::{try_get_info, GetInfoErr, Sourced},
         handler::{CommandContext, Message},
     },
-    parse_hostname, strip_ansi_codes, strip_ansi_private_modes,
+    parse_hostname, strip_ansi_private_modes, strip_ansi_sequences,
     utils::caching::Cache,
     LOG_ONLY,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
-    fmt::{Debug, Display},
+    fmt::Display,
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
@@ -30,8 +30,6 @@ use winapi::{
     },
 };
 use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
-
-use super::filter::GetInfoErr;
 
 #[repr(C)]
 #[allow(non_snake_case, non_camel_case_types)]
@@ -128,29 +126,30 @@ impl From<GetInfoErr> for HostRequestErr {
 impl HostName {
     pub fn from_browser(value: &[u16], version: f64) -> Result<HostNameRequestMeta, String> {
         let input_string = String::from_utf16_lossy(value);
-        let stripped = strip_ansi_codes(&input_string);
+        let stripped = strip_ansi_sequences(&input_string);
 
         let (host_name, socket_addr) = if version < 1.0 {
-            (
-                stripped
-                    .split_once(JOIN_STR)
-                    .map(|(_, suf)| suf)
-                    .expect("`Connection::Browser` is found and client is 'origional h2m', meaning `JOIN_BYTES` were found in the `value` array")
-                    .trim_start()
-                    .trim_end_matches('.')
-                    .to_string(),
-                None,
-            )
+            let host_name = stripped
+                .split_once(JOIN_STR)
+                .map(|(_, suf)| suf)
+                .expect("`Connection::Browser` is found and client is 'origional h2m', meaning `JOIN_BYTES` were found in the `value` array")
+                .strip_suffix("...")
+                .ok_or_else(|| {
+                    format!("Unexpected H2M console output found. ansi_stripped_input: '{stripped}' does not end in: '...'")
+                })?;
+
+            (host_name.to_string(), None)
         } else {
             let (pre, host_name) = stripped.split_once("} ").ok_or_else(|| {
-                    format!("Unexpected HMW console output found. ansi_stripped_input: '{stripped}', does not contain: '}} '")
+                format!("Unexpected HMW console output found. ansi_stripped_input: '{stripped}', does not contain: '}} '")
             })?;
             let (_, ip_str) = pre.rsplit_once('{').ok_or_else(|| {
-                    format!("Unexpected HMW console output found. left_stripped_split: '{pre}', does not contain '{{'")
+                format!("Unexpected HMW console output found. left_stripped_split: '{pre}', does not contain '{{'")
             })?;
             let ip = ip_str
                 .parse::<SocketAddr>()
                 .map_err(|err| err.to_string())?;
+
             (host_name.to_string(), Some(ip))
         };
 
