@@ -247,7 +247,7 @@ impl HostMeta {
     fn try_from(host_ip: &str, webfront_url: &str, server: ServerInfo) -> Option<Self> {
         resolve_address(&server.ip, host_ip, webfront_url).map_or_else(
             |err| {
-                error!("{err}");
+                error!(name: LOG_ONLY, "{err}");
                 None
             },
             |ip| {

@@ -53,6 +53,23 @@ macro_rules! new_io_error {
     };
 }
 
+#[macro_export]
+macro_rules! break_if {
+    ($expr:expr, is_some_err) => {
+        if let Some(Err(err)) = $expr {
+            error!("{err}");
+            break;
+        }
+    };
+
+    ($expr:expr, is_err) => {
+        if let Err(err) = $expr {
+            error!("{err}");
+            break;
+        }
+    };
+}
+
 #[inline]
 pub fn print_h2m_connection_help() {
     println!("Close H2M and use command `{YELLOW}launch{WHITE}` to establish valid connection");

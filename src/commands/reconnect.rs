@@ -36,6 +36,7 @@ impl<'a> Display for DisplayHistory<'a> {
             })
             .collect::<Vec<_>>();
         let width = longest_connect_len + longest_host_len + 8;
+        writeln!(f)?;
         writeln!(f, "{}", "-".repeat(width))?;
         for (num, host_name, host_len, ip_len, ip) in set {
             let spacing = width - 7 - host_len - ip_len;

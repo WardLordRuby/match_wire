@@ -1,9 +1,22 @@
-use commands::{
-    handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
-    launch_h2m::{launch_h2m_pseudo, LaunchError},
-};
 use crossterm::{cursor, event::EventStream, execute, terminal};
-use match_wire::*;
+use match_wire::{
+    await_user_for_end, break_if, check_app_dir_exists,
+    commands::{
+        handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
+        launch_h2m::{launch_h2m_pseudo, LaunchError},
+    },
+    get_latest_version, print_help, splash_screen,
+    utils::{
+        caching::{build_cache, read_cache, write_cache, Cache},
+        input::{
+            completion::{init_completion, CommandScheme},
+            line::{EventLoop, LineReader},
+            style::{RED, WHITE},
+        },
+        subscriber::init_subscriber,
+    },
+    DisplayPanic, CACHED_DATA, LOCAL_DATA, LOG_ONLY,
+};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -12,15 +25,6 @@ use std::{
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
-use utils::{
-    caching::{build_cache, read_cache, write_cache, Cache},
-    input::{
-        completion::{init_completion, CommandScheme},
-        line::{EventLoop, LineReader},
-        style::{RED, WHITE},
-    },
-    subscriber::init_subscriber,
-};
 use winptyrs::PTY;
 
 static COMPLETION: LazyLock<CommandScheme> = LazyLock::new(init_completion);
@@ -108,14 +112,11 @@ fn main() {
 
         loop {
             if line_handle.command_entered() {
-                line_handle.clear_unwanted_inputs(&mut reader).await.unwrap();
+                break_if!(line_handle.clear_unwanted_inputs(&mut reader).await, is_err);
             }
             if !line_handle.uneventful() {
-                if let Some(Err(err)) = line_handle.try_init_input_hook() {
-                    error!("{err}");
-                    break
-                };
-                line_handle.render().unwrap();
+                break_if!(line_handle.try_init_input_hook(), is_some_err);
+                break_if!(line_handle.render(), is_err);
             }
             tokio::select! {
                 biased;
@@ -167,10 +168,7 @@ fn main() {
                 }
 
                 Some(msg) = message_rx.recv() => {
-                    if let Err(err) = line_handle.print_background_msg(msg) {
-                        error!("{err}");
-                        break;
-                    }
+                    break_if!(line_handle.print_background_msg(msg), is_err)
                 }
 
                 Some(_) = update_cache_rx.recv() => {
@@ -204,7 +202,7 @@ async fn app_startup() -> std::io::Result<StartupData> {
         .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
 
     #[cfg(not(debug_assertions))]
-    contains_required_files(&exe_dir)?;
+    match_wire::contains_required_files(&exe_dir)?;
 
     let version_task = tokio::task::spawn(get_latest_version());
 

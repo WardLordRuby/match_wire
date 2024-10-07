@@ -96,11 +96,11 @@ pub struct Filters {
     #[arg(long)]
     pub include_unresponsive: bool,
 
-    /// Specify region [Default: include all]
+    /// Specify region(s) [Default: include all]
     #[arg(short, long, value_enum, num_args(1..=REGION_LEN))]
     pub region: Option<Vec<Region>>,
 
-    /// Specify source [Default: include all]
+    /// Specify source(s) [Default: include all]
     #[arg(short, long, value_enum, num_args(1..=SOURCE_LEN))]
     pub source: Option<Vec<Source>>,
 
