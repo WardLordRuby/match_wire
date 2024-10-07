@@ -164,9 +164,7 @@ impl HostName {
             .expect("`Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
             .trim();
         let socket_addr = ip_str.parse::<SocketAddr>()?;
-        // `Sourced::Failed` since additional features of `try_get_info` are not used here
-        let server_info =
-            try_get_info(socket_addr, Sourced::Failed, reqwest::Client::new()).await?;
+        let server_info = try_get_info(Sourced::Hmw(socket_addr), reqwest::Client::new()).await?;
         let host_name = server_info.info.expect("request returned `Ok`").host_name;
         Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
     }

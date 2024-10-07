@@ -94,7 +94,7 @@ pub async fn build_favorites(
         if version < 1.0 {
             DEFAULT_SERVER_CAP
         } else {
-            1000
+            10000
         }
     });
 
@@ -102,7 +102,7 @@ pub async fn build_favorites(
         println!("{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{WHITE}")
     }
 
-    let (mut servers, update_cache) = filter_server_list(args, cache)
+    let (mut servers, update_cache) = filter_server_list(args, cache, limit)
         .await
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
@@ -116,7 +116,7 @@ pub async fn build_favorites(
     }
 
     for server in servers.iter().rev() {
-        ips.push_str(&format!("\"{}\",", server.socket_addr));
+        ips.push_str(&format!("\"{}\",", server.source.socket_addr()));
         ip_collected += 1;
         if ip_collected == limit {
             break;
@@ -131,15 +131,14 @@ pub async fn build_favorites(
 
 pub struct Server {
     pub source: Sourced,
-    pub socket_addr: SocketAddr,
     pub info: Option<GetInfo>,
 }
 
-impl Server {
-    /// Real source is Sourced::Iw4
-    fn from(value: HostMeta) -> Option<Self> {
-        value.server.ip.parse().ok().map(|ip| Server {
-            socket_addr: SocketAddr::new(ip, value.server.port),
+impl From<HostMeta> for Server {
+    /// Real source is Sourced::Iw4  
+    /// Source kind is modifed to avoid cloning `ServerInfo` fields into the desired `GetInfo`
+    fn from(value: HostMeta) -> Self {
+        Server {
             info: Some(GetInfo {
                 clients: value.server.clients,
                 max_clients: value.server.max_clients,
@@ -149,8 +148,8 @@ impl Server {
                 game_type: value.server.game_type,
                 host_name: value.server.host_name,
             }),
-            source: Sourced::Iw4Cached(SocketAddr::new(ip, value.server.port)),
-        })
+            source: Sourced::Iw4Cached(value.resolved_addr),
+        }
     }
 }
 
@@ -213,11 +212,8 @@ impl Display for GetInfoErr {
     }
 }
 
-pub async fn try_get_info(
-    socket_addr: SocketAddr,
-    meta: Sourced,
-    client: reqwest::Client,
-) -> Result<Server, GetInfoErr> {
+pub async fn try_get_info(meta: Sourced, client: reqwest::Client) -> Result<Server, GetInfoErr> {
+    let socket_addr = meta.socket_addr();
     let addr = format!("http://{}{SERVER_GET_INFO_ENDPOINT}", socket_addr);
     let server_responce = match client.get(&addr).send().await {
         Ok(res) => res,
@@ -232,7 +228,6 @@ pub async fn try_get_info(
     match server_responce.json::<GetInfo>().await {
         Ok(info) => Ok(Server {
             source: meta,
-            socket_addr,
             info: Some(info),
         }),
         Err(err) => Err(GetInfoErr::new(
@@ -244,27 +239,32 @@ pub async fn try_get_info(
 }
 
 pub struct HostMeta {
-    pub host_ip: String,
-    pub webfront_url: String,
+    pub resolved_addr: SocketAddr,
     pub server: ServerInfo,
 }
 
 impl HostMeta {
-    fn from(host_ip: &str, webfront_url: &str, server: ServerInfo) -> Self {
-        HostMeta {
-            host_ip: host_ip.to_string(),
-            webfront_url: webfront_url.to_string(),
-            server,
-        }
+    fn try_from(host_ip: &str, webfront_url: &str, server: ServerInfo) -> Option<Self> {
+        resolve_address(&server.ip, host_ip, webfront_url).map_or_else(
+            |err| {
+                error!("{err}");
+                None
+            },
+            |ip| {
+                Some(HostMeta {
+                    resolved_addr: SocketAddr::new(ip, server.port),
+                    server,
+                })
+            },
+        )
     }
 }
 
 pub enum Sourced {
-    Hmw(String),
+    Hmw(SocketAddr),
     HmwCached(SocketAddr),
     Iw4(HostMeta),
     Iw4Cached(SocketAddr),
-    Failed,
 }
 
 impl Display for Sourced {
@@ -274,7 +274,6 @@ impl Display for Sourced {
             Sourced::HmwCached(_) => "Cached HMW server",
             Sourced::Iw4(_) => "Iw4m master server",
             Sourced::Iw4Cached(_) => "Cached Iw4m server",
-            Sourced::Failed => "Failed get request",
         };
         write!(f, "{display}")
     }
@@ -285,45 +284,37 @@ impl Sourced {
         match self {
             Self::Hmw(_) => Some(Source::HmwMaster),
             Self::Iw4(_) => Some(Source::Iw4Master),
-            Self::HmwCached(_) | Self::Iw4Cached(_) | Self::Failed => None,
+            Self::HmwCached(_) | Self::Iw4Cached(_) => None,
         }
     }
 
-    pub fn try_parse_socket_addr(&mut self) -> Result<SocketAddr, String> {
+    pub fn try_from_hmw_master(ip_port: String) -> Option<Self> {
+        // we assume hmw master always have resolved ips
+        let (ip, port) = match ip_port
+            .rsplit_once(':')
+            .map(|(ip, port)| (ip.parse(), port.parse::<u16>()))
+        {
+            Some((Ok(ip), Ok(port))) => (ip, port),
+            Some((_, Err(err))) => {
+                error!(name: LOG_ONLY, "Unexpected hmw master server formatting: failed to parse port in: {ip_port}, {err}");
+                return None;
+            }
+            Some((Err(err), _)) => {
+                error!(name: LOG_ONLY, "Unexpected hmw master server formatting: failed to parse ip address in: {ip_port}, {err}");
+                return None;
+            }
+            None => {
+                error!(name: LOG_ONLY, "Unexpected hmw master server formatting: address was not formatted with a port: {ip_port}");
+                return None;
+            }
+        };
+        Some(Sourced::Hmw(SocketAddr::new(ip, port)))
+    }
+
+    pub fn socket_addr(&self) -> SocketAddr {
         match self {
-            Sourced::Iw4(ref mut meta) => {
-                let ip = match resolve_address(meta) {
-                    Ok(ip) => ip,
-                    Err(err) => {
-                        return Err(format!(
-                            "could not resolve address from: {} or {}, {err}",
-                            meta.server.ip, meta.host_ip
-                        ))
-                    }
-                };
-                Ok(SocketAddr::new(ip, meta.server.port))
-            }
-            Sourced::Iw4Cached(ref cached) | Sourced::HmwCached(ref cached) => Ok(*cached),
-            Sourced::Hmw(ref ip_port) => {
-                // we assume hmw master always have resolved ips
-                let (ip, port) = match ip_port
-                    .rsplit_once(':')
-                    .map(|(ip, port)| (ip.parse(), port.parse::<u16>()))
-                {
-                    Some((Ok(ip), Ok(port))) => (ip, port),
-                    Some((_, Err(err))) => {
-                        return Err(format!("failed to parse port in: {ip_port}, {err}"))
-                    }
-                    Some((Err(err), _)) => {
-                        return Err(format!("failed to parse ip address in: {ip_port}, {err}"))
-                    }
-                    None => {
-                        return Err(format!("address was not formatted with a port: {ip_port}"))
-                    }
-                };
-                Ok(SocketAddr::new(ip, port))
-            }
-            Sourced::Failed => Err(String::from("Nothing to parse in failed attempt")),
+            Sourced::Hmw(addr) | Sourced::HmwCached(addr) | Sourced::Iw4Cached(addr) => *addr,
+            Sourced::Iw4(meta) => meta.resolved_addr,
         }
     }
 }
@@ -340,12 +331,9 @@ pub async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
                 .flat_map(|host| {
                     host.servers
                         .into_iter()
-                        .map(|server| {
-                            Sourced::Iw4(HostMeta::from(
-                                &host.ip_address,
-                                &host.webfront_url,
-                                server,
-                            ))
+                        .filter_map(|server| {
+                            HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
+                                .map(Sourced::Iw4)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -373,7 +361,10 @@ pub async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
 
 pub async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
     match get_hmw_master().await {
-        Ok(list) => Ok(list.into_iter().map(Sourced::Hmw).collect()),
+        Ok(list) => Ok(list
+            .into_iter()
+            .filter_map(Sourced::try_from_hmw_master)
+            .collect()),
         Err(err) => {
             if let Some(cache) = cache {
                 error!(name: LOG_ONLY, "{err}");
@@ -401,56 +392,41 @@ pub async fn queue_info_requests(
     client: &Client,
 ) {
     let mut dup = HashSet::new();
-    for mut server in servers.into_iter() {
-        let socket_addr = match server.try_parse_socket_addr() {
-            Ok(addr) => addr,
-            Err(err) => {
-                error!(name: LOG_ONLY, "{err}");
-                continue;
-            }
-        };
-        if remove_duplicates && !dup.insert(socket_addr) {
+    for server in servers.into_iter() {
+        if remove_duplicates && !dup.insert(server.socket_addr()) {
             continue;
         }
 
         let client = client.clone();
-        tasks.push(tokio::spawn(async move {
-            try_get_info(socket_addr, server, client).await
-        }));
+        tasks.push(tokio::spawn(
+            async move { try_get_info(server, client).await },
+        ));
     }
 }
 
-fn to_server(vec: Vec<Sourced>) -> Vec<Server> {
-    let mut output = Vec::with_capacity(vec.len());
-    for mut server in vec {
-        let socket_addr = match server.try_parse_socket_addr() {
-            Ok(ip) => ip,
-            Err(err) => {
-                error!(name: LOG_ONLY, "{err}");
-                continue;
-            }
-        };
-        let server = match server {
-            Sourced::Iw4(meta) => match Server::from(meta) {
-                Some(server) => server,
-                None => continue,
-            },
-            Sourced::Iw4Cached(_) | Sourced::HmwCached(_) | Sourced::Hmw(_) => Server {
-                source: server,
-                socket_addr,
-                info: None,
-            },
-            Sourced::Failed => unreachable!("by try parse addr err above"),
-        };
-        output.push(server);
+fn to_server(disregard_meta: bool, vec: Vec<Sourced>) -> Vec<Server> {
+    if !disregard_meta {
+        return vec
+            .into_iter()
+            .map(|source| {
+                if let Sourced::Iw4(meta) = source {
+                    Server::from(meta)
+                } else {
+                    Server { source, info: None }
+                }
+            })
+            .collect();
     }
-    output
+    vec.into_iter()
+        .map(|source| Server { source, info: None })
+        .collect()
 }
 
 #[instrument(level = "trace", skip_all)]
 async fn filter_server_list(
     args: &Filters,
     cache: Arc<Mutex<Cache>>,
+    limit: usize,
 ) -> reqwest::Result<(Vec<Server>, bool)> {
     let mut servers = Vec::new();
 
@@ -478,6 +454,88 @@ async fn filter_server_list(
         }
     };
 
+    let cache_modified = if let Some(ref regions) = args.region {
+        println!(
+            "Determining region of {GREEN}{}{WHITE} servers...",
+            servers.len()
+        );
+
+        let mut server_list = Vec::new();
+        let mut tasks = Vec::new();
+        let mut check_again = Vec::new();
+        let mut new_lookups = HashSet::new();
+        let client = reqwest::Client::new();
+
+        let mut cache = cache.lock().await;
+
+        for sourced_data in servers {
+            let socket_addr = sourced_data.socket_addr();
+            if let Some(cached_region) = cache.ip_to_region.get(&socket_addr.ip()) {
+                if regions.iter().any(|region| region.matches(*cached_region)) {
+                    server_list.push(sourced_data);
+                }
+                continue;
+            }
+            if new_lookups.insert(socket_addr.ip()) {
+                let client = client.clone();
+                trace!("Requsting location data for: {}", socket_addr.ip());
+                tasks.push(tokio::spawn(async move {
+                    try_location_lookup(&socket_addr.ip(), client)
+                        .await
+                        .map(|location| (sourced_data, location.code))
+                }))
+            } else {
+                check_again.push(sourced_data)
+            }
+        }
+
+        let mut failure_count = 0_usize;
+
+        for task in tasks {
+            match task.await {
+                Ok(result) => match result {
+                    Ok((sourced_data, cont_code)) => {
+                        cache
+                            .ip_to_region
+                            .insert(sourced_data.socket_addr().ip(), cont_code);
+                        if regions.iter().any(|region| region.matches(cont_code)) {
+                            server_list.push(sourced_data)
+                        }
+                    }
+                    Err(err) => {
+                        error!(name: LOG_ONLY, "{err}");
+                        failure_count += 1
+                    }
+                },
+                Err(err) => {
+                    error!(name: LOG_ONLY, "{err:?}");
+                    failure_count += 1
+                }
+            }
+        }
+
+        if !new_lookups.is_empty() {
+            info!("Made {} new location requests", new_lookups.len());
+        }
+
+        for sourced_data in check_again {
+            if let Some(cached_region) = cache.ip_to_region.get(&sourced_data.socket_addr().ip()) {
+                if regions.iter().any(|region| region.matches(*cached_region)) {
+                    server_list.push(sourced_data)
+                }
+            }
+        }
+
+        if failure_count > 0 {
+            eprintln!("{RED}Failed to resolve location for {failure_count} server hoster(s){WHITE}")
+        }
+
+        servers = server_list;
+        !new_lookups.is_empty()
+    } else {
+        false
+    };
+
     let servers = if args.excludes.is_some()
         || args.includes.is_some()
         || args.player_min.is_some()
@@ -496,22 +554,40 @@ async fn filter_server_list(
 
         queue_info_requests(servers, &mut tasks, true, &client).await;
 
+        let use_backup_server_info =
+            !args.with_bots && !args.without_bots && args.include_unresponsive;
+        let mut did_not_respond = 0_usize;
+        let mut used_backup_data = 0_usize;
+
         for task in tasks {
             match task.await {
                 Ok(result) => match result {
                     Ok(server) => host_list.push(server),
                     Err(mut err) => {
+                        did_not_respond += 1;
                         error!(name: LOG_ONLY, "{}", err.with_addr().with_source());
-                        if !args.with_bots && !args.without_bots && args.include_unresponsive {
+                        if use_backup_server_info {
                             if let Sourced::Iw4(meta) = err.meta {
-                                if let Some(server) = Server::from(meta) {
-                                    host_list.push(server);
-                                }
+                                used_backup_data += 1;
+                                host_list.push(Server::from(meta));
                             }
                         }
                     }
                 },
                 Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+            }
+        }
+
+        if did_not_respond > 0 {
+            if use_backup_server_info {
+                println!(
+                    "Included outdated server data for {YELLOW}{used_backup_data}{WHITE} of the \
+                    {RED}{did_not_respond}{WHITE} servers servers that did not respond to 'getInfo' request"
+                )
+            } else {
+                eprintln!(
+                    "{RED}{did_not_respond}{WHITE} servers did not respond to a 'getInfo' request"
+                )
             }
         }
 
@@ -575,87 +651,10 @@ async fn filter_server_list(
         }
         host_list
     } else {
-        to_server(servers)
+        to_server(servers.len() <= limit, servers)
     };
 
-    if let Some(ref regions) = args.region {
-        println!(
-            "Determining region of {GREEN}{}{WHITE} servers...",
-            servers.len()
-        );
-
-        let mut server_list = Vec::new();
-        let mut tasks = Vec::new();
-        let mut check_again = Vec::new();
-        let mut new_lookups = HashSet::new();
-        let client = reqwest::Client::new();
-
-        let mut cache = cache.lock().await;
-
-        for server in servers {
-            if let Some(cached_region) = cache.ip_to_region.get(&server.socket_addr.ip()) {
-                if regions.iter().any(|region| region.matches(*cached_region)) {
-                    server_list.push(server);
-                }
-                continue;
-            }
-            if new_lookups.insert(server.socket_addr.ip()) {
-                let client = client.clone();
-                trace!("Requsting location data for: {}", server.socket_addr.ip());
-                tasks.push(tokio::spawn(async move {
-                    try_location_lookup(&server.socket_addr.ip(), client)
-                        .await
-                        .map(|location| (server, location.code))
-                }))
-            } else {
-                check_again.push(server)
-            }
-        }
-
-        let mut failure_count = 0_usize;
-
-        for task in tasks {
-            match task.await {
-                Ok(result) => match result {
-                    Ok((server, cont_code)) => {
-                        cache
-                            .ip_to_region
-                            .insert(server.socket_addr.ip(), cont_code);
-                        if regions.iter().any(|region| region.matches(cont_code)) {
-                            server_list.push(server)
-                        }
-                    }
-                    Err(err) => {
-                        error!(name: LOG_ONLY, "{err}");
-                        failure_count += 1
-                    }
-                },
-                Err(err) => {
-                    error!(name: LOG_ONLY, "{err:?}");
-                    failure_count += 1
-                }
-            }
-        }
-
-        if !new_lookups.is_empty() {
-            info!("Made {} new location requests", new_lookups.len());
-        }
-
-        for server in check_again {
-            if let Some(cached_region) = cache.ip_to_region.get(&server.socket_addr.ip()) {
-                if regions.iter().any(|region| region.matches(*cached_region)) {
-                    server_list.push(server)
-                }
-            }
-        }
-
-        if failure_count > 0 {
-            eprintln!("{RED}Failed to resolve location for {failure_count} server hoster(s){WHITE}")
-        }
-
-        return Ok((server_list, !new_lookups.is_empty()));
-    }
-    Ok((servers, false))
+    Ok((servers, cache_modified))
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -685,38 +684,26 @@ pub async fn try_location_lookup(
 }
 
 #[instrument(level = "trace", skip_all)]
-fn resolve_address(host_meta: &mut HostMeta) -> io::Result<IpAddr> {
-    let server_ip = host_meta.server.ip.as_str();
+fn resolve_address(server_ip: &str, host_ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
     let ip_trim = server_ip.trim_matches('/').trim_matches(':');
     if !ip_trim.is_empty() && ip_trim != LOCAL_HOST {
         if let Ok(ip) = ip_trim.parse::<IpAddr>() {
-            if ip.is_unspecified() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Addr: {ip}, is unspecified"),
-                ));
-            }
-            let ip_str = ip.to_string();
-            if server_ip == ip_str {
-                return Ok(ip);
-            }
-            trace!("{server_ip} trimmed and parsed to: {ip}");
-            host_meta.server.ip = ip_str;
-            return Ok(ip);
+            return if ip.is_unspecified() {
+                parse_possible_ipv6(host_ip, webfront_url)
+            } else {
+                Ok(ip)
+            };
         }
 
         if let Ok(mut socket_addr) = (ip_trim, 80).to_socket_addrs() {
             if let Some(ip) = socket_addr.next().map(|socket| socket.ip()) {
                 trace!("Found socket address of: {ip}, from: {ip_trim}");
-                host_meta.server.ip = ip.to_string();
                 return Ok(ip);
             }
         }
     }
 
-    let ip = parse_possible_ipv6(&host_meta.host_ip, &host_meta.webfront_url)?;
-    host_meta.server.ip = ip.to_string();
-    Ok(ip)
+    parse_possible_ipv6(host_ip, webfront_url)
 }
 
 #[instrument(level = "trace", skip_all)]

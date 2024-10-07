@@ -76,36 +76,29 @@ impl Cache {
     }
 
     pub fn update_cache_with(&mut self, server: &Server, region: Option<[char; 2]>) {
+        let socket_addr = server.source.socket_addr();
         if let Some(ref info) = server.info {
             self.host_to_connect
-                .insert(info.host_name.clone(), server.socket_addr);
+                .insert(info.host_name.clone(), socket_addr);
         }
         if let Some(region) = region {
-            self.ip_to_region.insert(server.socket_addr.ip(), region);
+            self.ip_to_region.insert(socket_addr.ip(), region);
         }
         if let Some(source) = server.source.to_valid_source() {
-            self.insert_ports(
-                server.socket_addr.ip(),
-                &[server.socket_addr.port()],
-                source,
-            );
+            self.insert_ports(socket_addr.ip(), &[socket_addr.port()], source);
         }
     }
 
     pub fn push(&mut self, server: Server, region: Option<[char; 2]>) {
-        let id = server.socket_addr;
+        let socket_addr = server.source.socket_addr();
         if let Some(info) = server.info {
-            self.host_to_connect.insert(info.host_name, id);
+            self.host_to_connect.insert(info.host_name, socket_addr);
         }
         if let Some(region) = region {
-            self.ip_to_region.insert(server.socket_addr.ip(), region);
+            self.ip_to_region.insert(socket_addr.ip(), region);
         }
         if let Some(source) = server.source.to_valid_source() {
-            self.insert_ports(
-                server.socket_addr.ip(),
-                &[server.socket_addr.port()],
-                source,
-            );
+            self.insert_ports(socket_addr.ip(), &[socket_addr.port()], source);
         }
     }
 }
@@ -144,8 +137,8 @@ pub async fn build_cache(
         match task.await {
             Ok(result) => match result {
                 Ok(server) => {
-                    let region =
-                        regions.and_then(|cache| cache.get(&server.socket_addr.ip()).copied());
+                    let region = regions
+                        .and_then(|cache| cache.get(&server.source.socket_addr().ip()).copied());
                     cache.push(server, region)
                 }
                 Err(mut err) => {
