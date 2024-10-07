@@ -405,21 +405,17 @@ pub async fn queue_info_requests(
 }
 
 fn to_server(disregard_meta: bool, vec: Vec<Sourced>) -> Vec<Server> {
-    if !disregard_meta {
-        return vec
-            .into_iter()
-            .map(|source| {
-                if let Sourced::Iw4(meta) = source {
-                    Server::from(meta)
-                } else {
-                    Server { source, info: None }
-                }
-            })
-            .collect();
-    }
-    vec.into_iter()
-        .map(|source| Server { source, info: None })
-        .collect()
+    let no_info = |source: Sourced| -> Server { Server { source, info: None } };
+    let with_info = |source: Sourced| -> Server {
+        if let Sourced::Iw4(meta) = source {
+            Server::from(meta)
+        } else {
+            Server { source, info: None }
+        }
+    };
+
+    let operation = if disregard_meta { no_info } else { with_info };
+    vec.into_iter().map(operation).collect()
 }
 
 #[instrument(level = "trace", skip_all)]
