@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod command_scheme;
 pub mod not_your_private_keys;
 pub mod commands {
     pub mod filter;

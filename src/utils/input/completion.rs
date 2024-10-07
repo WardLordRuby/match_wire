@@ -1,14 +1,11 @@
-use crate::{
-    cli::{REGION_LEN, SOURCE_LEN},
-    utils::input::line::LineReader,
-};
+use crate::utils::input::line::LineReader;
 use std::{
     collections::{HashMap, HashSet},
     io,
     ops::Range,
 };
 
-const ROOT: &str = "ROOT";
+pub const ROOT: &str = "ROOT";
 const UNIVERSAL: &str = "ANY";
 
 const USER_INPUT: i8 = -1;
@@ -40,7 +37,7 @@ pub struct CommandScheme {
     valid: RecData,
 
     /// inner data shares indices with `commands.recs`
-    inner: Vec<InnerScheme>,
+    inner: &'static [InnerScheme],
 }
 
 /// Notes:  
@@ -55,16 +52,16 @@ pub struct CommandScheme {
 /// field `inner` must adhere to the following
 ///  - if `data.kind` is `Kind::Argument` `inner` must contain the same number of elements as `data.starting_alias`  
 ///  - for all other kinds `inner` must be `None`
-struct InnerScheme {
+pub struct InnerScheme {
     /// data that describes recomendations context
     data: RecData,
 
     /// inner data shares indices with `data.recs`
-    inner: Option<Vec<Self>>,
+    inner: Option<&'static [Self]>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
-struct RecData {
+pub struct RecData {
     /// name of the parent entry
     parent: Option<&'static str>,
     /// required data if this node contains any aliases
@@ -72,7 +69,7 @@ struct RecData {
     /// required data if containing recs support a short arg syntax
     short: Option<ShortData>,
     /// recomendations followed by recomendation aliases
-    recs: Option<Vec<&'static str>>,
+    recs: Option<&'static [&'static str]>,
     /// kind of data stored
     kind: RecKind,
     /// signals this is a leaf node
@@ -82,68 +79,46 @@ struct RecData {
 #[derive(PartialEq, Eq, Debug)]
 struct AliasData {
     /// index of rec in `recs` -> index of alias in `recs`
-    rec_mapping: Vec<(usize, usize)>,
+    rec_mapping: &'static [(usize, usize)],
 }
 
 #[derive(PartialEq, Eq, Debug)]
 struct ShortData {
     /// index of rec in `recs` -> short char
-    short_mapping: Vec<(usize, &'static str)>,
+    short_mapping: &'static [(usize, &'static str)],
 }
 
-impl RecData {
-    fn empty() -> Self {
-        RecData {
-            parent: None,
-            alias: None,
-            short: None,
-            recs: None,
-            kind: RecKind::Null,
-            end: true,
+impl CommandScheme {
+    pub const fn new(commands: RecData, inner: &'static [InnerScheme]) -> Self {
+        CommandScheme {
+            commands,
+            invalid: RecData::empty(),
+            valid: RecData::empty(),
+            inner,
         }
-    }
-
-    #[inline]
-    fn rec_len(&self) -> usize {
-        self.recs.as_ref().map_or(0, |recs| recs.len())
-    }
-
-    fn unique_rec_end(&self) -> usize {
-        self.alias.as_ref().map_or(self.rec_len(), |data| {
-            self.rec_len() - data.rec_mapping.len()
-        })
-    }
-}
-
-#[derive(PartialEq, Eq, Debug)]
-enum RecKind {
-    Command,
-    Argument,
-    Value(Range<usize>),
-    UserDefined(Range<usize>),
-    Help,
-    Null,
-}
-
-impl RecKind {
-    /// minimum of 1 arg is assumed
-    fn user_defined_with_num_args(max: usize) -> Self {
-        RecKind::UserDefined(Range {
-            start: 1,
-            end: max.saturating_add(1),
-        })
-    }
-    /// minimum of 1 arg is assumed
-    fn value_with_num_args(max: usize) -> Self {
-        RecKind::Value(Range {
-            start: 1,
-            end: max.saturating_add(1),
-        })
     }
 }
 
 impl InnerScheme {
-    fn empty_with(parent: &'static str, kind: RecKind, end: bool) -> Self {
+    pub const fn new(data: RecData, inner: Option<&'static [Self]>) -> Self {
+        InnerScheme { data, inner }
+    }
+
+    pub const fn flag(parent: &'static str, end: bool) -> Self {
+        InnerScheme {
+            data: RecData {
+                parent: Some(parent),
+                alias: None,
+                short: None,
+                recs: None,
+                kind: RecKind::Null,
+                end,
+            },
+            inner: None,
+        }
+    }
+
+    pub const fn empty_with(parent: &'static str, kind: RecKind, end: bool) -> Self {
         InnerScheme {
             data: RecData {
                 parent: Some(parent),
@@ -156,20 +131,8 @@ impl InnerScheme {
             inner: None,
         }
     }
-    fn help() -> Self {
-        InnerScheme {
-            data: RecData {
-                parent: Some(UNIVERSAL),
-                alias: None,
-                short: None,
-                recs: None,
-                kind: RecKind::Help,
-                end: true,
-            },
-            inner: None,
-        }
-    }
-    fn ending_rec(parent: &'static str) -> Self {
+
+    pub const fn end(parent: &'static str) -> Self {
         InnerScheme {
             data: RecData {
                 parent: Some(parent),
@@ -182,204 +145,100 @@ impl InnerScheme {
             inner: None,
         }
     }
+
+    pub const fn help() -> Self {
+        InnerScheme {
+            data: RecData {
+                parent: Some(UNIVERSAL),
+                alias: None,
+                short: None,
+                recs: None,
+                kind: RecKind::Help,
+                end: true,
+            },
+            inner: None,
+        }
+    }
 }
 
-// MARK: IMPROVE
-// HARD: this ideally would be done by a proc-macro
-pub fn init_completion() -> CommandScheme {
-    CommandScheme {
-        commands: RecData {
+impl RecData {
+    pub const fn new(
+        parent: Option<&'static str>,
+        alias: Option<&'static [(usize, usize)]>,
+        short: Option<&'static [(usize, &'static str)]>,
+        recs: Option<&'static [&'static str]>,
+        kind: RecKind,
+        end: bool,
+    ) -> Self {
+        RecData {
+            parent,
+            alias: if let Some(mapping) = alias {
+                Some(AliasData {
+                    rec_mapping: mapping,
+                })
+            } else {
+                None
+            },
+            short: if let Some(mapping) = short {
+                Some(ShortData {
+                    short_mapping: mapping,
+                })
+            } else {
+                None
+            },
+            recs,
+            kind,
+            end,
+        }
+    }
+
+    const fn empty() -> Self {
+        RecData {
             parent: None,
-            alias: Some(AliasData {
-                rec_mapping: vec![(4, 10), (5, 11), (6, 12)],
-            }),
+            alias: None,
             short: None,
-            recs: Some(vec![
-                "filter",
-                "reconnect",
-                "launch",
-                "cache",
-                "console",
-                "game-dir",
-                "local-env",
-                "quit",
-                "version",
-                "help",
-                "logs",
-                "gamedir",
-                "localenv",
-            ]),
-            kind: RecKind::Command,
-            end: false,
-        },
-        invalid: RecData::empty(),
-        valid: RecData::empty(),
-        inner: vec![
-            // filter
-            InnerScheme {
-                data: RecData {
-                    parent: Some(ROOT),
-                    alias: None,
-                    short: Some(ShortData {
-                        short_mapping: vec![
-                            (0, "l"),
-                            (1, "p"),
-                            (2, "t"),
-                            (3, "r"),
-                            (4, "s"),
-                            (5, "i"),
-                            (6, "e"),
-                            (10, "h"),
-                        ],
-                    }),
-                    recs: Some(vec![
-                        "limit",
-                        "player-min",
-                        "team-size-max",
-                        "region",
-                        "source",
-                        "includes",
-                        "excludes",
-                        "with-bots",
-                        "without-bots",
-                        "include-unresponsive",
-                        "help",
-                    ]),
-                    kind: RecKind::Argument,
-                    end: false,
-                },
-                inner: Some(vec![
-                    // limit
-                    InnerScheme::empty_with(
-                        "filter",
-                        RecKind::user_defined_with_num_args(1),
-                        false,
-                    ),
-                    // player-min
-                    InnerScheme::empty_with(
-                        "filter",
-                        RecKind::user_defined_with_num_args(1),
-                        false,
-                    ),
-                    // team-size-max
-                    InnerScheme::empty_with(
-                        "filter",
-                        RecKind::user_defined_with_num_args(1),
-                        false,
-                    ),
-                    // region
-                    InnerScheme {
-                        data: RecData {
-                            parent: Some("filter"),
-                            alias: Some(AliasData {
-                                rec_mapping: vec![(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)],
-                            }),
-                            short: None,
-                            recs: Some(vec![
-                                "na",
-                                "eu",
-                                "apac",
-                                "northamerica",
-                                "europe",
-                                "asia",
-                                "pacific",
-                                "asiapacific",
-                            ]),
-                            kind: RecKind::value_with_num_args(REGION_LEN),
-                            end: false,
-                        },
-                        inner: None,
-                    },
-                    // source
-                    InnerScheme {
-                        data: RecData {
-                            parent: Some("filter"),
-                            alias: Some(AliasData {
-                                rec_mapping: vec![(0, 2), (1, 3)],
-                            }),
-                            short: None,
-                            recs: Some(vec!["iw4-master", "hmw-master", "iw4", "hmw"]),
-                            kind: RecKind::value_with_num_args(SOURCE_LEN),
-                            end: false,
-                        },
-                        inner: None,
-                    },
-                    // includes
-                    InnerScheme::empty_with(
-                        "filter",
-                        RecKind::user_defined_with_num_args(usize::MAX),
-                        false,
-                    ),
-                    // excludes
-                    InnerScheme::empty_with(
-                        "filter",
-                        RecKind::user_defined_with_num_args(usize::MAX),
-                        false,
-                    ),
-                    // with-bots
-                    InnerScheme::empty_with("filter", RecKind::Null, false),
-                    // without-bots
-                    InnerScheme::empty_with("filter", RecKind::Null, false),
-                    // include-unresponsive
-                    InnerScheme::empty_with("filter", RecKind::Null, false),
-                    // help
-                    InnerScheme::help(),
-                ]),
-            },
-            // reconnect
-            InnerScheme {
-                data: RecData {
-                    parent: Some(ROOT),
-                    alias: None,
-                    short: Some(ShortData {
-                        short_mapping: vec![(0, "H"), (1, "c"), (2, "h")],
-                    }),
-                    recs: Some(vec!["history", "connect", "help"]),
-                    kind: RecKind::Argument,
-                    end: false,
-                },
-                inner: Some(vec![
-                    // history
-                    InnerScheme::ending_rec("reconnect"),
-                    // connect
-                    InnerScheme::empty_with(
-                        "reconnect",
-                        RecKind::user_defined_with_num_args(1),
-                        true,
-                    ),
-                    // help
-                    InnerScheme::help(),
-                ]),
-            },
-            // launch
-            InnerScheme::ending_rec(ROOT),
-            // cache
-            InnerScheme {
-                data: RecData {
-                    parent: Some(ROOT),
-                    alias: Some(AliasData {
-                        rec_mapping: vec![(0, 2)],
-                    }),
-                    short: None,
-                    recs: Some(vec!["reset", "update", "clear"]),
-                    kind: RecKind::value_with_num_args(1),
-                    end: true,
-                },
-                inner: None,
-            },
-            // game-console
-            InnerScheme::ending_rec(ROOT),
-            // game-dir
-            InnerScheme::ending_rec(ROOT),
-            // local-env
-            InnerScheme::ending_rec(ROOT),
-            // quit
-            InnerScheme::ending_rec(ROOT),
-            // version
-            InnerScheme::ending_rec(ROOT),
-            // help
-            InnerScheme::help(),
-        ],
+            recs: None,
+            kind: RecKind::Null,
+            end: true,
+        }
+    }
+
+    #[inline]
+    fn rec_len(&self) -> usize {
+        self.recs.map_or(0, |recs| recs.len())
+    }
+
+    fn unique_rec_end(&self) -> usize {
+        self.alias.as_ref().map_or(self.rec_len(), |data| {
+            self.rec_len() - data.rec_mapping.len()
+        })
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum RecKind {
+    Command,
+    Argument,
+    Value(Range<usize>),
+    UserDefined(Range<usize>),
+    Help,
+    Null,
+}
+
+impl RecKind {
+    /// minimum of 1 arg is assumed
+    pub const fn user_defined_with_num_args(max: usize) -> Self {
+        RecKind::UserDefined(Range {
+            start: 1,
+            end: max.saturating_add(1),
+        })
+    }
+    /// minimum of 1 arg is assumed
+    pub const fn value_with_num_args(max: usize) -> Self {
+        RecKind::Value(Range {
+            start: 1,
+            end: max.saturating_add(1),
+        })
     }
 }
 
@@ -425,12 +284,11 @@ impl From<&'static CommandScheme> for Completion {
                     ..
                 } => {
                     let expected_len = inner.data.unique_rec_end();
-                    assert_eq!(expected_len, inner.inner.as_ref().unwrap().len());
+                    assert_eq!(expected_len, inner.inner.unwrap().len());
                     for (i, (&argument, inner)) in recs
-                        .as_ref()
                         .expect("is some")
                         .iter()
-                        .zip(inner.inner.as_ref().expect("is some"))
+                        .zip(inner.inner.expect("is some"))
                         .enumerate()
                         .take(expected_len)
                     {
@@ -448,17 +306,13 @@ impl From<&'static CommandScheme> for Completion {
                             data.rec_mapping
                                 .iter()
                                 .filter(|(rec_i, _)| *rec_i == i)
-                                .map(|&(_, alias_i)| recs.as_ref().expect("is some")[alias_i])
+                                .map(|&(_, alias_i)| recs.expect("is some")[alias_i])
                                 .for_each(|alias| {
                                     insert_index(map, alias, l_i, &inner.data, list);
                                 });
                         }
                         if let RecKind::Value(_) = inner.data.kind {
-                            insert_rec_set(
-                                value_sets,
-                                inner.data.recs.as_ref().expect("is some"),
-                                l_i,
-                            );
+                            insert_rec_set(value_sets, inner.data.recs.expect("is some"), l_i);
                         }
                         walk_inner(inner, list, map, value_sets);
                     }
@@ -482,7 +336,6 @@ impl From<&'static CommandScheme> for Completion {
         for (i, (&command, inner)) in value
             .commands
             .recs
-            .as_ref()
             .expect("is some")
             .iter()
             .zip(value.inner.iter())
@@ -496,22 +349,18 @@ impl From<&'static CommandScheme> for Completion {
                 data.rec_mapping
                     .iter()
                     .filter(|(rec_i, _)| *rec_i == i)
-                    .map(|&(_, alias_i)| value.commands.recs.as_ref().expect("is some")[alias_i])
+                    .map(|&(_, alias_i)| value.commands.recs.expect("is some")[alias_i])
                     .for_each(|alias| {
                         insert_index(&mut rec_map, alias, l_i, &inner.data, &rec_list);
                     });
             }
             if let RecKind::Value(_) = inner.data.kind {
-                insert_rec_set(
-                    &mut value_sets,
-                    inner.data.recs.as_ref().expect("is some"),
-                    l_i,
-                );
+                insert_rec_set(&mut value_sets, inner.data.recs.expect("is some"), l_i);
             }
             walk_inner(inner, &mut rec_list, &mut rec_map, &mut value_sets);
         }
         Completion {
-            recomendations: value.commands.recs.as_ref().expect("is some")[..expected_len].to_vec(),
+            recomendations: value.commands.recs.expect("is some")[..expected_len].to_vec(),
             rec_i: USER_INPUT,
             input: CompletionState::default(),
             rec_map,
@@ -908,6 +757,8 @@ impl LineReader<'_> {
     pub fn update_completeion(&mut self) {
         let line_trim_start = self.line.input().trim_start();
         if line_trim_start.is_empty() {
+            // MARK: TODO
+            // a full reset might not be needed here
             self.reset_completion();
             return;
         }
@@ -1039,6 +890,8 @@ impl LineReader<'_> {
             let arg_recs = self.completion.rec_list[arg.hash_i];
 
             match arg_recs.kind {
+                // MARK: TODO
+                // add a joint indices feature to conditonally allow completion of multiple possible values
                 RecKind::Value(_) => {
                     if let Some(value) = self.completion.try_parse_token_from_end(
                         line_trim_start,
@@ -1075,7 +928,7 @@ impl LineReader<'_> {
 
         self.check_for_errors();
 
-        let Some(ref recs) = rec_data.recs else {
+        let Some(recs) = rec_data.recs else {
             self.completion.recomendations = Vec::new();
             return;
         };

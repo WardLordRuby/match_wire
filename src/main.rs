@@ -9,7 +9,7 @@ use match_wire::{
     utils::{
         caching::{build_cache, read_cache, write_cache, Cache},
         input::{
-            completion::{init_completion, CommandScheme},
+            completion::CommandScheme,
             line::{EventLoop, LineReader},
             style::{RED, WHITE},
         },
@@ -20,14 +20,14 @@ use match_wire::{
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, LazyLock},
+    sync::atomic::Ordering,
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 use winptyrs::PTY;
 
-static COMPLETION: LazyLock<CommandScheme> = LazyLock::new(init_completion);
+const COMPLETION: CommandScheme = CommandScheme::init();
 
 fn main() {
     let prev = std::panic::take_hook();
