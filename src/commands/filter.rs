@@ -20,7 +20,7 @@ use std::{
     fmt::Display,
     fs::File,
     io::{self, Write},
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    net::{AddrParseError, IpAddr, SocketAddr, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
 };
@@ -289,18 +289,25 @@ impl Sourced {
     }
 
     pub fn try_from_hmw_master(ip_port: String) -> Option<Self> {
-        // we assume hmw master always have resolved ips
         let (ip, port) = match ip_port
             .rsplit_once(':')
-            .map(|(ip, port)| (ip.parse(), port.parse::<u16>()))
+            .map(|(ip, port)| (ip.parse().map_err(|err| (err, ip)), port.parse::<u16>()))
         {
             Some((Ok(ip), Ok(port))) => (ip, port),
-            Some((_, Err(err))) => {
+            Some((Ok(_), Err(err))) => {
                 error!(name: LOG_ONLY, "Unexpected hmw master server formatting: failed to parse port in: {ip_port}, {err}");
                 return None;
             }
-            Some((Err(err), _)) => {
-                error!(name: LOG_ONLY, "Unexpected hmw master server formatting: failed to parse ip address in: {ip_port}, {err}");
+            Some((Err((err, ip_str)), Ok(port))) => {
+                let Some(ip) = try_resolve_from_str(ip_str) else {
+                    error!(name: LOG_ONLY, "Unexpected hmw master server formatting: failed to parse ip address in: {ip_port}, {err}");
+                    return None;
+                };
+                trace!("Found socket address of: {ip}, from: {ip_str}");
+                (ip, port)
+            }
+            Some((Err(_), Err(_))) => {
+                error!(name: LOG_ONLY, "Unexpected hmw master server formatting: invalid string: {ip_port}");
                 return None;
             }
             None => {
@@ -680,7 +687,11 @@ pub async fn try_location_lookup(
 }
 
 #[instrument(level = "trace", skip_all)]
-fn resolve_address(server_ip: &str, host_ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
+fn resolve_address(
+    server_ip: &str,
+    host_ip: &str,
+    webfront_url: &str,
+) -> Result<IpAddr, AddrParseError> {
     let ip_trim = server_ip.trim_matches('/').trim_matches(':');
     if !ip_trim.is_empty() && ip_trim != LOCAL_HOST {
         if let Ok(ip) = ip_trim.parse::<IpAddr>() {
@@ -690,20 +701,24 @@ fn resolve_address(server_ip: &str, host_ip: &str, webfront_url: &str) -> io::Re
                 Ok(ip)
             };
         }
-
-        if let Ok(mut socket_addr) = (ip_trim, 80).to_socket_addrs() {
-            if let Some(ip) = socket_addr.next().map(|socket| socket.ip()) {
-                trace!("Found socket address of: {ip}, from: {ip_trim}");
-                return Ok(ip);
-            }
+        if let Some(ip) = try_resolve_from_str(ip_trim) {
+            trace!("Found socket address of: {ip}, from: {ip_trim}");
+            return Ok(ip);
         }
     }
 
     parse_possible_ipv6(host_ip, webfront_url)
 }
 
+fn try_resolve_from_str(ip: &str) -> Option<IpAddr> {
+    if let Ok(mut socket_addr) = (ip, 80).to_socket_addrs() {
+        return socket_addr.next().map(|socket| socket.ip());
+    }
+    None
+}
+
 #[instrument(level = "trace", skip_all)]
-fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
+fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> Result<IpAddr, AddrParseError> {
     match ip.parse::<IpAddr>() {
         Ok(ip) => Ok(ip),
         Err(err) => {
@@ -714,16 +729,17 @@ fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> io::Result<IpAddr> {
                 let ipv6_slice = if let Some(j) = webfront_url[ip_start..].rfind(PORT_SEPERATOR) {
                     let ip_end = j + ip_start;
                     if ip_end <= ip_start {
-                        return Err(io::Error::other("Failed to parse ip"));
+                        error!(name: LOG_ONLY, "Bad ipv6 string slice");
+                        return Err(err);
                     }
                     &webfront_url[ip_start..ip_end]
                 } else {
                     &webfront_url[ip_start..]
                 };
                 trace!("Parsed: {ipv6_slice}, from webfront_url");
-                return ipv6_slice.parse::<IpAddr>().map_err(io::Error::other);
+                return ipv6_slice.parse::<IpAddr>();
             }
-            Err(io::Error::other(err))
+            Err(err)
         }
     }
 }
