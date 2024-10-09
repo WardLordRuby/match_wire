@@ -1,6 +1,6 @@
 pub mod cli;
 pub mod command_scheme;
-pub mod not_your_private_keys;
+pub mod location_api_key;
 pub mod commands {
     pub mod filter;
     pub mod handler;

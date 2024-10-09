@@ -1,4 +1,4 @@
+/.vscode
 /target
 /players2
-/src/ping_wip.rs
-/src/not_your_private_keys.rs
+/src/location_api_key.rs

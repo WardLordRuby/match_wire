@@ -1,0 +1,4 @@
+// NOTE: To complie from source
+//   1. rename this file to "location_api_key.rs"
+//   2. replace this value with a free api key found at https://api.findip.net
+pub const FIND_IP_NET_PRIVATE_KEY: &str = "/?token=INSERT_KEY_HERE";

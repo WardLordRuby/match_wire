@@ -1,8 +1,7 @@
 use crate::{
     cli::{Filters, Region, Source},
-    lowercase_vec,
-    not_your_private_keys::LOCATION_PRIVATE_KEY,
-    parse_hostname,
+    location_api_key::FIND_IP_NET_PRIVATE_KEY,
+    lowercase_vec, parse_hostname,
     utils::{
         caching::Cache,
         display::{DisplayCountOf, DisplayGetInfoCount, DisplayServerCount, SingularPlural},
@@ -26,17 +25,18 @@ use std::{
     sync::Arc,
 };
 
-const MASTER_LOCATION_URL: &str = "https://api.findip.net/";
+const MASTER_LOCATION_URL: &str = "https://api.findip.net";
 
-const MASTER_URL: &str = "http://master.iw4.zip/";
+const IW4_MASTER_URL: &str = "http://master.iw4.zip";
 const HMW_MASTER_URL: &str = "http://ms.s2mod.to/game-servers";
-const JSON_SERVER_ENDPOINT: &str = "instance";
+const JSON_SERVER_ENDPOINT: &str = "/instance";
 const SERVER_GET_INFO_ENDPOINT: &str = "/getInfo";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
-const DEFAULT_SERVER_CAP: usize = 100;
+const DEFAULT_H2M_SERVER_CAP: usize = 100;
 const DEFUALT_INFO_RETRIES: u8 = 3;
+const RETRY_TIME_SCALE: u64 = 800; // ms
 const LOCAL_HOST: &str = "localhost";
 
 pub const GAME_ID: &str = "H2M";
@@ -67,7 +67,7 @@ impl Region {
 
 async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
     trace!("retreiving iw4 master server list");
-    let instance_url = format!("{MASTER_URL}{JSON_SERVER_ENDPOINT}");
+    let instance_url = format!("{IW4_MASTER_URL}{JSON_SERVER_ENDPOINT}");
     reqwest::get(instance_url.as_str())
         .await?
         .json::<Vec<HostData>>()
@@ -94,13 +94,13 @@ pub async fn build_favorites(
     let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
     let limit = args.limit.unwrap_or({
         if version < 1.0 {
-            DEFAULT_SERVER_CAP
+            DEFAULT_H2M_SERVER_CAP
         } else {
             10000
         }
     });
 
-    if version < 1.0 && limit >= DEFAULT_SERVER_CAP {
+    if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
         println!("{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{WHITE}")
     }
 
@@ -158,7 +158,7 @@ impl From<HostMeta> for Server {
     }
 }
 
-pub struct GetInfoErr {
+pub struct GetInfoMetaData {
     msg: String,
     display_url: bool,
     display_socket_addr: bool,
@@ -168,9 +168,9 @@ pub struct GetInfoErr {
     pub meta: Sourced,
 }
 
-impl GetInfoErr {
-    pub fn new_request_data(meta: Sourced) -> Self {
-        GetInfoErr {
+impl GetInfoMetaData {
+    pub fn new(meta: Sourced) -> Self {
+        GetInfoMetaData {
             msg: String::new(),
             display_url: false,
             display_source: false,
@@ -182,7 +182,7 @@ impl GetInfoErr {
     }
 
     #[inline]
-    pub fn with_msg(mut self, msg: String) -> Self {
+    pub fn set_err_msg(mut self, msg: String) -> Self {
         self.msg = msg;
         self
     }
@@ -227,7 +227,7 @@ impl GetInfoErr {
     }
 }
 
-impl Display for GetInfoErr {
+impl Display for GetInfoMetaData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.msg)?;
         if self.display_url {
@@ -269,12 +269,15 @@ impl UnresponsiveCounter {
 
 pub enum Request {
     New(Sourced),
-    Retry(GetInfoErr),
+    Retry(GetInfoMetaData),
 }
 
-pub async fn try_get_info(from: Request, client: reqwest::Client) -> Result<Server, GetInfoErr> {
+pub async fn try_get_info(
+    from: Request,
+    client: reqwest::Client,
+) -> Result<Server, GetInfoMetaData> {
     let meta_data = match from {
-        Request::New(meta) => GetInfoErr::new_request_data(meta),
+        Request::New(meta) => GetInfoMetaData::new(meta),
         Request::Retry(mut err) => {
             err.retries += 1;
             err
@@ -282,14 +285,14 @@ pub async fn try_get_info(from: Request, client: reqwest::Client) -> Result<Serv
     };
     let server_responce = match client.get(&meta_data.url).send().await {
         Ok(res) => res,
-        Err(err) => return Err(meta_data.with_msg(err.without_url().to_string())),
+        Err(err) => return Err(meta_data.set_err_msg(err.without_url().to_string())),
     };
     match server_responce.json::<GetInfo>().await {
         Ok(info) => Ok(Server {
             source: meta_data.meta,
             info: Some(info),
         }),
-        Err(err) => Err(meta_data.with_msg(err.without_url().to_string())),
+        Err(err) => Err(meta_data.set_err_msg(err.without_url().to_string())),
     }
 }
 
@@ -437,7 +440,7 @@ pub async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
 
 pub async fn queue_info_requests(
     servers: Vec<Sourced>,
-    tasks: &mut Vec<JoinHandle<Result<Server, GetInfoErr>>>,
+    tasks: &mut Vec<JoinHandle<Result<Server, GetInfoMetaData>>>,
     remove_duplicates: bool,
     client: &Client,
 ) {
@@ -623,7 +626,7 @@ async fn filter_server_list(
                             let client = client.clone();
                             retries.push(tokio::task::spawn(async move {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(
-                                    800 * (err.retries + 1) as u64,
+                                    RETRY_TIME_SCALE * (err.retries + 1) as u64,
                                 ))
                                 .await;
                                 try_get_info(Request::Retry(err), client).await
@@ -729,7 +732,7 @@ pub async fn try_location_lookup(
     ip: &IpAddr,
     client: reqwest::Client,
 ) -> Result<Continent, String> {
-    let location_api_url = format!("{MASTER_LOCATION_URL}{}{LOCATION_PRIVATE_KEY}", ip);
+    let location_api_url = format!("{MASTER_LOCATION_URL}/{}{FIND_IP_NET_PRIVATE_KEY}", ip);
 
     let api_response = client
         .get(location_api_url.as_str())

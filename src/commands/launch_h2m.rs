@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        filter::{try_get_info, GetInfoErr, Request, Sourced},
+        filter::{try_get_info, GetInfoMetaData, Request, Sourced},
         handler::{CommandContext, Message},
     },
     parse_hostname, strip_ansi_private_modes, strip_ansi_sequences,
@@ -115,8 +115,8 @@ impl From<AddrParseError> for HostRequestErr {
     }
 }
 
-impl From<GetInfoErr> for HostRequestErr {
-    fn from(mut value: GetInfoErr) -> Self {
+impl From<GetInfoMetaData> for HostRequestErr {
+    fn from(mut value: GetInfoMetaData) -> Self {
         // meta data discarded since the caller doesn't use it / avoids triggering large enum variant size diff
         HostRequestErr::RequestErr(value.with_socket_addr().to_string())
     }
