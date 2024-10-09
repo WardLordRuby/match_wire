@@ -1,5 +1,4 @@
 use crate::{
-    cli::Source,
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         launch_h2m::LaunchError,
@@ -10,6 +9,11 @@ use crate::{
     },
 };
 use std::fmt::Display;
+
+const SOURCE_HMW: &str = "HMW master server";
+const SOURCE_HMW_CACHED: &str = "Cached HMW server";
+const SOURCE_IW4: &str = "Iw4m master server";
+const SOURCE_IW4_CACHED: &str = "Cached Iw4m server";
 
 pub struct ConnectionHelp;
 
@@ -114,45 +118,49 @@ impl Display for DisplayPanic<'_> {
 impl Display for Sourced {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let display = match self {
-            Sourced::Hmw(_) => "HMW master server",
-            Sourced::HmwCached(_) => "Cached HMW server",
-            Sourced::Iw4(_) => "Iw4m master server",
-            Sourced::Iw4Cached(_) => "Cached Iw4m server",
+            Sourced::Hmw(_) => SOURCE_HMW,
+            Sourced::HmwCached(_) => SOURCE_HMW_CACHED,
+            Sourced::Iw4(_) => SOURCE_IW4,
+            Sourced::Iw4Cached(_) => SOURCE_IW4_CACHED,
         };
         write!(f, "{display}")
     }
 }
 
-impl Display for Source {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display = match self {
-            Source::HmwMaster => "HMW master server",
-            Source::Iw4Master => "Iw4m master server",
-        };
-        write!(f, "{display}")
+impl UnresponsiveCounter {
+    fn flatten(&self) -> [(usize, &'static str); 4] {
+        const _: () = assert!(
+            std::mem::size_of::<UnresponsiveCounter>() == std::mem::size_of::<usize>() * 4,
+            "`flatten()` needs to be updated if additional server sources are added"
+        );
+
+        [
+            (self.hmw, SOURCE_HMW),
+            (self.hmw_cached, SOURCE_HMW_CACHED),
+            (self.iw4, SOURCE_IW4),
+            (self.iw4_cached, SOURCE_IW4_CACHED),
+        ]
     }
 }
 
 impl Display for UnresponsiveCounter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut line_entered = false;
-        if self.iw4 > 0 {
+        let mut display_count_of = |count: usize, source: &'static str| -> std::fmt::Result {
             write!(
                 f,
-                "{} from: {}, did not respond to a 'getInfo' request",
-                DisplayServerCount(self.iw4, RED),
-                Source::Iw4Master
+                "{}{} from: {source}, did not respond to a 'getInfo' request",
+                if line_entered { "\n" } else { "" },
+                DisplayServerCount(count, RED),
             )?;
             line_entered = true;
-        }
-        if self.hmw > 0 {
-            write!(
-                f,
-                "{}{} from: {}, servers did not respond to a 'getInfo' request",
-                if line_entered { "\n" } else { "" },
-                DisplayServerCount(self.hmw, RED),
-                Source::HmwMaster
-            )?;
+            Ok(())
+        };
+
+        for (count, source) in self.flatten() {
+            if count > 0 {
+                display_count_of(count, source)?
+            }
         }
         Ok(())
     }

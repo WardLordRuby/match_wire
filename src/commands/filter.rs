@@ -165,20 +165,18 @@ pub struct GetInfoErr {
     display_source: bool,
     retries: u8,
     pub url: String,
-    pub socket_addr: SocketAddr,
     pub meta: Sourced,
 }
 
 impl GetInfoErr {
-    pub fn new_meta(url: String, socket_addr: SocketAddr, meta: Sourced) -> Self {
+    pub fn new_request_data(meta: Sourced) -> Self {
         GetInfoErr {
             msg: String::new(),
             display_url: false,
             display_source: false,
             display_socket_addr: false,
             retries: 0,
-            url,
-            socket_addr,
+            url: format!("http://{}{SERVER_GET_INFO_ENDPOINT}", meta.socket_addr()),
             meta,
         }
     }
@@ -236,7 +234,7 @@ impl Display for GetInfoErr {
             write!(f, ", with addr: {}", self.url)?;
         }
         if self.display_socket_addr {
-            write!(f, ", with ip: {}", self.socket_addr)?;
+            write!(f, ", with ip: {}", self.meta.socket_addr())?;
         }
         if self.display_source {
             write!(f, ", with source: {}", self.meta)?;
@@ -248,19 +246,23 @@ impl Display for GetInfoErr {
 #[derive(Default)]
 pub struct UnresponsiveCounter {
     pub hmw: usize,
+    pub hmw_cached: usize,
     pub iw4: usize,
+    pub iw4_cached: usize,
 }
 
 impl UnresponsiveCounter {
     #[inline]
     fn total(&self) -> usize {
-        self.hmw + self.iw4
+        self.hmw + self.hmw_cached + self.iw4 + self.iw4_cached
     }
 
-    fn add(&mut self, from: Source) {
+    fn add(&mut self, from: &Sourced) {
         match from {
-            Source::HmwMaster => self.hmw += 1,
-            Source::Iw4Master => self.iw4 += 1,
+            Sourced::Hmw(_) => self.hmw += 1,
+            Sourced::HmwCached(_) => self.hmw_cached += 1,
+            Sourced::Iw4(_) => self.iw4 += 1,
+            Sourced::Iw4Cached(_) => self.iw4_cached += 1,
         }
     }
 }
@@ -272,14 +274,7 @@ pub enum Request {
 
 pub async fn try_get_info(from: Request, client: reqwest::Client) -> Result<Server, GetInfoErr> {
     let meta_data = match from {
-        Request::New(meta) => {
-            let socket_addr = meta.socket_addr();
-            GetInfoErr::new_meta(
-                format!("http://{}{SERVER_GET_INFO_ENDPOINT}", socket_addr),
-                socket_addr,
-                meta,
-            )
-        }
+        Request::New(meta) => GetInfoErr::new_request_data(meta),
         Request::Retry(mut err) => {
             err.retries += 1;
             err
@@ -634,11 +629,7 @@ async fn filter_server_list(
                                 try_get_info(Request::Retry(err), client).await
                             }));
                         } else {
-                            did_not_respond.add(
-                                err.meta
-                                    .to_valid_source()
-                                    .expect("Can not send 'getInfo' for cached types"),
-                            );
+                            did_not_respond.add(&err.meta);
                             error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
                             if use_backup_server_info {
                                 if let Sourced::Iw4(meta) = err.meta {
