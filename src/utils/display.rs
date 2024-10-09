@@ -4,11 +4,12 @@ use crate::{
         filter::{Sourced, UnresponsiveCounter},
         launch_h2m::LaunchError,
     },
-    utils::input::style::{GREEN, RED, WHITE, YELLOW},
+    utils::{
+        caching::ReadCacheErr,
+        input::style::{GREEN, RED, WHITE, YELLOW},
+    },
 };
 use std::fmt::Display;
-
-use super::caching::ReadCacheErr;
 
 pub struct ConnectionHelp;
 
@@ -21,6 +22,7 @@ impl Display for ConnectionHelp {
     }
 }
 
+/// `(count, COLOR)`
 pub struct DisplayServerCount(pub usize, pub &'static str);
 
 impl Display for DisplayServerCount {
@@ -30,11 +32,12 @@ impl Display for DisplayServerCount {
             "{}{}{WHITE} {}",
             self.1,
             self.0,
-            if self.0 == 1 { "server" } else { "servers" }
+            SingularPlural(self.0, "server", "servers")
         )
     }
 }
 
+/// `(count, sent_retires)`
 pub struct DisplayGetInfoCount(pub usize, pub bool);
 
 impl Display for DisplayGetInfoCount {
@@ -52,28 +55,34 @@ impl Display for DisplayGetInfoCount {
     }
 }
 
-pub struct DisplayCountOf<'a>(pub usize, pub &'a str, pub &'a str);
+/// `(count, "singular", "plural")`
+pub struct DisplayCountOf(pub usize, pub &'static str, pub &'static str);
 
-impl Display for DisplayCountOf<'_> {
+impl Display for DisplayCountOf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} {}",
-            self.0,
-            if self.0 == 1 { self.1 } else { self.2 }
-        )
+        write!(f, "{} {}", self.0, SingularPlural(self.0, self.1, self.2))
     }
 }
 
+/// `(count, "singular", "plural")`
+pub struct SingularPlural(pub usize, pub &'static str, pub &'static str);
+
+impl Display for SingularPlural {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", if self.0 == 1 { self.1 } else { self.2 })
+    }
+}
+
+/// `history.len()`
 pub struct DisplayHistoryErr(pub usize);
 
 impl Display for DisplayHistoryErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0 == 1 {
-            write!(f, "History only contains 1 entry")
-        } else {
-            write!(f, "History only contains {} entries", self.0)
-        }
+        write!(
+            f,
+            "History only contains {}",
+            DisplayCountOf(self.0, "entry", "entries")
+        )
     }
 }
 

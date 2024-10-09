@@ -117,7 +117,7 @@ pub struct Filters {
     pub excludes: Option<Vec<String>>,
 
     /// Specify a maximum number of 'getInfo' retries [Default: 3]
-    #[arg(long, value_parser = value_parser!(u8).range(1..=20))]
+    #[arg(long, value_parser = value_parser!(u8).range(0..=20))]
     pub retry_max: Option<u8>,
 }
 

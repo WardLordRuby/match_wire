@@ -249,12 +249,9 @@ impl From<&'static CommandScheme> for Completion {
             recs: &[&'static str],
             at: usize,
         ) {
-            assert!(
-                match map.insert(at, HashSet::from_iter(recs.iter().copied())) {
-                    None => true,
-                    Some(set) => set == HashSet::from_iter(recs.iter().copied()),
-                }
-            )
+            assert!(map
+                .insert(at, HashSet::from_iter(recs.iter().copied()))
+                .is_none())
         }
         fn insert_index(
             map: &mut HashMap<&'static str, usize>,
@@ -263,10 +260,13 @@ impl From<&'static CommandScheme> for Completion {
             data: &'static RecData,
             list: &[&'static RecData],
         ) {
-            assert!(match map.insert(key, val) {
-                None => true,
-                Some(j) => list[j] == data,
-            });
+            assert!(
+                match map.insert(key, val) {
+                    None => true,
+                    Some(j) => list[j] == data,
+                },
+                "duplicate recomendation entries _must_ have identical nodes"
+            );
         }
 
         fn walk_inner(

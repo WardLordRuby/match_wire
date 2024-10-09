@@ -5,7 +5,7 @@ use crate::{
     parse_hostname,
     utils::{
         caching::Cache,
-        display::{DisplayCountOf, DisplayGetInfoCount, DisplayServerCount},
+        display::{DisplayCountOf, DisplayGetInfoCount, DisplayServerCount, SingularPlural},
         input::style::{GREEN, RED, WHITE, YELLOW},
         json_data::*,
     },
@@ -36,7 +36,7 @@ const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
 const DEFAULT_SERVER_CAP: usize = 100;
-pub const DEFUALT_INFO_RETRIES: u8 = 3;
+const DEFUALT_INFO_RETRIES: u8 = 3;
 const LOCAL_HOST: &str = "localhost";
 
 pub const GAME_ID: &str = "H2M";
@@ -564,7 +564,11 @@ async fn filter_server_list(
         }
 
         if !new_lookups.is_empty() {
-            info!("Made {} new location requests", new_lookups.len());
+            info!(
+                "Made {} new location {}",
+                new_lookups.len(),
+                SingularPlural(new_lookups.len(), "request", "requests")
+            );
         }
 
         for sourced_data in check_again {
@@ -576,7 +580,10 @@ async fn filter_server_list(
         }
 
         if failure_count > 0 {
-            eprintln!("{RED}Failed to resolve location for {failure_count} server hoster(s){WHITE}")
+            eprintln!(
+                "{RED}Failed to resolve location for {failure_count} server {}{WHITE}",
+                SingularPlural(failure_count, "hoster", "hosters")
+            )
         }
 
         servers = server_list;
