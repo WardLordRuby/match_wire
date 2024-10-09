@@ -115,6 +115,10 @@ pub struct Filters {
     /// {n}  [-e "one long term"] searches for "one long term"
     #[arg(short, long, num_args(1..))]
     pub excludes: Option<Vec<String>>,
+
+    /// Specify a maximum number of 'getInfo' retries [Default: 3]
+    #[arg(long, value_parser = value_parser!(u8).range(1..=20))]
+    pub retry_max: Option<u8>,
 }
 
 pub const REGION_LEN: usize = 3;

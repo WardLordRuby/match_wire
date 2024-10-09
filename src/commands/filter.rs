@@ -35,6 +35,7 @@ const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
 const DEFAULT_SERVER_CAP: usize = 100;
+pub const DEFUALT_INFO_RETRIES: u8 = 3;
 const LOCAL_HOST: &str = "localhost";
 
 pub const GAME_ID: &str = "H2M";
@@ -154,27 +155,45 @@ impl From<HostMeta> for Server {
 }
 
 pub struct GetInfoErr {
-    err: String,
-    display_addr: bool,
+    msg: String,
+    display_url: bool,
+    display_socket_addr: bool,
     display_source: bool,
-    pub addr: SocketAddr,
+    retries: u8,
+    pub url: String,
+    pub socket_addr: SocketAddr,
     pub meta: Sourced,
 }
 
 impl GetInfoErr {
-    pub fn new(err: String, addr: SocketAddr, meta: Sourced) -> Self {
+    pub fn new_meta(url: String, socket_addr: SocketAddr, meta: Sourced) -> Self {
         GetInfoErr {
-            err,
-            display_addr: false,
+            msg: String::new(),
+            display_url: false,
             display_source: false,
-            addr,
+            display_socket_addr: false,
+            retries: 0,
+            url,
+            socket_addr,
             meta,
         }
     }
 
     #[inline]
-    pub fn with_addr(&mut self) -> &mut Self {
-        self.display_addr = true;
+    pub fn with_msg(mut self, msg: String) -> Self {
+        self.msg = msg;
+        self
+    }
+
+    #[inline]
+    pub fn with_url(&mut self) -> &mut Self {
+        self.display_url = true;
+        self
+    }
+
+    #[inline]
+    pub fn with_socket_addr(&mut self) -> &mut Self {
+        self.display_socket_addr = true;
         self
     }
 
@@ -186,8 +205,15 @@ impl GetInfoErr {
 
     #[inline]
     /// `GetInfoErr` default display is without addr
-    pub fn without_addr(&mut self) -> &mut Self {
-        self.display_addr = false;
+    pub fn without_url(&mut self) -> &mut Self {
+        self.display_url = false;
+        self
+    }
+
+    #[inline]
+    /// `GetInfoErr` default display is without ip
+    pub fn without_ip(&mut self) -> &mut Self {
+        self.display_url = false;
         self
     }
 
@@ -201,9 +227,12 @@ impl GetInfoErr {
 
 impl Display for GetInfoErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.err)?;
-        if self.display_addr {
-            write!(f, ", with ip: {}", self.addr)?;
+        write!(f, "{}", self.msg)?;
+        if self.display_url {
+            write!(f, ", with addr: {}", self.url)?;
+        }
+        if self.display_socket_addr {
+            write!(f, ", with ip: {}", self.socket_addr)?;
         }
         if self.display_source {
             write!(f, ", with source: {}", self.meta)?;
@@ -212,29 +241,36 @@ impl Display for GetInfoErr {
     }
 }
 
-pub async fn try_get_info(meta: Sourced, client: reqwest::Client) -> Result<Server, GetInfoErr> {
-    let socket_addr = meta.socket_addr();
-    let addr = format!("http://{}{SERVER_GET_INFO_ENDPOINT}", socket_addr);
-    let server_responce = match client.get(&addr).send().await {
-        Ok(res) => res,
-        Err(err) => {
-            return Err(GetInfoErr::new(
-                err.without_url().to_string(),
+pub enum Request {
+    New(Sourced),
+    Retry(GetInfoErr),
+}
+
+pub async fn try_get_info(from: Request, client: reqwest::Client) -> Result<Server, GetInfoErr> {
+    let meta_data = match from {
+        Request::New(meta) => {
+            let socket_addr = meta.socket_addr();
+            GetInfoErr::new_meta(
+                format!("http://{}{SERVER_GET_INFO_ENDPOINT}", socket_addr),
                 socket_addr,
                 meta,
-            ))
+            )
         }
+        Request::Retry(mut err) => {
+            err.retries += 1;
+            err
+        }
+    };
+    let server_responce = match client.get(&meta_data.url).send().await {
+        Ok(res) => res,
+        Err(err) => return Err(meta_data.with_msg(err.without_url().to_string())),
     };
     match server_responce.json::<GetInfo>().await {
         Ok(info) => Ok(Server {
-            source: meta,
+            source: meta_data.meta,
             info: Some(info),
         }),
-        Err(err) => Err(GetInfoErr::new(
-            err.without_url().to_string(),
-            socket_addr,
-            meta,
-        )),
+        Err(err) => Err(meta_data.with_msg(err.without_url().to_string())),
     }
 }
 
@@ -405,9 +441,9 @@ pub async fn queue_info_requests(
         }
 
         let client = client.clone();
-        tasks.push(tokio::spawn(
-            async move { try_get_info(server, client).await },
-        ));
+        tasks.push(tokio::spawn(async move {
+            try_get_info(Request::New(server), client).await
+        }));
     }
 }
 
@@ -496,20 +532,18 @@ async fn filter_server_list(
 
         for task in tasks {
             match task.await {
-                Ok(result) => match result {
-                    Ok((sourced_data, cont_code)) => {
-                        cache
-                            .ip_to_region
-                            .insert(sourced_data.socket_addr().ip(), cont_code);
-                        if regions.iter().any(|region| region.matches(cont_code)) {
-                            server_list.push(sourced_data)
-                        }
+                Ok(Ok((sourced_data, cont_code))) => {
+                    cache
+                        .ip_to_region
+                        .insert(sourced_data.socket_addr().ip(), cont_code);
+                    if regions.iter().any(|region| region.matches(cont_code)) {
+                        server_list.push(sourced_data)
                     }
-                    Err(err) => {
-                        error!(name: LOG_ONLY, "{err}");
-                        failure_count += 1
-                    }
-                },
+                }
+                Ok(Err(err)) => {
+                    error!(name: LOG_ONLY, "{err}");
+                    failure_count += 1
+                }
                 Err(err) => {
                     error!(name: LOG_ONLY, "{err:?}");
                     failure_count += 1
@@ -561,24 +595,50 @@ async fn filter_server_list(
             !args.with_bots && !args.without_bots && args.include_unresponsive;
         let mut did_not_respond = 0_usize;
         let mut used_backup_data = 0_usize;
+        let mut sent_retires = false;
+        let max_attempts = args.retry_max.unwrap_or(DEFUALT_INFO_RETRIES);
 
-        for task in tasks {
-            match task.await {
-                Ok(result) => match result {
-                    Ok(server) => host_list.push(server),
-                    Err(mut err) => {
-                        did_not_respond += 1;
-                        error!(name: LOG_ONLY, "{}", err.with_addr().with_source());
-                        if use_backup_server_info {
-                            if let Sourced::Iw4(meta) = err.meta {
-                                used_backup_data += 1;
-                                host_list.push(Server::from(meta));
+        while !tasks.is_empty() {
+            println!(
+                "{} 'getInfo' for {}{}{WHITE} servers...",
+                if !sent_retires {
+                    "Requesting"
+                } else {
+                    "Retring"
+                },
+                if !sent_retires { GREEN } else { YELLOW },
+                tasks.len()
+            );
+            let mut retries = Vec::new();
+            for task in tasks {
+                match task.await {
+                    Ok(Ok(server)) => host_list.push(server),
+                    Ok(Err(mut err)) => {
+                        if err.retries < max_attempts {
+                            let client = client.clone();
+                            retries.push(tokio::task::spawn(async move {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(
+                                    800 * (err.retries + 1) as u64,
+                                ))
+                                .await;
+                                try_get_info(Request::Retry(err), client).await
+                            }));
+                        } else {
+                            did_not_respond += 1;
+                            error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
+                            if use_backup_server_info {
+                                if let Sourced::Iw4(meta) = err.meta {
+                                    used_backup_data += 1;
+                                    host_list.push(Server::from(meta));
+                                }
                             }
                         }
                     }
-                },
-                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+                    Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+                }
             }
+            sent_retires = true;
+            tasks = retries;
         }
 
         if did_not_respond > 0 {

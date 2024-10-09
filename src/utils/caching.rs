@@ -142,7 +142,7 @@ pub async fn build_cache(
                     cache.push(server, region)
                 }
                 Err(mut err) => {
-                    error!(name: LOG_ONLY, "{}", err.with_addr().with_source());
+                    error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
                     let source = err.meta.to_valid_source();
                     if let Sourced::Iw4(data) = err.meta {
                         if let Ok(ip) = data.server.ip.parse() {

@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        filter::{try_get_info, GetInfoErr, Sourced},
+        filter::{try_get_info, GetInfoErr, Request, Sourced},
         handler::{CommandContext, Message},
     },
     parse_hostname, strip_ansi_private_modes, strip_ansi_sequences,
@@ -119,7 +119,7 @@ impl From<AddrParseError> for HostRequestErr {
 impl From<GetInfoErr> for HostRequestErr {
     fn from(mut value: GetInfoErr) -> Self {
         // meta data discarded since the caller doesn't use it / avoids triggering large enum variant size diff
-        HostRequestErr::RequestErr(value.with_addr().to_string())
+        HostRequestErr::RequestErr(value.with_socket_addr().to_string())
     }
 }
 
@@ -164,7 +164,11 @@ impl HostName {
             .expect("`Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
             .trim();
         let socket_addr = ip_str.parse::<SocketAddr>()?;
-        let server_info = try_get_info(Sourced::Hmw(socket_addr), reqwest::Client::new()).await?;
+        let server_info = try_get_info(
+            Request::New(Sourced::Hmw(socket_addr)),
+            reqwest::Client::new(),
+        )
+        .await?;
         let host_name = server_info.info.expect("request returned `Ok`").host_name;
         Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
     }

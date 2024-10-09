@@ -37,7 +37,8 @@ const COMMAND_RECS: [&str; 13] = [
     "localenv",
 ];
 const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 10), (5, 11), (6, 12)];
-const FILTER_RECS: [&str; 11] = [
+
+const FILTER_RECS: [&str; 12] = [
     "limit",
     "player-min",
     "team-size-max",
@@ -48,6 +49,7 @@ const FILTER_RECS: [&str; 11] = [
     "with-bots",
     "without-bots",
     "include-unresponsive",
+    "retry-max",
     "help",
 ];
 const FILTER_SHORT: [(usize, &str); 8] = [
@@ -58,8 +60,9 @@ const FILTER_SHORT: [(usize, &str); 8] = [
     (4, "s"),
     (5, "i"),
     (6, "e"),
-    (10, "h"),
+    (11, "h"),
 ];
+
 const FILTER_REGIONS: [&str; 8] = [
     "na",
     "eu",
@@ -71,10 +74,13 @@ const FILTER_REGIONS: [&str; 8] = [
     "asiapacific",
 ];
 const FILTER_REGIONS_ALIAS: [(usize, usize); 5] = [(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)];
+
 const FILTER_SOURCE_RECS: [&str; 4] = ["iw4-master", "hmw-master", "iw4", "hmw"];
 const FILTER_SOURCE_ALIAS: [(usize, usize); 2] = [(0, 2), (1, 3)];
+
 const RECONNECT_RECS: [&str; 3] = ["history", "connect", "help"];
 const RECONNECT_SHORT: [(usize, &str); 3] = [(0, "H"), (1, "c"), (2, "h")];
+
 const CACHE_RECS: [&str; 3] = ["reset", "update", "clear"];
 const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
 
@@ -130,7 +136,8 @@ const COMMAND_INNER: [InnerScheme; 10] = [
     // help
     InnerScheme::help(),
 ];
-const FILTER_INNER: [InnerScheme; 11] = [
+
+const FILTER_INNER: [InnerScheme; 12] = [
     // limit
     InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
     // player-min
@@ -179,9 +186,12 @@ const FILTER_INNER: [InnerScheme; 11] = [
     InnerScheme::flag("filter", false),
     // include-unresponsive
     InnerScheme::flag("filter", false),
+    // retry-max
+    InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
     // help
     InnerScheme::help(),
 ];
+
 const RECONNECT_INNTER: [InnerScheme; 3] = [
     // history
     InnerScheme::end("reconnect"),
