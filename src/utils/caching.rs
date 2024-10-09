@@ -15,7 +15,6 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    fmt::Display,
     io,
     net::{IpAddr, SocketAddr},
     path::Path,
@@ -215,12 +214,6 @@ impl From<serde_json::Error> for ReadCacheErr {
             connection_history: None,
             region_cache: None,
         }
-    }
-}
-
-impl Display for ReadCacheErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.err)
     }
 }
 

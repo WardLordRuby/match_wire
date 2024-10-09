@@ -5,9 +5,9 @@ use crate::{
         launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
         reconnect::reconnect,
     },
-    print_h2m_connection_help,
     utils::{
         caching::{build_cache, Cache},
+        display::ConnectionHelp,
         input::{
             line::{
                 AsyncCtxCallback, EventLoop, InputEventHook, InputHook, InputHookErr, LineCallback,
@@ -300,7 +300,7 @@ pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
                     info!("Connection already active")
                 } else {
                     error!("{msg}");
-                    print_h2m_connection_help();
+                    println!("{ConnectionHelp}");
                 }
             }
             LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),

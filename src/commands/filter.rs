@@ -5,6 +5,7 @@ use crate::{
     parse_hostname,
     utils::{
         caching::Cache,
+        display::{DisplayCountOf, DisplayGetInfoCount, DisplayServerCount},
         input::style::{GREEN, RED, WHITE, YELLOW},
         json_data::*,
     },
@@ -108,8 +109,8 @@ pub async fn build_favorites(
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     println!(
-        "{GREEN}{}{WHITE} servers match the prameters in the current query",
-        servers.len()
+        "{} match the prameters in the current query",
+        DisplayServerCount(servers.len(), GREEN)
     );
 
     if servers.len() > limit {
@@ -126,7 +127,10 @@ pub async fn build_favorites(
 
     serialize_json(&mut favorites_json, ips)?;
 
-    println!("{GREEN}{FAVORITES} updated with {ip_collected} entries{WHITE}");
+    println!(
+        "{GREEN}{FAVORITES} updated with {}{WHITE}",
+        DisplayCountOf(ip_collected, "entry", "entries")
+    );
     Ok(update_cache)
 }
 
@@ -241,6 +245,26 @@ impl Display for GetInfoErr {
     }
 }
 
+#[derive(Default)]
+pub struct UnresponsiveCounter {
+    pub hmw: usize,
+    pub iw4: usize,
+}
+
+impl UnresponsiveCounter {
+    #[inline]
+    fn total(&self) -> usize {
+        self.hmw + self.iw4
+    }
+
+    fn add(&mut self, from: Source) {
+        match from {
+            Source::HmwMaster => self.hmw += 1,
+            Source::Iw4Master => self.iw4 += 1,
+        }
+    }
+}
+
 pub enum Request {
     New(Sourced),
     Retry(GetInfoErr),
@@ -301,18 +325,6 @@ pub enum Sourced {
     HmwCached(SocketAddr),
     Iw4(HostMeta),
     Iw4Cached(SocketAddr),
-}
-
-impl Display for Sourced {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display = match self {
-            Sourced::Hmw(_) => "HMW master server",
-            Sourced::HmwCached(_) => "Cached HMW server",
-            Sourced::Iw4(_) => "Iw4m master server",
-            Sourced::Iw4Cached(_) => "Cached Iw4m server",
-        };
-        write!(f, "{display}")
-    }
 }
 
 impl Sourced {
@@ -495,8 +507,8 @@ async fn filter_server_list(
 
     let cache_modified = if let Some(ref regions) = args.region {
         println!(
-            "Determining region of {GREEN}{}{WHITE} servers...",
-            servers.len()
+            "Determining region of {}...",
+            DisplayServerCount(servers.len(), GREEN)
         );
 
         let mut server_list = Vec::new();
@@ -593,22 +605,13 @@ async fn filter_server_list(
 
         let use_backup_server_info =
             !args.with_bots && !args.without_bots && args.include_unresponsive;
-        let mut did_not_respond = 0_usize;
+        let mut did_not_respond = UnresponsiveCounter::default();
         let mut used_backup_data = 0_usize;
         let mut sent_retires = false;
         let max_attempts = args.retry_max.unwrap_or(DEFUALT_INFO_RETRIES);
 
         while !tasks.is_empty() {
-            println!(
-                "{} 'getInfo' for {}{}{WHITE} servers...",
-                if !sent_retires {
-                    "Requesting"
-                } else {
-                    "Retring"
-                },
-                if !sent_retires { GREEN } else { YELLOW },
-                tasks.len()
-            );
+            println!("{}", DisplayGetInfoCount(tasks.len(), sent_retires));
             let mut retries = Vec::new();
             for task in tasks {
                 match task.await {
@@ -624,7 +627,11 @@ async fn filter_server_list(
                                 try_get_info(Request::Retry(err), client).await
                             }));
                         } else {
-                            did_not_respond += 1;
+                            did_not_respond.add(
+                                err.meta
+                                    .to_valid_source()
+                                    .expect("Can not send 'getInfo' for cached types"),
+                            );
                             error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
                             if use_backup_server_info {
                                 if let Sourced::Iw4(meta) = err.meta {
@@ -641,16 +648,15 @@ async fn filter_server_list(
             tasks = retries;
         }
 
-        if did_not_respond > 0 {
+        if did_not_respond.total() > 0 {
             if use_backup_server_info {
                 println!(
-                    "Included outdated server data for {YELLOW}{used_backup_data}{WHITE} of the \
-                    {RED}{did_not_respond}{WHITE} servers servers that did not respond to 'getInfo' request"
+                    "Included outdated server data for {YELLOW}{used_backup_data}{WHITE} \
+                    of {} that did not respond to 'getInfo' request",
+                    DisplayServerCount(did_not_respond.total(), RED)
                 )
             } else {
-                eprintln!(
-                    "{RED}{did_not_respond}{WHITE} servers did not respond to a 'getInfo' request"
-                )
+                eprintln!("{did_not_respond}");
             }
         }
 

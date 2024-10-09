@@ -10,7 +10,6 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
-    fmt::Display,
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
@@ -404,16 +403,6 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 pub enum LaunchError {
     Running(&'static str),
     SpawnErr(OsString),
-}
-
-impl Display for LaunchError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display = match self {
-            LaunchError::Running(msg) => *msg,
-            LaunchError::SpawnErr(err) => &err.to_string_lossy(),
-        };
-        write!(f, "{display}")
-    }
 }
 
 pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), LaunchError> {

@@ -14,6 +14,7 @@ pub mod utils {
         pub mod style;
     }
     pub mod caching;
+    pub mod display;
     pub mod json_data;
     pub mod subscriber;
 }
@@ -24,13 +25,12 @@ use crossterm::{cursor, execute, terminal};
 use std::{
     borrow::Cow,
     collections::HashSet,
-    fmt::Display,
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
 use utils::{
-    input::style::{GREEN, WHITE, YELLOW},
+    input::style::{GREEN, WHITE},
     json_data::Version,
 };
 
@@ -69,11 +69,6 @@ macro_rules! break_if {
             break;
         }
     };
-}
-
-#[inline]
-pub fn print_h2m_connection_help() {
-    println!("Close H2M and use command `{YELLOW}launch{WHITE}` to establish valid connection");
 }
 
 pub async fn get_latest_version() -> reqwest::Result<Option<String>> {
@@ -206,31 +201,6 @@ pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
         }
         Err(err) => Err(err),
         _ => unreachable!(),
-    }
-}
-
-pub struct DisplayPanic<'a>(pub &'a std::panic::PanicInfo<'a>);
-
-impl Display for DisplayPanic<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(location) = self.0.location() {
-            write!(
-                f,
-                "PANIC {}:{}:{}: ",
-                location.file(),
-                location.line(),
-                location.column(),
-            )?;
-        } else {
-            write!(f, "PANIC: ")?;
-        }
-        if let Some(msg) = self.0.payload().downcast_ref::<&str>() {
-            write!(f, "{msg}")
-        } else if let Some(msg) = self.0.payload().downcast_ref::<String>() {
-            write!(f, "{msg}")
-        } else {
-            write!(f, "no attached message")
-        }
     }
 }
 

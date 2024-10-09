@@ -4,8 +4,10 @@ use crate::{
         handler::{CommandContext, CommandHandle},
         launch_h2m::HostName,
     },
-    print_h2m_connection_help,
-    utils::input::style::{WHITE, YELLOW},
+    utils::{
+        display::{ConnectionHelp, DisplayHistoryErr},
+        input::style::{WHITE, YELLOW},
+    },
 };
 use std::{collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
 use tokio::sync::RwLock;
@@ -65,18 +67,6 @@ async fn display_history<'a>(
     println!("{}", DisplayHistory(history, &ips));
 }
 
-struct DisplayHistoryErr(usize);
-
-impl Display for DisplayHistoryErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0 == 1 {
-            write!(f, "History only contains 1 entry")
-        } else {
-            write!(f, "History only contains {} entries", self.0)
-        }
-    }
-}
-
 pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> CommandHandle {
     let cache_arc = context.cache();
     let mut cache = cache_arc.lock().await;
@@ -90,7 +80,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     }
     if let Err(err) = context.check_h2m_connection().await {
         error!("{err}");
-        print_h2m_connection_help();
+        println!("{ConnectionHelp}");
         return CommandHandle::Processed;
     }
     let history_len = cache.connection_history.len();

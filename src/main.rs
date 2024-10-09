@@ -8,6 +8,7 @@ use match_wire::{
     get_latest_version, print_help, splash_screen,
     utils::{
         caching::{build_cache, read_cache, write_cache, Cache},
+        display::DisplayPanic,
         input::{
             completion::CommandScheme,
             line::{EventLoop, LineReader},
@@ -15,7 +16,7 @@ use match_wire::{
         },
         subscriber::init_subscriber,
     },
-    DisplayPanic, CACHED_DATA, LOCAL_DATA, LOG_ONLY,
+    CACHED_DATA, LOCAL_DATA, LOG_ONLY,
 };
 use std::{
     io,
