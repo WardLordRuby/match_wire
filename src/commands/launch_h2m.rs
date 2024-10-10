@@ -280,7 +280,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         };
 
         const BUFFER_SIZE: u32 = 16384; // 16 KB
-        const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+        const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         'task: loop {
