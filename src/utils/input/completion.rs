@@ -242,6 +242,11 @@ impl RecKind {
     }
 }
 
+pub enum Direction {
+    Next,
+    Previous,
+}
+
 impl From<&'static CommandScheme> for Completion {
     fn from(value: &'static CommandScheme) -> Self {
         fn insert_rec_set(
@@ -386,7 +391,17 @@ pub struct Completion {
     value_sets: HashMap<usize, HashSet<&'static str>>,
 }
 
-#[derive(Default, Debug)]
+// impl std::fmt::Debug for Completion {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         writeln!(
+//             f,
+//             "\nrecomendations: {:?}\nrec index: {:?}\nlist index: {:?}",
+//             self.recomendations, self.rec_i, self.list_i
+//         )
+//     }
+// }
+
+#[derive(Default)]
 struct CompletionState {
     curr_command: Option<SliceData>,
     curr_argument: Option<SliceData>,
@@ -394,7 +409,7 @@ struct CompletionState {
     ending: LineEnd,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 /// representes a String slice entry into `LineData.line().trim_start()`
 struct SliceData {
     byte_start: usize,
@@ -484,7 +499,7 @@ impl CompletionState {
         .to_string();
     }
     /* -------------------------------- Debug tool --------------------------------------- */
-    // fn display(&self, line: &str) -> String {
+    // fn debug(&self, line: &str) -> String {
     //     let inner_fmt = |slice_data: &SliceData| -> String {
     //         format!(
     //             "'{}' hash_i: {}",
@@ -757,9 +772,7 @@ impl LineReader<'_> {
     pub fn update_completeion(&mut self) {
         let line_trim_start = self.line.input().trim_start();
         if line_trim_start.is_empty() {
-            // MARK: TODO
-            // a full reset might not be needed here
-            self.reset_completion();
+            self.default_recomendations();
             return;
         }
 
@@ -910,7 +923,7 @@ impl LineReader<'_> {
             }
         }
 
-        // eprintln!("{}", self.completion.input.display(line_trim_start));
+        // eprintln!("{}", self.completion.input.debug(line_trim_start));
 
         self.completion.list_i = match (
             self.completion.curr_command(),
@@ -954,12 +967,16 @@ impl LineReader<'_> {
         self.completion.recomendations = recomendations;
     }
 
-    pub fn try_completion(&mut self, by: i8) -> io::Result<()> {
+    pub fn try_completion(&mut self, direction: Direction) -> io::Result<()> {
         if self.completion.recomendations.is_empty() {
             return Ok(());
         }
 
-        self.completion.rec_i += by;
+        self.completion.rec_i += match direction {
+            Direction::Next => 1,
+            Direction::Previous => -1,
+        };
+
         match self.completion.rec_i {
             i if i >= USER_INPUT && i < self.completion.recomendations.len() as i8 => (),
             ..USER_INPUT => self.completion.rec_i = self.completion.recomendations.len() as i8 - 1,
@@ -1014,13 +1031,17 @@ impl LineReader<'_> {
         self.change_line(new_line)
     }
 
+    fn default_recomendations(&mut self) {
+        let commands = self.completion.rec_list[COMMANDS];
+        self.completion.recomendations = commands.recs.as_ref().expect("commands is not empty")
+            [..commands.unique_rec_end()]
+            .to_vec();
+    }
+
     pub fn reset_completion(&mut self) {
+        self.default_recomendations();
         self.completion.input = CompletionState::default();
         self.completion.list_i = COMMANDS;
-        let commands = self.completion.rec_list[COMMANDS];
-        let end = commands.unique_rec_end();
-        self.completion.recomendations =
-            commands.recs.as_ref().expect("commands is not empty")[..end].to_vec();
         self.completion.rec_i = USER_INPUT;
     }
 }

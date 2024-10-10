@@ -2,7 +2,7 @@ use crate::{
     commands::handler::{end_forward, CommandContext, Message},
     strip_ansi_sequences,
     utils::input::{
-        completion::{CommandScheme, Completion},
+        completion::{CommandScheme, Completion, Direction},
         style::PROMPT_END,
     },
 };
@@ -484,7 +484,7 @@ impl<'a> LineReader<'a> {
                 kind: KeyEventKind::Press,
                 ..
             }) => {
-                self.try_completion(1)?;
+                self.try_completion(Direction::Next)?;
                 Ok(EventLoop::Continue)
             }
             Event::Key(KeyEvent {
@@ -492,7 +492,7 @@ impl<'a> LineReader<'a> {
                 kind: KeyEventKind::Press,
                 ..
             }) => {
-                self.try_completion(-1)?;
+                self.try_completion(Direction::Previous)?;
                 Ok(EventLoop::Continue)
             }
             Event::Key(KeyEvent {
