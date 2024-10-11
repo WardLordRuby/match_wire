@@ -8,7 +8,7 @@ use match_wire::{
         },
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
-    get_latest_version, print_help, splash_screen,
+    get_latest_hmw_hash, get_latest_version, print_help, splash_screen,
     utils::{
         caching::{build_cache, read_cache, write_cache, Cache},
         display::DisplayPanic,
@@ -63,6 +63,7 @@ fn main() {
         startup_data.splash_task.await.unwrap().unwrap();
 
         let app_version_res = startup_data.version_task.await;
+        let hmw_hash_res = startup_data.hmw_hash_task.await;
         let launch_res = startup_data.launch_task.await;
 
         let (message_tx, mut message_rx) = mpsc::channel(50);
@@ -71,6 +72,7 @@ fn main() {
             .cache(startup_data.cache)
             .launch_res(launch_res)
             .app_ver_res(app_version_res)
+            .hmw_hash_res(hmw_hash_res)
             .game_details(startup_data.game)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
@@ -189,6 +191,7 @@ struct StartupData {
     splash_task: JoinHandle<io::Result<()>>,
     launch_task: JoinHandle<Result<PTY, LaunchError>>,
     version_task: JoinHandle<reqwest::Result<AppDetails>>,
+    hmw_hash_task: JoinHandle<reqwest::Result<Option<String>>>,
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -207,6 +210,7 @@ async fn app_startup() -> Result<StartupData, String> {
     let game = GameDetails::default(&exe_dir);
 
     let version_task = tokio::task::spawn(get_latest_version());
+    let hmw_hash_task = tokio::task::spawn(get_latest_hmw_hash());
 
     let splash_task = tokio::task::spawn(splash_screen());
 
@@ -240,6 +244,7 @@ async fn app_startup() -> Result<StartupData, String> {
                         splash_task,
                         launch_task,
                         version_task,
+                        hmw_hash_task,
                     })
                 }
                 Err(err) => {
@@ -280,5 +285,6 @@ async fn app_startup() -> Result<StartupData, String> {
         splash_task,
         launch_task,
         version_task,
+        hmw_hash_task,
     })
 }

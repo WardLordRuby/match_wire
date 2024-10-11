@@ -179,6 +179,7 @@ impl CommandContext {
 
 type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
 type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
+type HmwHashResult = Result<reqwest::Result<Option<String>>, JoinError>;
 
 #[derive(Default)]
 pub struct CommandContextBuilder {
@@ -188,6 +189,7 @@ pub struct CommandContextBuilder {
     msg_sender: Option<Sender<Message>>,
     local_dir: Option<PathBuf>,
     app_ver_res: Option<AppVersionResult>,
+    hmw_hash_res: Option<HmwHashResult>,
 }
 
 impl CommandContextBuilder {
@@ -212,6 +214,10 @@ impl CommandContextBuilder {
     }
     pub fn app_ver_res(mut self, res: AppVersionResult) -> Self {
         self.app_ver_res = Some(res);
+        self
+    }
+    pub fn hmw_hash_res(mut self, res: HmwHashResult) -> Self {
+        self.hmw_hash_res = Some(res);
         self
     }
     pub fn game_details(mut self, details: GameDetails) -> Self {
@@ -253,8 +259,20 @@ impl CommandContextBuilder {
             AppDetails::default()
         };
 
-        // MARK: TODO
-        // unwrap the lastest hash task result here and set the return value to `game.hash_latest`
+        let mut game = self.game.ok_or("game details is required")?;
+        if let Some(res) = self.hmw_hash_res {
+            match res {
+                Ok(Ok(option_hash)) => {
+                    if option_hash.is_some() {
+                        game.hash_latest = option_hash;
+                    } else {
+                        error!("hmw manifest.json formatting has changed");
+                    }
+                }
+                Ok(Err(err)) => error!("{err}"),
+                Err(err) => error!("{err:?}"),
+            }
+        }
 
         Ok(CommandContext {
             cache: self
@@ -265,9 +283,9 @@ impl CommandContextBuilder {
                 .msg_sender
                 .map(Arc::new)
                 .ok_or("msg_sender is required")?,
-            game: self.game.ok_or("game details is required")?,
-            local_dir: self.local_dir,
             app,
+            game,
+            local_dir: self.local_dir,
             pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
             cache_needs_update: Arc::new(AtomicBool::new(false)),
             forward_logs: Arc::new(AtomicBool::new(false)),

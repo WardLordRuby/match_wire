@@ -33,7 +33,7 @@ use std::{
 };
 use utils::{
     input::style::{GREEN, RED, WHITE},
-    json_data::Version,
+    json_data::{HmwManifest, Version},
 };
 
 pub const LOG_ONLY: &str = "log_only";
@@ -92,17 +92,19 @@ pub async fn get_latest_version() -> reqwest::Result<AppDetails> {
     Ok(AppDetails::from(version))
 }
 
-pub async fn get_latest_hmw_hash() -> reqwest::Result<String> {
+pub async fn get_latest_hmw_hash() -> reqwest::Result<Option<String>> {
     let client = reqwest::Client::new();
-    let latest = client
+    let mut latest = client
         .get(HMW_LATEST_URL)
         .timeout(Duration::from_secs(6))
         .send()
+        .await?
+        .json::<HmwManifest>()
         .await?;
-    // MARK: TODO
-    // .json::<todo!("need to model the manifest.json")>()
-    // .await?;
-    todo!("return desired hash")
+    Ok(latest
+        .modules
+        .first_mut()
+        .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[3])))
 }
 
 #[derive(Debug)]
