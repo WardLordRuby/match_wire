@@ -166,8 +166,8 @@ pub struct HmwManifest {
 
 #[derive(Deserialize)]
 pub struct Module {
-    // #[serde(rename = "Name")]
-    // pub name: String,
+    #[serde(rename = "Name")]
+    pub name: String,
     // #[serde(rename = "Version")]
     // pub version: String,
     #[serde(rename = "FilesWithHashes")]

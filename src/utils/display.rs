@@ -187,7 +187,7 @@ pub struct HmwUpdateHelp;
 
 impl Display for HmwUpdateHelp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{GREEN}A new version of HMW is available for download. Use 'HMW Launcher.exe' to update game files{WHITE}")
+        write!(f, "A new version of HMW is available for download. Use 'HMW Launcher.exe' to update game files")
     }
 }
 
@@ -224,7 +224,7 @@ impl Display for GameDetails {
             )?;
         }
         if color == YELLOW {
-            write!(f, "\n{HmwUpdateHelp}")?;
+            write!(f, "\n{GREEN}{HmwUpdateHelp}{WHITE}")?;
         }
         Ok(())
     }

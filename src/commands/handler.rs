@@ -8,7 +8,7 @@ use crate::{
     exe_details,
     utils::{
         caching::{build_cache, Cache},
-        display::ConnectionHelp,
+        display::{ConnectionHelp, HmwUpdateHelp},
         input::{
             line::{
                 AsyncCtxCallback, EventLoop, InputEventHook, InputHook, InputHookErr, LineCallback,
@@ -122,15 +122,15 @@ pub struct CommandContext {
 impl CommandContext {
     #[inline]
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
-        self.cache.clone()
+        Arc::clone(&self.cache)
     }
     #[inline]
     pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
-        self.cache_needs_update.clone()
+        Arc::clone(&self.cache_needs_update)
     }
     #[inline]
     pub fn forward_logs(&self) -> Arc<AtomicBool> {
-        self.forward_logs.clone()
+        Arc::clone(&self.forward_logs)
     }
     pub async fn check_h2m_connection(&mut self) -> Result<(), String> {
         if let Some(ref lock) = self.pty_handle {
@@ -157,15 +157,15 @@ impl CommandContext {
     }
     #[inline]
     pub fn h2m_console_history(&self) -> Arc<Mutex<Vec<String>>> {
-        self.h2m_console_history.clone()
+        Arc::clone(&self.h2m_console_history)
     }
     #[inline]
     pub fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
-        self.pty_handle.clone()
+        self.pty_handle.as_ref().map(Arc::clone)
     }
     #[inline]
     pub fn msg_sender(&self) -> Arc<Sender<Message>> {
-        self.msg_sender.clone()
+        Arc::clone(&self.msg_sender)
     }
     #[inline]
     pub fn h2m_version(&self) -> Option<f64> {
@@ -263,7 +263,12 @@ impl CommandContextBuilder {
         if let Some(res) = self.hmw_hash_res {
             match res {
                 Ok(Ok(option_hash)) => {
-                    if option_hash.is_some() {
+                    if let Some(ref hash_latest) = option_hash {
+                        if let Some(ref hash_curr) = game.hash_curr {
+                            if hash_curr != hash_latest {
+                                info!("{HmwUpdateHelp}")
+                            }
+                        }
                         game.hash_latest = option_hash;
                     } else {
                         error!("hmw manifest.json formatting has changed");

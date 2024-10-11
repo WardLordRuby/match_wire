@@ -41,6 +41,7 @@ pub const LOG_ONLY: &str = "log_only";
 pub const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
 const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
+const MOD_FILES_MODULE_NAME: &str = "mod";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -103,7 +104,8 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Option<String>> {
         .await?;
     Ok(latest
         .modules
-        .first_mut()
+        .iter_mut()
+        .find(|module| module.name == MOD_FILES_MODULE_NAME)
         .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[3])))
 }
 
