@@ -102,11 +102,30 @@ impl Cache {
     }
 }
 
+impl CacheFile {
+    fn from_backups(
+        connection_history: Option<Vec<HostName>>,
+        regions: Option<HashMap<IpAddr, [char; 2]>>,
+    ) -> Self {
+        CacheFile {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            created: std::time::SystemTime::now(),
+            connection_history: connection_history.unwrap_or_default(),
+            cache: ServerCache {
+                iw4m: HashMap::new(),
+                hmw: HashMap::new(),
+                regions: regions.unwrap_or_default(),
+                host_names: HashMap::new(),
+            },
+        }
+    }
+}
+
 #[instrument(level = "trace", skip_all)]
 pub async fn build_cache(
     connection_history: Option<&[HostName]>,
     regions: Option<&HashMap<IpAddr, [char; 2]>>,
-) -> Result<CacheFile, &'static str> {
+) -> Result<CacheFile, (&'static str, CacheFile)> {
     println!("{GREEN}Updating cache...{WHITE}");
 
     let mut servers = iw4_servers(None).await.unwrap_or_else(|err| {
@@ -119,7 +138,10 @@ pub async fn build_cache(
     };
 
     if servers.is_empty() {
-        return Err("Could not connect to either master server source");
+        return Err((
+            "Could not connect to either master server source",
+            CacheFile::from_backups(connection_history.map(|v| v.to_vec()), regions.cloned()),
+        ));
     }
 
     let mut cache = Cache::new();
@@ -137,6 +159,7 @@ pub async fn build_cache(
             Ok(result) => match result {
                 Ok(server) => {
                     let region = regions
+                        .as_ref()
                         .and_then(|cache| cache.get(&server.source.socket_addr().ip()).copied());
                     cache.push(server, region)
                 }
@@ -259,7 +282,7 @@ pub async fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
 #[instrument(level = "trace", skip_all)]
 pub async fn write_cache<'a>(context: &CommandContext) -> io::Result<()> {
     let local_env_dir = context.local_dir();
-    let Some(ref local_path) = local_env_dir else {
+    let Some(local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;

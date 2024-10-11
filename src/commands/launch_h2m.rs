@@ -48,7 +48,6 @@ struct VS_FIXEDFILEINFO {
     dwFileDateLS: DWORD,
 }
 
-const H2M_NAMES: [&str; 2] = ["h2m-mod.exe", "h2m-revived.exe"];
 const H2M_WINDOW_NAME: &str = "h2m";
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
@@ -268,7 +267,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     let forward_logs_arc = context.forward_logs();
     let msg_sender_arc = context.msg_sender();
     let pty = context.pty_handle().unwrap();
-    let version = context.h2m_version();
+    let version = context.h2m_version().unwrap_or(1.0);
 
     tokio::spawn(async move {
         let mut buffer = OsString::new();
@@ -405,7 +404,7 @@ pub enum LaunchError {
     SpawnErr(OsString),
 }
 
-pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), LaunchError> {
+pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
     if h2m_running() {
@@ -423,24 +422,14 @@ pub fn launch_h2m_pseudo(exe_dir: &Path) -> Result<(PTY, f64), LaunchError> {
     // MARK: FIXME
     // why does the pseudo terminal spawn with no cols or rows
 
-    let mut conpty = PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).unwrap();
+    let mut conpty =
+        PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).map_err(LaunchError::SpawnErr)?;
 
-    let spawned = match conpty.spawn(exe_dir.join(H2M_NAMES[0]).into(), None, None, None) {
-        Ok(_) => H2M_NAMES[0],
-        Err(err) => {
-            conpty
-                .spawn(exe_dir.join(H2M_NAMES[1]).into(), None, None, None)
-                .map_err(|_| LaunchError::SpawnErr(err))?;
-            H2M_NAMES[1]
-        }
-    };
-    let spawned_path = exe_dir.join(spawned);
-    let version = get_exe_version(&spawned_path).unwrap_or_else(|| {
-        error!("Failed to get versoin of {spawned}");
-        0.0
-    });
+    conpty
+        .spawn(game_path.into(), None, None, None)
+        .map_err(LaunchError::SpawnErr)?;
 
-    Ok((conpty, version))
+    Ok(conpty)
 }
 
 pub fn h2m_running() -> bool {
@@ -452,7 +441,7 @@ pub fn h2m_running() -> bool {
 }
 
 #[allow(clippy::identity_op)]
-fn get_exe_version(path: &Path) -> Option<f64> {
+pub fn get_exe_version(path: &Path) -> Option<f64> {
     let wide_path: Vec<u16> = OsStr::new(path)
         .encode_wide()
         .chain(std::iter::once(0))

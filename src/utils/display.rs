@@ -1,6 +1,7 @@
 use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
+        handler::{AppDetails, GameDetails},
         launch_h2m::LaunchError,
     },
     utils::{
@@ -179,5 +180,78 @@ impl Display for LaunchError {
 impl Display for ReadCacheErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.err)
+    }
+}
+
+pub struct HmwUpdateHelp;
+
+impl Display for HmwUpdateHelp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{GREEN}A new version of HMW is available for download. Use 'HMW Launcher.exe' to update game files{WHITE}")
+    }
+}
+
+impl Display for GameDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} ",
+            self.path
+                .file_name()
+                .expect("was not modified since we set file_name")
+                .to_string_lossy()
+        )?;
+        let color = match (&self.hash_curr, &self.hash_latest) {
+            (Some(curr), Some(latest)) => {
+                if curr == latest {
+                    GREEN
+                } else {
+                    YELLOW
+                }
+            }
+            _ => WHITE,
+        };
+        let mut wrote_details = false;
+        if let Some(version) = self.version {
+            write!(f, "{color}v{version}{WHITE}")?;
+            wrote_details = true;
+        }
+        if let Some(ref hash) = self.hash_curr {
+            write!(
+                f,
+                "{}hash: {color}{hash}{WHITE}",
+                if wrote_details { ", " } else { "" }
+            )?;
+        }
+        if color == YELLOW {
+            write!(f, "\n{HmwUpdateHelp}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for AppDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let color = if let Some(ref latest) = self.ver_latest {
+            if self.ver_curr == latest {
+                GREEN
+            } else {
+                YELLOW
+            }
+        } else {
+            WHITE
+        };
+        write!(
+            f,
+            "{}.exe {color}v{}{WHITE}",
+            env!("CARGO_PKG_NAME"),
+            self.ver_curr
+        )?;
+        if let Some(ref msg) = self.update_msg {
+            if color == YELLOW {
+                write!(f, "\n{msg}")?;
+            }
+        }
+        Ok(())
     }
 }

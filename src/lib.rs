@@ -21,16 +21,18 @@ pub mod utils {
 
 use clap::CommandFactory;
 use cli::UserCommand;
+use commands::{handler::AppDetails, launch_h2m::get_exe_version};
 use crossterm::{cursor, execute, terminal};
+use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
     collections::HashSet,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
 use utils::{
-    input::style::{GREEN, WHITE},
+    input::style::{GREEN, RED, WHITE},
     json_data::Version,
 };
 
@@ -38,11 +40,18 @@ pub const LOG_ONLY: &str = "log_only";
 
 pub const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
+const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub const H2M_MAX_TEAM_SIZE: i64 = 9;
 
-pub const REQUIRED_FILES: [&str; 3] = ["h1_mp64_ship.exe", "h2m-mod", "players2"];
+pub const REQUIRED_FILES: [&str; 5] = [
+    "h1_mp64_ship.exe",
+    "h2m-mod",
+    "players2",
+    "h2m-mod.exe",
+    "h2m-revived.exe",
+];
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub const CACHED_DATA: &str = "cache.json";
@@ -71,8 +80,7 @@ macro_rules! break_if {
     };
 }
 
-pub async fn get_latest_version() -> reqwest::Result<Option<String>> {
-    let current_version = env!("CARGO_PKG_VERSION");
+pub async fn get_latest_version() -> reqwest::Result<AppDetails> {
     let client = reqwest::Client::new();
     let version = client
         .get(VERSION_URL)
@@ -81,7 +89,20 @@ pub async fn get_latest_version() -> reqwest::Result<Option<String>> {
         .await?
         .json::<Version>()
         .await?;
-    Ok((current_version != version.latest).then_some(version.message))
+    Ok(AppDetails::from(version))
+}
+
+pub async fn get_latest_hmw_hash() -> reqwest::Result<String> {
+    let client = reqwest::Client::new();
+    let latest = client
+        .get(HMW_LATEST_URL)
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await?;
+    // MARK: TODO
+    // .json::<todo!("need to model the manifest.json")>()
+    // .await?;
+    todo!("return desired hash")
 }
 
 #[derive(Debug)]
@@ -141,36 +162,86 @@ where
     }
 }
 
-pub fn contains_required_files(exe_dir: &Path) -> io::Result<()> {
+pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> {
     match does_dir_contain(exe_dir, Operation::Count, &REQUIRED_FILES)
         .expect("Failed to read contents of current dir")
     {
-        OperationResult::Count((count, _)) if count == REQUIRED_FILES.len() => Ok(()),
         OperationResult::Count((_, files)) => {
             if !files.contains(REQUIRED_FILES[0]) {
-                return new_io_error!(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "Move {}.exe into your 'Call of Duty Modern Warfare Remastered' directory",
-                        env!("CARGO_PKG_NAME")
-                    )
-                );
-            } else if !files.contains(REQUIRED_FILES[1]) {
-                return new_io_error!(
-                    std::io::ErrorKind::Other,
+                return Err(concat!(
+                    "Move ",
+                    env!("CARGO_PKG_NAME"),
+                    ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
+                ));
+            }
+            if !files.contains(REQUIRED_FILES[1]) {
+                return Err(
                     "H2M mod files not found, H2M mod files are available to download for free through the Horizon MW launcher\n\
                     https://discord.com/invite/HorizonMW"
                 );
             }
+            let found_game = if files.contains(REQUIRED_FILES[3]) {
+                REQUIRED_FILES[3]
+            } else if files.contains(REQUIRED_FILES[4]) {
+                REQUIRED_FILES[4]
+            } else {
+                return Err(
+                    "h2m-mod.exe not found, H2M mod files are available to download for free through the Horizon MW launcher\n\
+                    https://discord.com/invite/HorizonMW"
+                );
+            };
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
                     .expect("Failed to create players2 folder");
                 println!("{GREEN}players2 folder is missing, a new one was created{WHITE}");
             }
-            Ok(())
+            Ok(exe_dir.join(found_game))
         }
         _ => unreachable!(),
     }
+}
+
+fn hash_file_hex(path: &Path) -> io::Result<String> {
+    let file = std::fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 8192];
+
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
+    let version = get_exe_version(game_exe_path).map(Some).unwrap_or_else(|| {
+        eprintln!(
+            "{RED}Failed to get version of {}{WHITE}",
+            game_exe_path
+                .file_name()
+                .expect("input was not modified")
+                .to_string_lossy()
+        );
+        None
+    });
+    let hash = hash_file_hex(game_exe_path)
+        .map(Some)
+        .unwrap_or_else(|err| {
+            eprintln!(
+                "{RED}{err}, input file_name: {}{WHITE}",
+                game_exe_path
+                    .file_name()
+                    .expect("input was not modified")
+                    .to_string_lossy()
+            );
+            None
+        });
+    (version, hash)
 }
 
 pub async fn await_user_for_end() {

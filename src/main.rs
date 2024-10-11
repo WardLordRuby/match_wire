@@ -2,7 +2,10 @@ use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
     await_user_for_end, break_if, check_app_dir_exists,
     commands::{
-        handler::{listener_routine, try_execute_command, CommandContextBuilder, CommandHandle},
+        handler::{
+            listener_routine, try_execute_command, AppDetails, CommandContextBuilder,
+            CommandHandle, GameDetails,
+        },
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
     get_latest_version, print_help, splash_screen,
@@ -18,11 +21,7 @@ use match_wire::{
     },
     CACHED_DATA, LOCAL_DATA, LOG_ONLY,
 };
-use std::{
-    io,
-    path::{Path, PathBuf},
-    sync::atomic::Ordering,
-};
+use std::{io, path::PathBuf, sync::atomic::Ordering};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
@@ -63,13 +62,7 @@ fn main() {
 
         startup_data.splash_task.await.unwrap().unwrap();
 
-        match startup_data.version_task.await {
-            Ok(Ok(Some(msg))) => info!("{msg}"),
-            Ok(Ok(None)) => (),
-            Ok(Err(err)) => error!("{err}"),
-            Err(err) => error!("{err}"),
-        };
-
+        let app_version_res = startup_data.version_task.await;
         let launch_res = startup_data.launch_task.await;
 
         let (message_tx, mut message_rx) = mpsc::channel(50);
@@ -77,7 +70,8 @@ fn main() {
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
             .launch_res(launch_res)
-            .exe_dir(startup_data.exe_dir)
+            .app_ver_res(app_version_res)
+            .game_details(startup_data.game)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
             .build()
@@ -190,31 +184,38 @@ fn main() {
 
 struct StartupData {
     cache: Cache,
-    exe_dir: PathBuf,
     local_dir: Option<PathBuf>,
+    game: GameDetails,
     splash_task: JoinHandle<io::Result<()>>,
-    launch_task: JoinHandle<Result<(PTY, f64), LaunchError>>,
-    version_task: JoinHandle<reqwest::Result<Option<String>>>,
+    launch_task: JoinHandle<Result<PTY, LaunchError>>,
+    version_task: JoinHandle<reqwest::Result<AppDetails>>,
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn app_startup() -> std::io::Result<StartupData> {
-    let exe_dir = std::env::current_dir()
-        .map_err(|err| std::io::Error::other(format!("Failed to get current dir, {err:?}")))?;
+async fn app_startup() -> Result<StartupData, String> {
+    let exe_dir =
+        std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
 
     #[cfg(not(debug_assertions))]
-    match_wire::contains_required_files(&exe_dir)?;
+    let game = {
+        let game_exe_path = match_wire::contains_required_files(&exe_dir).map_err(String::from)?;
+        let (version, hash) = match_wire::exe_details(&game_exe_path);
+        GameDetails::new(game_exe_path, version, hash)
+    };
+
+    #[cfg(debug_assertions)]
+    let game = GameDetails::default(&exe_dir);
 
     let version_task = tokio::task::spawn(get_latest_version());
 
     let splash_task = tokio::task::spawn(splash_screen());
 
     let launch_task = tokio::task::spawn({
-        let exe_dir = exe_dir.clone();
+        let game_exe_path = game.path.clone();
         async move {
             // delay h2m doesn't block splash screen
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            launch_h2m_pseudo(&exe_dir)
+            launch_h2m_pseudo(&game_exe_path)
         }
     });
 
@@ -234,8 +235,8 @@ async fn app_startup() -> std::io::Result<StartupData> {
                 Ok(cache) => {
                     return Ok(StartupData {
                         cache,
-                        exe_dir,
                         local_dir,
+                        game,
                         splash_task,
                         launch_task,
                         version_task,
@@ -250,36 +251,32 @@ async fn app_startup() -> std::io::Result<StartupData> {
         }
     } else {
         eprintln!("{RED}Could not find %appdata%/local{WHITE}");
-        if cfg!(debug_assertions) {
-            init_subscriber(Path::new("")).unwrap();
-        }
+
+        #[cfg(debug_assertions)]
+        init_subscriber(std::path::Path::new("")).unwrap();
     }
 
     let cache_file = build_cache(connection_history.as_deref(), region_cache.as_ref())
         .await
-        .map_err(std::io::Error::other)?;
+        .unwrap_or_else(|(err, backup)| {
+            error!("{err}");
+            backup
+        });
+
     if let Some(ref dir) = local_dir {
         match std::fs::File::create(dir.join(CACHED_DATA)) {
             Ok(file) => {
                 if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
                     error!("{err}")
                 }
-                return Ok(StartupData {
-                    cache: Cache::from(cache_file),
-                    exe_dir,
-                    local_dir,
-                    splash_task,
-                    launch_task,
-                    version_task,
-                });
             }
             Err(err) => error!("{err}"),
         }
     }
     Ok(StartupData {
         cache: Cache::from(cache_file),
-        exe_dir,
         local_dir,
+        game,
         splash_task,
         launch_task,
         version_task,

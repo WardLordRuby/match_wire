@@ -21,7 +21,7 @@ use std::{
     fs::File,
     io::{self, Write},
     net::{AddrParseError, IpAddr, SocketAddr, ToSocketAddrs},
-    path::PathBuf,
+    path::Path,
     sync::Arc,
 };
 
@@ -84,7 +84,7 @@ async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
 
 #[instrument(name = "filter", level = "trace", skip_all)]
 pub async fn build_favorites(
-    curr_dir: Arc<PathBuf>,
+    curr_dir: &Path,
     args: &Filters,
     cache: Arc<Mutex<Cache>>,
     version: f64,

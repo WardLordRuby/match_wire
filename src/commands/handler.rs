@@ -5,6 +5,7 @@ use crate::{
         launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
         reconnect::reconnect,
     },
+    exe_details,
     utils::{
         caching::{build_cache, Cache},
         display::ConnectionHelp,
@@ -13,10 +14,11 @@ use crate::{
                 AsyncCtxCallback, EventLoop, InputEventHook, InputHook, InputHookErr, LineCallback,
                 LineData,
             },
-            style::{GREEN, RED, WHITE, YELLOW},
+            style::{RED, WHITE, YELLOW},
         },
+        json_data::Version,
     },
-    CACHED_DATA,
+    CACHED_DATA, REQUIRED_FILES,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -43,26 +45,84 @@ pub enum Message {
     Warn(String),
 }
 
+pub struct GameDetails {
+    pub path: PathBuf,
+    pub version: Option<f64>,
+    pub hash_curr: Option<String>,
+    pub hash_latest: Option<String>,
+}
+
+impl GameDetails {
+    pub fn default(exe_dir: &Path) -> Self {
+        GameDetails {
+            path: exe_dir.join(REQUIRED_FILES[3]),
+            version: None,
+            hash_curr: None,
+            hash_latest: None,
+        }
+    }
+
+    pub fn new(path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
+        GameDetails {
+            path,
+            version,
+            hash_curr,
+            hash_latest: None,
+        }
+    }
+
+    fn update(&mut self, from: (Option<f64>, Option<String>)) {
+        if from.0.is_some() {
+            self.version = from.0;
+        }
+        if from.1.is_some() {
+            self.hash_curr = from.1;
+        }
+    }
+}
+
+pub struct AppDetails {
+    pub ver_curr: &'static str,
+    pub ver_latest: Option<String>,
+    pub update_msg: Option<String>,
+}
+
+impl Default for AppDetails {
+    fn default() -> Self {
+        AppDetails {
+            ver_curr: env!("CARGO_PKG_VERSION"),
+            ver_latest: None,
+            update_msg: None,
+        }
+    }
+}
+
+impl From<Version> for AppDetails {
+    fn from(value: Version) -> Self {
+        AppDetails {
+            ver_curr: env!("CARGO_PKG_VERSION"),
+            ver_latest: Some(value.latest),
+            update_msg: Some(value.message),
+        }
+    }
+}
+
 pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
-    exe_dir: Arc<PathBuf>,
     cache_needs_update: Arc<AtomicBool>,
     forward_logs: Arc<AtomicBool>,
     h2m_console_history: Arc<Mutex<Vec<String>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
-    local_dir: Option<Arc<PathBuf>>,
+    local_dir: Option<PathBuf>,
     msg_sender: Arc<Sender<Message>>,
-    h2m_version: f64,
+    game: GameDetails,
+    app: AppDetails,
 }
 
 impl CommandContext {
     #[inline]
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
         self.cache.clone()
-    }
-    #[inline]
-    pub fn exe_dir(&self) -> Arc<PathBuf> {
-        self.exe_dir.clone()
     }
     #[inline]
     pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
@@ -88,12 +148,12 @@ impl CommandContext {
         Err(String::from("No Pseudoconsole set"))
     }
     #[inline]
-    pub fn local_dir(&self) -> Option<Arc<PathBuf>> {
-        self.local_dir.as_ref().map(Arc::clone)
+    pub fn local_dir(&self) -> Option<&Path> {
+        self.local_dir.as_deref()
     }
     #[inline]
     pub fn update_local_dir(&mut self, local_dir: PathBuf) {
-        self.local_dir = Some(Arc::new(local_dir))
+        self.local_dir = Some(local_dir)
     }
     #[inline]
     pub fn h2m_console_history(&self) -> Arc<Mutex<Vec<String>>> {
@@ -108,8 +168,8 @@ impl CommandContext {
         self.msg_sender.clone()
     }
     #[inline]
-    pub fn h2m_version(&self) -> f64 {
-        self.h2m_version
+    pub fn h2m_version(&self) -> Option<f64> {
+        self.game.version
     }
     #[inline]
     fn init_pty(&mut self, pty: PTY) {
@@ -117,15 +177,17 @@ impl CommandContext {
     }
 }
 
-type LaunchResult = Result<Result<(PTY, f64), LaunchError>, JoinError>;
+type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
+type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
 
 #[derive(Default)]
 pub struct CommandContextBuilder {
     cache: Option<Cache>,
     launch_res: Option<LaunchResult>,
-    exe_dir: Option<PathBuf>,
+    game: Option<GameDetails>,
     msg_sender: Option<Sender<Message>>,
     local_dir: Option<PathBuf>,
+    app_ver_res: Option<AppVersionResult>,
 }
 
 impl CommandContextBuilder {
@@ -134,10 +196,6 @@ impl CommandContextBuilder {
     }
     pub fn cache(mut self, cache: Cache) -> Self {
         self.cache = Some(cache);
-        self
-    }
-    pub fn exe_dir(mut self, exe_dir: PathBuf) -> Self {
-        self.exe_dir = Some(exe_dir);
         self
     }
     pub fn msg_sender(mut self, sender: Sender<Message>) -> Self {
@@ -152,10 +210,18 @@ impl CommandContextBuilder {
         self.launch_res = Some(res);
         self
     }
+    pub fn app_ver_res(mut self, res: AppVersionResult) -> Self {
+        self.app_ver_res = Some(res);
+        self
+    }
+    pub fn game_details(mut self, details: GameDetails) -> Self {
+        self.game = Some(details);
+        self
+    }
 
     pub fn build(self) -> Result<CommandContext, &'static str> {
-        let (handle, version) = if let Some(Ok(Ok((handle, version)))) = self.launch_res {
-            (Some(handle), Some(version))
+        let handle = if let Some(Ok(Ok(handle))) = self.launch_res {
+            Some(handle)
         } else {
             if let Some(join_res) = self.launch_res {
                 let err = match join_res {
@@ -165,24 +231,47 @@ impl CommandContextBuilder {
                 };
                 error!("Could not launch H2M as child process: {err}");
             }
-            (None, None)
+            None
         };
+
+        let app = if let Some(Ok(Ok(app))) = self.app_ver_res {
+            if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
+                if app.ver_curr != latest {
+                    info!("{msg}")
+                }
+            }
+            app
+        } else {
+            if let Some(join_res) = self.app_ver_res {
+                let err = match join_res {
+                    Err(join_err) => join_err.to_string(),
+                    Ok(Err(reqwest_err)) => reqwest_err.to_string(),
+                    Ok(Ok(_)) => unreachable!("by happy path"),
+                };
+                error!("Could not get latest MatchWire version: {err}");
+            }
+            AppDetails::default()
+        };
+
+        // MARK: TODO
+        // unwrap the lastest hash task result here and set the return value to `game.hash_latest`
+
         Ok(CommandContext {
             cache: self
                 .cache
                 .map(|cache| Arc::new(Mutex::new(cache)))
                 .ok_or("cache is required")?,
-            exe_dir: self.exe_dir.map(Arc::new).ok_or("exe_dir is required")?,
             msg_sender: self
                 .msg_sender
                 .map(Arc::new)
                 .ok_or("msg_sender is required")?,
+            game: self.game.ok_or("game details is required")?,
+            local_dir: self.local_dir,
+            app,
             pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
-            local_dir: self.local_dir.map(Arc::new),
             cache_needs_update: Arc::new(AtomicBool::new(false)),
             forward_logs: Arc::new(AtomicBool::new(false)),
             h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
-            h2m_version: version.unwrap_or(1.0),
         })
     }
 }
@@ -206,9 +295,9 @@ pub async fn try_execute_command(
             Command::Launch => launch_handler(context).await,
             Command::Cache { option } => modify_cache(context, option).await,
             Command::Console => open_h2m_console(context).await,
-            Command::GameDir => open_dir(Some(context.exe_dir.as_path())),
-            Command::LocalEnv => open_dir(context.local_dir.as_ref().map(|i| i.as_path())),
-            Command::Version => print_version(context.h2m_version),
+            Command::GameDir => open_dir(context.game.path.parent()),
+            Command::LocalEnv => open_dir(context.local_dir.as_deref()),
+            Command::Version => print_version(&context.app, &context.game),
             Command::Quit => quit(context).await,
         },
         Err(err) => {
@@ -222,13 +311,13 @@ pub async fn try_execute_command(
 
 async fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> CommandHandle {
     let cache = context.cache();
-    let exe_dir = context.exe_dir();
+    let exe_dir = context.game.path.parent().expect("has parent");
 
     let new_entries_found = build_favorites(
         exe_dir,
         &args.unwrap_or_default(),
         cache,
-        context.h2m_version,
+        context.game.version.unwrap_or(1.0),
     )
     .await
     .unwrap_or_else(|err| {
@@ -255,7 +344,7 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
 
             match build_cache(Some(&cache.connection_history), Some(&cache.ip_to_region)).await {
                 Ok(data) => data,
-                Err(err) => {
+                Err((err, _)) => {
                     error!("{err}, cache remains unchanged");
                     return CommandHandle::Processed;
                 }
@@ -263,7 +352,7 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
         }
         CacheCmd::Reset => match build_cache(None, None).await {
             Ok(data) => data,
-            Err(err) => {
+            Err((err, _)) => {
                 error!("{err}, cache remains unchanged");
                 return CommandHandle::Processed;
             }
@@ -285,11 +374,11 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
 }
 
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
-    match launch_h2m_pseudo(&context.exe_dir) {
-        Ok((conpty, version)) => {
+    match launch_h2m_pseudo(&context.game.path) {
+        Ok(conpty) => {
             info!("Launching H2M-mod...");
+            context.game.update(exe_details(&context.game.path));
             context.init_pty(conpty);
-            context.h2m_version = version;
             if let Err(err) = listener_routine(context).await {
                 error!("{err}")
             }
@@ -309,7 +398,7 @@ pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     CommandHandle::Processed
 }
 
-/// if calling manually you are responsible for setting pty and version inside of context
+/// if calling manually you are responsible for setting pty inside of context
 pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String> {
     initalize_listener(context).await?;
     let pty = context.pty_handle();
@@ -474,14 +563,10 @@ fn open_dir(path: Option<&Path>) -> CommandHandle {
     CommandHandle::Processed
 }
 
-fn print_version(h2m_v: f64) -> CommandHandle {
-    println!(
-        "{}.exe {GREEN}v{}{WHITE}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION")
-    );
-    if h2m_v != 1.0 {
-        println!("h2m-mod.exe {GREEN}v{h2m_v}{WHITE}")
+fn print_version(app: &AppDetails, game: &GameDetails) -> CommandHandle {
+    println!("{app}");
+    if game.version.is_some() || game.hash_curr.is_some() {
+        println!("{game}")
     }
     CommandHandle::Processed
 }
