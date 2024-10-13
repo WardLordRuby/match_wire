@@ -531,31 +531,31 @@ impl CompletionState {
         .to_string();
     }
     /* -------------------------------- Debug tool --------------------------------------- */
-    fn debug(&self, line: &str) -> String {
-        let inner_fmt = |slice_data: &SliceData| -> String {
-            format!(
-                "'{}' hash_i: {}",
-                slice_data.to_slice_unchecked(line),
-                slice_data.hash_i
-            )
-        };
+    // fn debug(&self, line: &str) -> String {
+    //     let inner_fmt = |slice_data: &SliceData| -> String {
+    //         format!(
+    //             "'{}' hash_i: {}",
+    //             slice_data.to_slice_unchecked(line),
+    //             slice_data.hash_i
+    //         )
+    //     };
 
-        let mut output = String::new();
-        output.push_str(&format!(
-            "\n    curr_command: {:?}\n",
-            self.curr_command.as_ref().map(inner_fmt)
-        ));
-        output.push_str(&format!(
-            "    curr_arg: {:?}\n",
-            self.curr_argument.as_ref().map(inner_fmt)
-        ));
-        output.push_str(&format!(
-            "    curr_value: {:?}\n",
-            self.curr_value.as_ref().map(inner_fmt)
-        ));
-        output.push_str(&format!("    user_input: {:?}\n", self.ending));
-        output
-    }
+    //     let mut output = String::new();
+    //     output.push_str(&format!(
+    //         "\n    curr_command: {:?}\n",
+    //         self.curr_command.as_ref().map(inner_fmt)
+    //     ));
+    //     output.push_str(&format!(
+    //         "    curr_arg: {:?}\n",
+    //         self.curr_argument.as_ref().map(inner_fmt)
+    //     ));
+    //     output.push_str(&format!(
+    //         "    curr_value: {:?}\n",
+    //         self.curr_value.as_ref().map(inner_fmt)
+    //     ));
+    //     output.push_str(&format!("    user_input: {:?}\n", self.ending));
+    //     output
+    // }
     /* ----------------------------------------------------------------------------------- */
 }
 
@@ -776,11 +776,15 @@ impl LineReader<'_> {
         self.completion.input.ending.open_quote.as_ref()
     }
 
-    // MARK: TODO
-    // update to support new line states
     fn check_value_err(&self, user_input: &str) -> bool {
-        let list_i = self.completion.indexer.list.0;
-        let curr_rec = self.completion.rec_list[list_i];
+        let list_i = [
+            self.completion.indexer.list.0,
+            self.completion.indexer.list.1,
+        ];
+        let recs = [
+            self.completion.rec_list[list_i[0]],
+            self.completion.rec_list[list_i[1]],
+        ];
         let input = self.line.input().trim_start();
         let (trailing, trailing_w_last) =
             self.completion.last_key().map_or((input, input), |key| {
@@ -789,22 +793,29 @@ impl LineReader<'_> {
                     &input[key.byte_start..],
                 )
             });
-        match curr_rec.kind {
-            RecKind::Value(_) if !self.completion.value_valid(user_input, list_i) => true,
-            RecKind::UserDefined(_) if trailing.is_empty() => true,
-            RecKind::UserDefined(ref r)
-                if !r.contains(
-                    &self
-                        .completion
-                        .count_vals_in_slice(trailing_w_last, &RecKind::Null)
-                        .1,
-                ) =>
-            {
-                true
-            }
-            RecKind::Help | RecKind::Null if !trailing.is_empty() => true,
-            _ => false,
+        let mut errs = [false, false];
+        for (i, err) in errs.iter_mut().enumerate() {
+            *err = match recs[i].kind {
+                RecKind::Value(_) if !self.completion.value_valid(user_input, list_i[i]) => true,
+                RecKind::UserDefined(_) if trailing.is_empty() => true,
+                RecKind::UserDefined(ref r)
+                    if !r.contains(
+                        &self
+                            .completion
+                            .count_vals_in_slice(trailing_w_last, &RecKind::Null)
+                            .1,
+                    ) =>
+                {
+                    true
+                }
+                RecKind::Help | RecKind::Null if !trailing.is_empty() => true,
+                _ => false,
+            };
         }
+        if self.completion.indexer.multiple {
+            return errs[0] && errs[1];
+        }
+        errs[0]
     }
 
     fn check_for_errors(&mut self) {
@@ -822,6 +833,17 @@ impl LineReader<'_> {
         if line_trim_start.is_empty() {
             self.default_recomendations();
             return;
+        }
+
+        let multiple_switch_kind = self.completion.indexer.multiple
+            && line_trim_start.ends_with(char::is_whitespace)
+            && line_trim_start
+                .split_whitespace()
+                .next_back()
+                .map_or(false, |end_token| end_token.starts_with('-'));
+
+        if multiple_switch_kind {
+            self.completion.indexer.multiple = false;
         }
 
         self.completion.input.update_curr_token(line_trim_start);
@@ -858,7 +880,7 @@ impl LineReader<'_> {
 
         if self.open_quote().is_none()
             && self.completion.curr_value().is_none()
-            && self.completion.curr_arg().is_none()
+            && (self.completion.curr_arg().is_none() || multiple_switch_kind)
             && self.completion.curr_command().is_some_and(|cmd| {
                 matches!(
                     self.completion.rec_list[cmd.hash_i].kind,
@@ -911,7 +933,10 @@ impl LineReader<'_> {
                 kind_match.filter(|starting_token| {
                     match self.completion.rec_list[starting_token.hash_i].kind {
                         RecKind::UserDefined(_) if nvals == 0 => true,
-                        RecKind::Value(ref c) if c.contains(&nvals) => true,
+                        RecKind::Value(ref c) if c.contains(&nvals) => {
+                            self.completion.indexer.multiple = true;
+                            true
+                        }
                         _ if self.completion.rec_list[starting_token.hash_i].end => true,
                         _ => false,
                     }
@@ -955,12 +980,12 @@ impl LineReader<'_> {
 
             match arg_recs.kind {
                 RecKind::Value(ref c) => {
-                    if let Some(value) = self.completion.try_parse_token_from_end(
+                    if let Some(token) = self.completion.try_parse_token_from_end(
                         line_trim_start,
                         &arg_recs.kind,
                         None,
                     ) {
-                        if value.hash_i != INVALID {
+                        if token.hash_i != INVALID {
                             let (kind_match, nvals) = self
                                 .completion
                                 .count_vals_in_slice(line_trim_start, &command_recs.kind);
@@ -972,7 +997,7 @@ impl LineReader<'_> {
                                 self.completion.input.curr_argument = None;
                             }
                         } else {
-                            self.completion.input.curr_value = Some(value);
+                            self.completion.input.curr_value = Some(token);
                         }
                     };
                 }
@@ -981,7 +1006,7 @@ impl LineReader<'_> {
             }
         }
 
-        eprintln!("{}", self.completion.input.debug(line_trim_start));
+        // eprintln!("{}", self.completion.input.debug(line_trim_start));
 
         self.completion.indexer.list = match (
             self.completion.curr_command(),
@@ -1042,7 +1067,7 @@ impl LineReader<'_> {
 
         let mut recomendations = recs
             .iter()
-            .chain(if_multiple.unwrap_or_else(|| [].iter()))
+            .chain(if_multiple.unwrap_or([].iter()))
             .filter(|rec| rec.contains(&input_lower))
             .copied()
             .collect::<Vec<_>>();
@@ -1057,7 +1082,6 @@ impl LineReader<'_> {
             if let Some(recs2) = rec_data_2.recs {
                 for (i, rec) in recomendations.iter().enumerate() {
                     if recs2.contains(rec) {
-                        eprintln!("pushed i: {i}");
                         self.completion.indexer.in_list_2.push(i as i8);
                     }
                 }
@@ -1072,26 +1096,37 @@ impl LineReader<'_> {
             return Ok(());
         }
 
-        self.completion.indexer.recs += match direction {
-            Direction::Next => 1,
-            Direction::Previous => -1,
-        };
-
-        match self.completion.indexer.recs {
-            i if i >= USER_INPUT && i < self.completion.recomendations.len() as i8 => (),
-            ..USER_INPUT => {
-                self.completion.indexer.recs = self.completion.recomendations.len() as i8 - 1
+        let recomendation = loop {
+            if self.completion.recomendations.len() == 1
+                && self.curr_token() == self.completion.recomendations[0]
+            {
+                return Ok(());
             }
-            _ => self.completion.indexer.recs = USER_INPUT,
-        }
 
-        let new_line = {
-            let recomendation = if self.completion.indexer.recs == USER_INPUT {
-                self.curr_token()
-            } else {
-                self.completion.recomendations[self.completion.indexer.recs as usize]
+            self.completion.indexer.recs += match direction {
+                Direction::Next => 1,
+                Direction::Previous => -1,
             };
 
+            match self.completion.indexer.recs {
+                i if i >= USER_INPUT && i < self.completion.recomendations.len() as i8 => (),
+                ..USER_INPUT => {
+                    self.completion.indexer.recs = self.completion.recomendations.len() as i8 - 1
+                }
+                _ => self.completion.indexer.recs = USER_INPUT,
+            }
+
+            if self.completion.indexer.recs == USER_INPUT {
+                break self.curr_token();
+            } else {
+                let next = self.completion.recomendations[self.completion.indexer.recs as usize];
+                if self.curr_token() != next {
+                    break next;
+                }
+            };
+        };
+
+        let new_line = {
             let format_line = |rec_is_arg: bool| -> String {
                 self.line
                     .input()
@@ -1114,19 +1149,19 @@ impl LineReader<'_> {
                     )
             };
 
-            let kind = if self.completion.indexer.multiple
+            let list_i = if self.completion.indexer.multiple
                 && self
                     .completion
                     .indexer
                     .in_list_2
                     .contains(&self.completion.indexer.recs)
             {
-                &self.completion.rec_list[self.completion.indexer.list.1].kind
+                self.completion.indexer.list.1
             } else {
-                &self.completion.rec_list[self.completion.indexer.list.0].kind
+                self.completion.indexer.list.0
             };
 
-            match kind {
+            match self.completion.rec_list[list_i].kind {
                 RecKind::Argument => format_line(true),
                 RecKind::Value(_) | RecKind::Command => format_line(false),
                 RecKind::Help => format_line(self.completion.curr_command().is_some()),
