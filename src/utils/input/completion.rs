@@ -832,18 +832,8 @@ impl LineReader<'_> {
         let line_trim_start = self.line.input().trim_start();
         if line_trim_start.is_empty() {
             self.default_recomendations();
+            self.completion.input.ending.token.clear();
             return;
-        }
-
-        let multiple_switch_kind = self.completion.indexer.multiple
-            && line_trim_start.ends_with(char::is_whitespace)
-            && line_trim_start
-                .split_whitespace()
-                .next_back()
-                .map_or(false, |end_token| end_token.starts_with('-'));
-
-        if multiple_switch_kind {
-            self.completion.indexer.multiple = false;
         }
 
         self.completion.input.update_curr_token(line_trim_start);
@@ -859,6 +849,17 @@ impl LineReader<'_> {
                 self.check_for_errors();
                 return;
             }
+        }
+
+        let multiple_switch_kind = self.completion.indexer.multiple
+            && line_trim_start.ends_with(char::is_whitespace)
+            && line_trim_start
+                .split_whitespace()
+                .next_back()
+                .map_or(false, |end_token| end_token.starts_with('-'));
+
+        if multiple_switch_kind {
+            self.completion.indexer.multiple = false;
         }
 
         self.completion.indexer.recs = USER_INPUT;
@@ -1080,6 +1081,7 @@ impl LineReader<'_> {
 
         if self.completion.indexer.multiple {
             if let Some(recs2) = rec_data_2.recs {
+                self.completion.indexer.in_list_2.clear();
                 for (i, rec) in recomendations.iter().enumerate() {
                     if recs2.contains(rec) {
                         self.completion.indexer.in_list_2.push(i as i8);
