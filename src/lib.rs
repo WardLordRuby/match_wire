@@ -22,12 +22,12 @@ pub mod utils {
 use clap::CommandFactory;
 use cli::UserCommand;
 use commands::{handler::AppDetails, launch_h2m::get_exe_version};
-use crossterm::{cursor, execute, terminal};
+use crossterm::cursor;
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
     collections::HashSet,
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -321,37 +321,43 @@ pub fn print_help() {
 }
 
 pub async fn splash_screen() -> io::Result<()> {
-    // font: 4Max - patorjk.com
-    let text = r#"
+    #[cfg(not(debug_assertions))]
+    {
+        use crossterm::{execute, terminal};
+        use std::io::Write;
+
+        // font: 4Max - patorjk.com
+        let text = r#"
         8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888       
         88b  d88   dPYb     88   dP   `" 88  88      Yb  db  dP  88 88__dP 88__         
         88YbdP88  dP__Yb    88   Yb      888888       YbdPYbdP   88 88"Yb  88""         
         88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888       "#;
 
-    let mut stdout = std::io::stdout();
+        let mut stdout = std::io::stdout();
 
-    execute!(stdout, terminal::EnterAlternateScreen)?;
+        execute!(stdout, terminal::EnterAlternateScreen)?;
 
-    let (width, height) = terminal::size()?;
+        let (width, height) = terminal::size()?;
 
-    let lines = text.lines().collect::<Vec<_>>();
+        let lines = text.lines().collect::<Vec<_>>();
 
-    let start_y = height.saturating_sub(lines.len() as u16) / 2;
+        let start_y = height.saturating_sub(lines.len() as u16) / 2;
 
-    for (i, line) in lines.iter().enumerate() {
-        let start_x = width.saturating_sub(line.len() as u16) / 2;
-        execute!(
-            stdout,
-            cursor::MoveTo(start_x, start_y + i as u16),
-            crossterm::style::Print(line)
-        )?;
-        tokio::time::sleep(tokio::time::Duration::from_millis(160)).await;
+        for (i, line) in lines.iter().enumerate() {
+            let start_x = width.saturating_sub(line.len() as u16) / 2;
+            execute!(
+                stdout,
+                cursor::MoveTo(start_x, start_y + i as u16),
+                crossterm::style::Print(line)
+            )?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(160)).await;
+        }
+
+        stdout.flush()?;
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        execute!(stdout, terminal::LeaveAlternateScreen)?;
     }
-
-    stdout.flush()?;
-
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    execute!(stdout, terminal::LeaveAlternateScreen)?;
 
     Ok(())
 }
