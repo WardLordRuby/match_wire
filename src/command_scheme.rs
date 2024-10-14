@@ -21,7 +21,7 @@ impl CommandScheme {
     }
 }
 
-const COMMAND_RECS: [&str; 13] = [
+const COMMAND_RECS: [&str; 12] = [
     "filter",
     "reconnect",
     "launch",
@@ -31,14 +31,13 @@ const COMMAND_RECS: [&str; 13] = [
     "local-env",
     "quit",
     "version",
-    "help",
     "logs",
     "gamedir",
     "localenv",
 ];
-const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 10), (5, 11), (6, 12)];
+const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 9), (5, 10), (6, 11)];
 
-const FILTER_RECS: [&str; 12] = [
+const FILTER_RECS: [&str; 11] = [
     "limit",
     "player-min",
     "team-size-max",
@@ -50,9 +49,8 @@ const FILTER_RECS: [&str; 12] = [
     "without-bots",
     "include-unresponsive",
     "retry-max",
-    "help",
 ];
-const FILTER_SHORT: [(usize, &str); 8] = [
+const FILTER_SHORT: [(usize, &str); 7] = [
     (0, "l"),
     (1, "p"),
     (2, "t"),
@@ -60,7 +58,6 @@ const FILTER_SHORT: [(usize, &str); 8] = [
     (4, "s"),
     (5, "i"),
     (6, "e"),
-    (11, "h"),
 ];
 
 const FILTER_REGIONS: [&str; 8] = [
@@ -78,13 +75,13 @@ const FILTER_REGIONS_ALIAS: [(usize, usize); 5] = [(0, 3), (1, 4), (2, 5), (2, 6
 const FILTER_SOURCE_RECS: [&str; 4] = ["iw4-master", "hmw-master", "iw4", "hmw"];
 const FILTER_SOURCE_ALIAS: [(usize, usize); 2] = [(0, 2), (1, 3)];
 
-const RECONNECT_RECS: [&str; 3] = ["history", "connect", "help"];
-const RECONNECT_SHORT: [(usize, &str); 3] = [(0, "H"), (1, "c"), (2, "h")];
+const RECONNECT_RECS: [&str; 2] = ["history", "connect"];
+const RECONNECT_SHORT: [(usize, &str); 2] = [(0, "H"), (1, "c")];
 
 const CACHE_RECS: [&str; 3] = ["reset", "update", "clear"];
 const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
 
-const COMMAND_INNER: [InnerScheme; 10] = [
+const COMMAND_INNER: [InnerScheme; 9] = [
     // filter
     InnerScheme::new(
         RecData::new(
@@ -133,11 +130,9 @@ const COMMAND_INNER: [InnerScheme; 10] = [
     InnerScheme::end(ROOT),
     // version
     InnerScheme::end(ROOT),
-    // help
-    InnerScheme::help(),
 ];
 
-const FILTER_INNER: [InnerScheme; 12] = [
+const FILTER_INNER: [InnerScheme; 11] = [
     // limit
     InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
     // player-min
@@ -188,15 +183,11 @@ const FILTER_INNER: [InnerScheme; 12] = [
     InnerScheme::flag("filter", false),
     // retry-max
     InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
-    // help
-    InnerScheme::help(),
 ];
 
-const RECONNECT_INNTER: [InnerScheme; 3] = [
+const RECONNECT_INNTER: [InnerScheme; 2] = [
     // history
     InnerScheme::end("reconnect"),
     // connect
     InnerScheme::empty_with("reconnect", RecKind::user_defined_with_num_args(1), true),
-    // help
-    InnerScheme::help(),
 ];
