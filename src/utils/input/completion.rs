@@ -8,8 +8,9 @@ use std::{
 pub const ROOT: &str = "ROOT";
 const UNIVERSAL: &str = "ANY";
 const HELP_STR: &str = "help";
+const HELP_SHORT: &str = "h";
 const HELP_ARG: &str = "--help";
-const HELP_SHORT: &str = "-h";
+const HELP_ARG_SHORT: &str = "-h";
 
 const USER_INPUT: i8 = -1;
 const COMMANDS: usize = 0;
@@ -311,6 +312,7 @@ impl From<&'static CommandScheme> for Completion {
                             if let Some(&(_, short)) =
                                 data.short_mapping.iter().find(|(map_i, _)| *map_i == i)
                             {
+                                assert_ne!(short, HELP_SHORT, "the use of 'h' is not allowed, short arg '-h' is reserved for 'help'");
                                 insert_index(map, short, l_i, &inner.data, list);
                             }
                         }
@@ -966,17 +968,19 @@ impl LineReader<'_> {
                     }
                 })
             };
-            let kind = if let Some(ref mut token) = new {
-                let token_slice = token.to_slice_unchecked(line_trim_start);
-                if token_slice == HELP_ARG || token_slice == HELP_SHORT {
-                    token.hash_i = HELP;
-                    &RecKind::Argument
-                } else {
-                    &command_recs.kind
-                }
-            } else {
-                &command_recs.kind
-            };
+            let kind = new
+                .as_mut()
+                .and_then(|token| {
+                    // Saftey: can call into `to_slice_unchecked` since the above slice input to `try_parse_token_from_end` and `count_vals_in_slice`
+                    // both use `line_trim_start` and the beginning of `line_trim_start` was not sliced
+                    let token_slice = token.to_slice_unchecked(line_trim_start);
+                    (token_slice == HELP_ARG || token_slice == HELP_ARG_SHORT).then(|| {
+                        token.hash_i = HELP;
+                        &RecKind::Argument
+                    })
+                })
+                .unwrap_or(&command_recs.kind);
+
             match kind {
                 RecKind::Argument => self.completion.input.curr_argument = new,
                 RecKind::Value(_) => self.completion.input.curr_value = new,
@@ -1166,10 +1170,11 @@ impl LineReader<'_> {
                             }
                         }
                     }
-                    RecKind::Command if self.curr_token() == self.completion.recomendations[0] => {
-                        return Ok(())
+                    _ => {
+                        if self.curr_token() == self.completion.recomendations[0] {
+                            return Ok(());
+                        }
                     }
-                    _ => (),
                 }
             }
 
@@ -1190,16 +1195,14 @@ impl LineReader<'_> {
                 break self.curr_token();
             } else {
                 let next = self.completion.recomendations[self.completion.indexer.recs as usize];
+                // Saftey: can call into `rec_data_from_unchecked` since we guard against the unsafe input above
                 match self
                     .completion
                     .rec_data_from_unchecked(&self.completion.indexer.recs)
                     .kind
                 {
                     RecKind::Value(_) => {
-                        if self.curr_token() != next {
-                            break next;
-                        }
-                        if self.curr_token() == HELP_STR {
+                        if self.curr_token() != next || self.curr_token() == HELP_STR {
                             break next;
                         }
                     }
@@ -1211,12 +1214,11 @@ impl LineReader<'_> {
                         }
                         break next;
                     }
-                    RecKind::Command => {
+                    _ => {
                         if self.curr_token() != next {
                             break next;
                         }
                     }
-                    _ => (),
                 }
             };
         };
@@ -1247,8 +1249,10 @@ impl LineReader<'_> {
             let kind = if recomendation == HELP_STR {
                 &self.completion.rec_list[HELP].kind
             } else if self.completion.indexer.recs == USER_INPUT {
+                // Set as `Command` because we do not need aditional formatting below in the `USER_INPUT` case
                 &RecKind::Command
             } else {
+                // Saftey: can call into `rec_data_from_unchecked` since we guard against the unsafe input above
                 &self
                     .completion
                     .rec_data_from_unchecked(&self.completion.indexer.recs)
