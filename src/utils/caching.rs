@@ -223,7 +223,7 @@ impl ReadCacheErr {
 impl From<io::Error> for ReadCacheErr {
     fn from(value: io::Error) -> Self {
         ReadCacheErr {
-            err: value.to_string(),
+            err: format!("{value}, Starting new cache file"),
             connection_history: None,
             region_cache: None,
         }
@@ -233,7 +233,7 @@ impl From<io::Error> for ReadCacheErr {
 impl From<serde_json::Error> for ReadCacheErr {
     fn from(value: serde_json::Error) -> Self {
         ReadCacheErr {
-            err: value.to_string(),
+            err: format!("{value}, Starting new cache file"),
             connection_history: None,
             region_cache: None,
         }
@@ -247,9 +247,6 @@ pub async fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
             let reader = io::BufReader::new(file);
             let data = serde_json::from_reader::<_, CacheFile>(reader)?;
-            if data.version != env!("CARGO_PKG_VERSION") {
-                return Err(ReadCacheErr::new("version mismatch".to_string()));
-            }
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(data.created) {
                 Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
