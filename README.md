@@ -1,8 +1,10 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[filter-help]: https://i.imgur.com/Ln1ENad.png "query arguments"
+[filter-help]: https://i.imgur.com/abZEeNh.png "query arguments"
 [reconnect-help]: https://i.imgur.com/fvRZ7PW.png "history arguments"
 [latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.5/match_wire.exe
 [hmw-discord]: https://discord.com/invite/HorizonMW
+[hmw-launcher-dl]: http://price.horizonmw.org/launcher/HMW_Launcher.zip
+[rust-dl]: https://www.rust-lang.org/tools/install
 <div align="center">
     <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
 </div>
@@ -12,7 +14,7 @@
 [![GitHub License](https://img.shields.io/github/license/WardLordRuby/match_wire?label=License&labelColor=%2323282e)](LICENSE)  
 
 MatchWire is a game launcher that enhances the core H2M/HMW (Mw2 Remastered) experience by offering key quality-of-life improvements. From its core MatchWire is designed to be
-extremetly low overhead, providing no in game performance degradation with even the lowest end pc's.  
+extremely low overhead, providing no in game performance degradation with even the lowest end pc's.  
 
 It provides a server scraper that supports writing your own queries of Mw2 Remastered servers running [IW4Admin][iw4m-server-master] and/or servers found on the HMW master server,
 as well as a reconnect command to connect you to your last joined server.  
@@ -21,15 +23,23 @@ The server scraper fixes the H2M server browser! By limiting favorites.json to 1
 On Horizon MW this issue is fixed and no limit is applied to the number of servers MatchWire will add to your favorites.json. MatchWire keeps track of the previous 6 joined servers
 allowing you to use the reconnect command to easily join back if you happen to not make it into the server during a map change.  
 
+## Disclaimer
+MatchWire is an independent project and is not affiliated with, endorsed by, or connected to the H2M development team or the HMW development team. This repository does not distribute
+any game files. Users are responsible for obtaining the game through official channels.  
+
+MatchWire provides no competitive advantage and does not affect gameplay in any way. The program is designed solely to offer quality-of-life improvements. MatchWire does not modify
+game mechanics, alter game balance, or provide any features that would give users an unfair advantage over other players.
+
 ## Installation
-1. Locate / Install Modern Warefare Remastered (2017)
-2. Install Horizon MW via the launcher found on their [Discord][hmw-discord]
+1. Locate / Install Modern Warfare Remastered (2017)
+2. Install Horizon MW via the launcher found on their [Discord][hmw-discord] | [direct-download][hmw-launcher-dl]
 3. Download [match_wire.exe][latest-dl]
 4. Place match_wire.exe in your MWR(2017) game directory and run
 
 ## Usage
 Launch match_wire.exe once it is inside your game directory and it will automatically start Mw2 Remastered for you. The terminal window will provide you a place to enter commands.
-MatchWire includes a command auto-complete feature, just use the tab key to walk through available commands and command options.  
+MatchWire includes a command auto-complete feature, just use the tab key to walk through available commands and command options. Pressing 'ctrl + c' will clear the current line or
+if line current line is empty it will close MatchWire. Note that closing MatchWire will also close your Mw2 Remastered.  
 
 ### Commands  
 | Commands                     | Alias     | Description                                                                     |
@@ -38,7 +48,7 @@ MatchWire includes a command auto-complete feature, just use the tab key to walk
 | [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)                 |
 | launch                       | Launch    | Launch Mw2 Remastered (reconnect only works if the game is spawned by this app) |
 | cache                        | Cache     | Reset / Clear cache (useful if reconnect can not find server name in cache)     |
-| console                      | Logs      | Display and interact with the Mw2 Remastered console                            |
+| [console](#console-help)     | Logs      | Display and interact with the Mw2 Remastered console                            |
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                       |
 | local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)          |
 | quit                         | Quit      | Closes game and launcher                                                        |
@@ -67,7 +77,7 @@ Examples:
 
 #### Tips:
 - After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list (bottom right of the server browser)
-- Argmuents can be shortened to a single character for example `--includes` can be shortened to `-i`
+- Arguments can be shortened to a single character for example `--includes` can be shortened to `-i`
 - To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
 ## Reconnect help
@@ -85,3 +95,16 @@ Arguments:
   reconnect --connect <NUM>
   ```
   Using reconnect with the connect argument or `-c` for short will connect you back to the specified entry in your history.  
+
+## Console help
+The console command is an easy way to interact and view Mw2 Remastered's console window. Sending commands to the console works just as it normally would, simply type the command
+and press enter to send. Pressing 'backspace' or 'ctrl + c' when the input line is empty will leave the game console and return back to MatchWire.exe  
+
+## Compatibility
+To run MatchWire you must be running Windows 10 version 1809 (October 2018) or later
+
+## Build from source
+If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 
+1. Download or clone the source code  
+2. Follow the instructions in [location_api_key.rs.template](src/location_api_key.rs.template)
+3. Compile the project with `cargo build --release`
