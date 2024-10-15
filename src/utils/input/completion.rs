@@ -51,7 +51,7 @@ pub struct CommandScheme {
 /// Notes:  
 /// - Recomendations within `data` set as `Kind::Value` will be flattened into a HashSet.  
 ///   Access to the set is provided through a seprate map `value_sets` where the lookup key  
-///   is the index you get back from `rec_map` when hasing the parent node  
+///   is the index you get back from `rec_map` when hashing the parent node  
 /// - `RecKinds`: `Value` and `UserInput` must provide a `Range<usize>` of inputs that are expected to follow  
 ///
 /// field `data` must adhere to the following  
@@ -253,8 +253,6 @@ pub enum Direction {
     Previous,
 }
 
-// MARK: TODO
-// figure out "help" short data
 impl From<&'static CommandScheme> for Completion {
     fn from(value: &'static CommandScheme) -> Self {
         fn insert_rec_set(
@@ -434,7 +432,7 @@ struct CompletionState {
     ending: LineEnd,
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 /// representes a String slice entry into `LineData.line().trim_start()`
 struct SliceData {
     byte_start: usize,
@@ -571,6 +569,7 @@ impl CompletionState {
 trait Validity {
     /// returns `true` if `Some(hash_i == INVALID)` else `false`
     fn is_some_and_invalid(&self) -> bool;
+    /// returns `true` if `Some(hash_i != INVALID)` else `false`
     fn is_some_and_valid(&self) -> bool;
 }
 
@@ -608,7 +607,7 @@ impl SliceData {
         data
     }
 
-    fn to_slice_unchecked<'a>(&self, line: &'a str) -> &'a str {
+    fn to_slice_unchecked(self, line: &str) -> &str {
         &line[self.byte_start..self.byte_start + self.slice_len]
     }
 }
@@ -689,26 +688,28 @@ impl Completion {
         None
     }
 
-    /// only counts values until `count_till` is found, if `count_till` is not found it will return the last token in the input `slice`  
-    /// `SliceData` is _only_ ever `None` if their are 0 tokens in the input `slice`, `Some(SliceData)` does not gaurentee  
+    /// only counts values until `count_till` is found, if `count_till` is not found it will return the last registered token in the
+    /// input `slice`. `SliceData` is _only_ ever `None` if their are 0 tokens in the input `slice`, `Some(SliceData)` does not gaurentee  
     /// the containing `SliceData` is of `RecKind`: `count_till` or has a valid `hash_i` - in the case that the first token is returned  
     ///
     /// NOTES:  
     ///  - unexpected behavior is _gaurenteed_ for returned `SliceData` if the input `slice` has been sliced from the beginning,  
     ///    the start of `slice`, must align with the start of `line_trim_start`  
     ///  - if you only desire the count of vals, trim input `slice` to include slice of all vals to be counted plus the begining 'root' token  
-    ///    then use `RecKind::nil` to avoid hashing counted tokens  
+    ///    then use `RecKind::Null` to avoid hashing counted tokens  
     fn count_vals_in_slice(&self, slice: &str, count_till: &RecKind) -> (Option<SliceData>, usize) {
         let mut nvals = 0;
         let mut prev_token = None;
         let mut end_i = slice.len();
-        let beginning_token = self.last_key();
+        let last_valid_token = self.last_key();
 
         while let Some(token) = self.try_parse_token_from_end(&slice[..end_i], count_till, None) {
             if token.hash_i != INVALID {
                 return (Some(token), nvals);
-            } else if beginning_token.map_or(false, |starting_token| token == *starting_token) {
-                break;
+            } else if last_valid_token.map_or(false, |known_valid| token == *known_valid) {
+                // here we copy the last valid_token in the case that `last_valid_token`'s `RecKind` != the `count_till` `RecKind`
+                // and the incorrect hasher was used on the curr `token`
+                return (last_valid_token.copied(), nvals);
             } else {
                 nvals += 1;
                 end_i = token.byte_start;
@@ -904,6 +905,9 @@ impl LineReader<'_> {
                 });
         }
 
+        // not proud of this kind of inner block guard, arguably this is a good indicator these blocks should be moved to their own functions
+        let mut last_key_trim = "";
+
         if self.open_quote().is_none()
             && self.completion.curr_value().is_none()
             && (self.completion.curr_arg().is_none() || multiple_switch_kind)
@@ -911,16 +915,16 @@ impl LineReader<'_> {
                 matches!(
                     self.completion.rec_list[cmd.hash_i].kind,
                     RecKind::Argument | RecKind::Value(_)
-                )
+                ) && {
+                    last_key_trim = line_trim_start[cmd.slice_len..].trim_start();
+                    !last_key_trim.is_empty()
+                }
             })
         {
             let command = self.completion.curr_command().expect("outer if");
             let command_recs = self.completion.rec_list[command.hash_i];
 
-            let mut new = if line_trim_start[command.slice_len..]
-                .trim_start()
-                .ends_with(char::is_whitespace)
-            {
+            let mut new = if last_key_trim.ends_with(char::is_whitespace) {
                 let mut take_end = true;
                 let mut new = None;
 
@@ -933,8 +937,16 @@ impl LineReader<'_> {
                     if starting_token.hash_i == INVALID || nvals == 0 {
                         new = kind_match;
                         take_end = false;
-                    } else if let RecKind::Value(ref r) | RecKind::UserDefined(ref r) =
-                        start_token_meta.kind
+                    } else if let RecData {
+                        kind: RecKind::Value(ref r),
+                        end: false,
+                        ..
+                    }
+                    | RecData {
+                        kind: RecKind::UserDefined(ref r),
+                        end: false,
+                        ..
+                    } = start_token_meta
                     {
                         if r.contains(&nvals) {
                             take_end = false;
@@ -956,16 +968,18 @@ impl LineReader<'_> {
                     &line_trim_start[..line_trim_start.len() - self.curr_token().len()],
                     &command_recs.kind,
                 );
+
                 kind_match.filter(|starting_token| {
-                    match self.completion.rec_list[starting_token.hash_i].kind {
-                        RecKind::UserDefined(_) if nvals == 0 => true,
-                        RecKind::Value(ref c) if c.contains(&(nvals + 1)) => {
-                            self.completion.indexer.multiple = true;
-                            true
+                    Some(starting_token) != self.completion.last_key()
+                        && match self.completion.rec_list[starting_token.hash_i].kind {
+                            RecKind::UserDefined(_) if nvals == 0 => true,
+                            RecKind::Value(ref c) if nvals > 0 && c.contains(&(nvals + 1)) => {
+                                self.completion.indexer.multiple = true;
+                                true
+                            }
+                            _ if self.completion.rec_list[starting_token.hash_i].end => true,
+                            _ => false,
                         }
-                        _ if self.completion.rec_list[starting_token.hash_i].end => true,
-                        _ => false,
-                    }
                 })
             };
             let kind = new
@@ -996,7 +1010,7 @@ impl LineReader<'_> {
                 ..
             } = self.completion.rec_list[arg.hash_i]
             {
-                // boolean flag found
+                // boolean flag found, ok to move on
                 self.completion.input.curr_argument = None;
             }
         }
@@ -1004,7 +1018,12 @@ impl LineReader<'_> {
         if self.completion.curr_value().is_none()
             && self.open_quote().is_none()
             && self.completion.curr_command().is_some_and_valid()
-            && self.completion.curr_arg().is_some_and_valid()
+            && self.completion.curr_arg().is_some_and(|arg| {
+                arg.hash_i != INVALID && {
+                    last_key_trim = line_trim_start[arg.byte_start + arg.slice_len..].trim_start();
+                    !last_key_trim.is_empty()
+                }
+            })
         {
             let command = self.completion.curr_command().expect("outer if");
             let command_recs = self.completion.rec_list[command.hash_i];
@@ -1012,10 +1031,7 @@ impl LineReader<'_> {
             let arg = self.completion.curr_arg().expect("outer if");
             let arg_recs = self.completion.rec_list[arg.hash_i];
 
-            if line_trim_start[arg.byte_start + arg.slice_len..]
-                .trim_start()
-                .ends_with(char::is_whitespace)
-            {
+            if last_key_trim.ends_with(char::is_whitespace) {
                 match arg_recs.kind {
                     RecKind::Value(ref c) => {
                         if let Some(token) = self.completion.try_parse_token_from_end(
