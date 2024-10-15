@@ -31,7 +31,7 @@ MatchWire provides no competitive advantage and does not affect gameplay in any 
 game mechanics, alter game balance, or provide any features that would give users an unfair advantage over other players.
 
 ## Compatibility
-MatchWire is only supported on Windows 10 version 1809 (October 2018) or later
+MatchWire is only supported on Windows 10 version 1809 (October 2018) and later
 
 ## Installation
 1. Locate / Install Modern Warfare Remastered (2017)
