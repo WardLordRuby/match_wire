@@ -30,6 +30,9 @@ any game files. Users are responsible for obtaining the game through official ch
 MatchWire provides no competitive advantage and does not affect gameplay in any way. The program is designed solely to offer quality-of-life improvements. MatchWire does not modify
 game mechanics, alter game balance, or provide any features that would give users an unfair advantage over other players.
 
+## Compatibility
+MatchWire is only supported on Windows 10 version 1809 (October 2018) or later
+
 ## Installation
 1. Locate / Install Modern Warfare Remastered (2017)
 2. Install Horizon MW via the launcher found on their [Discord][hmw-discord] | [direct-download][hmw-launcher-dl]
@@ -99,9 +102,6 @@ Arguments:
 ## Console help
 The console command is an easy way to interact and view Mw2 Remastered's console window. Sending commands to the console works just as it normally would, simply type the command
 and press enter to send. Pressing 'backspace' or 'ctrl + c' when the input line is empty will leave the game console and return back to MatchWire.exe  
-
-## Compatibility
-To run MatchWire you must be running Windows 10 version 1809 (October 2018) or later
 
 ## Build from source
 If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 
