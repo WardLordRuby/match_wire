@@ -9,14 +9,14 @@ use crate::{
         input::style::{WHITE, YELLOW},
     },
 };
-use std::{collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
+use std::{borrow::Cow, collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 use winptyrs::PTY;
 
 pub const HISTORY_MAX: usize = 6;
 
-struct DisplayHistory<'a>(&'a [HostName], &'a [String]);
+struct DisplayHistory<'a>(&'a [HostName], &'a [Cow<'static, str>]);
 
 impl<'a> Display for DisplayHistory<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -29,7 +29,7 @@ impl<'a> Display for DisplayHistory<'a> {
             .take(HISTORY_MAX)
             .enumerate()
             .map(|(i, host)| {
-                let host_ip = self.1[i].as_str();
+                let host_ip = self.1[i].as_ref();
                 let name_len = host.parsed.chars().count();
                 let ip_len = host_ip.chars().count();
                 longest_host_len = longest_host_len.max(name_len);
@@ -58,10 +58,10 @@ async fn display_history<'a>(
         .rev()
         .take(HISTORY_MAX)
         .map(|entry| {
-            host_to_connect.get(&entry.raw).map_or_else(
-                || String::from("Server not found in cache"),
-                |ip| format!("connect {ip}"),
-            )
+            host_to_connect
+                .get(&entry.raw)
+                .map(|ip| Cow::Owned(format!("connect {ip}")))
+                .unwrap_or(Cow::Borrowed("Server not found in cache"))
         })
         .collect::<Vec<_>>();
     println!("{}", DisplayHistory(history, &ips));

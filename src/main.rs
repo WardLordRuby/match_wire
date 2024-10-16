@@ -62,17 +62,13 @@ fn main() {
 
         startup_data.splash_task.await.unwrap().unwrap();
 
-        let app_version_res = startup_data.version_task.await;
-        let hmw_hash_res = startup_data.hmw_hash_task.await;
-        let launch_res = startup_data.launch_task.await;
-
         let (message_tx, mut message_rx) = mpsc::channel(50);
 
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
-            .launch_res(launch_res)
-            .app_ver_res(app_version_res)
-            .hmw_hash_res(hmw_hash_res)
+            .launch_res(startup_data.launch_task.await)
+            .app_ver_res(startup_data.version_task.await)
+            .hmw_hash_res(startup_data.hmw_hash_task.await)
             .game_details(startup_data.game)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)

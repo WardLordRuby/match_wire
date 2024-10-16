@@ -16,6 +16,7 @@ use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, info, instrument, trace};
 
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fmt::Display,
     fs::File,
@@ -731,7 +732,7 @@ async fn filter_server_list(
 pub async fn try_location_lookup(
     ip: &IpAddr,
     client: reqwest::Client,
-) -> Result<Continent, String> {
+) -> Result<Continent, Cow<'static, str>> {
     let location_api_url = format!("{MASTER_LOCATION_URL}/{}{FIND_IP_NET_PRIVATE_KEY}", ip);
 
     let api_response = client
@@ -747,9 +748,10 @@ pub async fn try_location_lookup(
             }
             Err(json
                 .message
-                .unwrap_or_else(|| String::from("unknown error")))
+                .map(Cow::Owned)
+                .unwrap_or(Cow::Borrowed("unknown error")))
         }
-        Err(err) => Err(format!("{}, ip: {ip}", err.without_url())),
+        Err(err) => Err(Cow::Owned(format!("{}, ip: {ip}", err.without_url()))),
     }
 }
 
