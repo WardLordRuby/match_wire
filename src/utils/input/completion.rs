@@ -574,9 +574,11 @@ trait Validity {
 }
 
 impl Validity for Option<&SliceData> {
+    #[inline]
     fn is_some_and_invalid(&self) -> bool {
         matches!(self, Some(SliceData { hash_i, ..}) if *hash_i == INVALID)
     }
+    #[inline]
     fn is_some_and_valid(&self) -> bool {
         matches!(self, Some(SliceData { hash_i, ..}) if *hash_i != INVALID)
     }
@@ -613,7 +615,6 @@ impl SliceData {
 }
 
 impl Completion {
-    #[inline]
     fn rec_data_from_unchecked(&self, recomendation_i: &i8) -> &RecData {
         if !self.indexer.multiple {
             return self.rec_list[self.indexer.list.0];
@@ -921,8 +922,9 @@ impl LineReader<'_> {
                 }
             })
         {
-            let command = self.completion.curr_command().expect("outer if");
-            let command_recs = self.completion.rec_list[command.hash_i];
+            let command_kind = &self.completion.rec_list
+                [self.completion.curr_command().expect("outer if").hash_i]
+                .kind;
 
             let mut new = if last_key_trim.ends_with(char::is_whitespace) {
                 let mut take_end = true;
@@ -930,7 +932,7 @@ impl LineReader<'_> {
 
                 let (kind_match, nvals) = self
                     .completion
-                    .count_vals_in_slice(line_trim_start, &command_recs.kind);
+                    .count_vals_in_slice(line_trim_start, command_kind);
 
                 if let Some(ref starting_token) = kind_match {
                     let start_token_meta = self.completion.rec_list[starting_token.hash_i];
@@ -957,7 +959,7 @@ impl LineReader<'_> {
                 if take_end {
                     new = self.completion.try_parse_token_from_end(
                         line_trim_start,
-                        &command_recs.kind,
+                        command_kind,
                         Some(nvals),
                     );
                 }
@@ -966,11 +968,11 @@ impl LineReader<'_> {
                 // make sure we set prev arg when backspacing
                 let (kind_match, nvals) = self.completion.count_vals_in_slice(
                     &line_trim_start[..line_trim_start.len() - self.curr_token().len()],
-                    &command_recs.kind,
+                    command_kind,
                 );
 
                 kind_match.filter(|starting_token| {
-                    Some(starting_token) != self.completion.last_key()
+                    !starting_token.exact_eq(self.completion.curr_command().expect("outer if"))
                         && match self.completion.rec_list[starting_token.hash_i].kind {
                             RecKind::UserDefined(_) if nvals == 0 => true,
                             RecKind::Value(ref c) if nvals > 0 && c.contains(&(nvals + 1)) => {
@@ -993,7 +995,7 @@ impl LineReader<'_> {
                         &RecKind::Argument
                     })
                 })
-                .unwrap_or(&command_recs.kind);
+                .unwrap_or(command_kind);
 
             match kind {
                 RecKind::Argument => self.completion.input.curr_argument = new,
@@ -1025,8 +1027,9 @@ impl LineReader<'_> {
                 }
             })
         {
-            let command = self.completion.curr_command().expect("outer if");
-            let command_recs = self.completion.rec_list[command.hash_i];
+            let command_kind = &self.completion.rec_list
+                [self.completion.curr_command().expect("outer if").hash_i]
+                .kind;
 
             let arg = self.completion.curr_arg().expect("outer if");
             let arg_recs = self.completion.rec_list[arg.hash_i];
@@ -1042,7 +1045,7 @@ impl LineReader<'_> {
                             if token.hash_i != INVALID {
                                 let (kind_match, nvals) = self
                                     .completion
-                                    .count_vals_in_slice(line_trim_start, &command_recs.kind);
+                                    .count_vals_in_slice(line_trim_start, command_kind);
                                 debug_assert!(kind_match.unwrap().exact_eq(arg));
                                 if c.contains(&(nvals + 1)) {
                                     self.completion.indexer.multiple = true;
@@ -1062,7 +1065,7 @@ impl LineReader<'_> {
                 // make sure we set multiple to false when backspacing
                 if let (Some(kind_match), nvals) = self.completion.count_vals_in_slice(
                     &line_trim_start[..line_trim_start.len() - self.curr_token().len()],
-                    &command_recs.kind,
+                    command_kind,
                 ) {
                     if let RecKind::Value(ref c) = self.completion.rec_list[kind_match.hash_i].kind
                     {
@@ -1104,13 +1107,12 @@ impl LineReader<'_> {
 
         self.check_for_errors();
 
-        let Some(recs) = rec_data_1.recs else {
-            self.completion.recomendations = Vec::new();
-            return;
-        };
-
         if self.curr_token().is_empty() {
-            self.completion.recomendations = recs[..rec_data_1.unique_rec_end()].to_vec();
+            if let Some(recs) = rec_data_1.recs {
+                self.completion.recomendations = recs[..rec_data_1.unique_rec_end()].to_vec();
+            } else {
+                self.completion.recomendations.clear();
+            }
             if self.completion.indexer.multiple {
                 if let Some(recs2) = rec_data_2.recs {
                     let rec_len = self.completion.recomendations.len() as i8;
@@ -1127,19 +1129,22 @@ impl LineReader<'_> {
         }
 
         let input_lower = self.curr_token().trim_start_matches('-').to_lowercase();
-        let if_multiple = self
-            .completion
-            .indexer
-            .multiple
+
+        let rec_1 = (!self.curr_token().starts_with('-') || rec_data_1.kind == RecKind::Argument)
+            .then(|| rec_data_1.recs.map(|recs| recs.iter()))
+            .flatten();
+
+        let rec_2 = (self.completion.indexer.multiple
+            && (!self.curr_token().starts_with('-') || rec_data_2.kind == RecKind::Argument))
             .then(|| rec_data_2.recs.map(|recs| recs.iter()))
             .flatten();
 
         let add_help = self.completion.add_help().then_some([HELP_STR].iter());
 
-        let mut recomendations = recs
-            .iter()
-            .chain(if_multiple.unwrap_or([].iter()))
-            .chain(add_help.unwrap_or([].iter()))
+        let mut recomendations = std::iter::empty()
+            .chain(rec_1.unwrap_or_default())
+            .chain(rec_2.unwrap_or_default())
+            .chain(add_help.unwrap_or_default())
             .filter(|rec| rec.contains(&input_lower))
             .copied()
             .collect::<Vec<_>>();
