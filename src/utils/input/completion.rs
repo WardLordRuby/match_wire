@@ -1174,31 +1174,31 @@ impl LineReader<'_> {
             return Ok(());
         }
 
-        let recomendation = loop {
-            if self.completion.recomendations.len() == 1 {
-                match self.completion.rec_data_from_unchecked(&0).kind {
-                    RecKind::Value(_) => {
-                        if self.curr_token() == self.completion.recomendations[0]
-                            && self.curr_token() != HELP_STR
-                        {
-                            return Ok(());
-                        }
+        if self.completion.recomendations.len() == 1 {
+            match self.completion.rec_data_from_unchecked(&0).kind {
+                RecKind::Value(_) => {
+                    if self.curr_token() == self.completion.recomendations[0]
+                        && self.curr_token() != HELP_STR
+                    {
+                        return Ok(());
                     }
-                    RecKind::Argument => {
-                        if let Some(user_input) = self.curr_token().strip_prefix("--") {
-                            if user_input == self.completion.recomendations[0] {
-                                return Ok(());
-                            }
-                        }
-                    }
-                    _ => {
-                        if self.curr_token() == self.completion.recomendations[0] {
+                }
+                RecKind::Argument => {
+                    if let Some(user_input) = self.curr_token().strip_prefix("--") {
+                        if user_input == self.completion.recomendations[0] {
                             return Ok(());
                         }
                     }
                 }
+                _ => {
+                    if self.curr_token() == self.completion.recomendations[0] {
+                        return Ok(());
+                    }
+                }
             }
+        }
 
+        let recomendation = loop {
             self.completion.indexer.recs += match direction {
                 Direction::Next => 1,
                 Direction::Previous => -1,
