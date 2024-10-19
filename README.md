@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [filter-help]: https://i.imgur.com/abZEeNh.png "query arguments"
 [reconnect-help]: https://i.imgur.com/fvRZ7PW.png "history arguments"
-[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.5/match_wire.exe
+[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.6/match_wire.exe
 [hmw-discord]: https://discord.com/invite/HorizonMW
 [hmw-launcher-dl]: http://price.horizonmw.org/launcher/HMW_Launcher.zip
 [rust-dl]: https://www.rust-lang.org/tools/install
