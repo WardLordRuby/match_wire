@@ -31,7 +31,8 @@ MatchWire provides no competitive advantage and does not affect gameplay in any 
 game mechanics, alter game balance, or provide any features that would give users an unfair advantage over other players.
 
 ## Compatibility
-MatchWire is only supported on Windows 10 version 1809 (October 2018) and later
+MatchWire is only _fully_ supported on Windows 10 version 1809 (October 2018) and later. The server scraper feature set will work fine on older versions of windows, and _should_
+work on linux when you compile from source (untested)
 
 ## Installation
 1. Locate / Install Modern Warfare Remastered (2017)
@@ -50,7 +51,7 @@ if line current line is empty it will close MatchWire. Note that closing MatchWi
 | [filter](#query-help)        | Filter    | Create a new favorites.json using various filter options                        |
 | [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)                 |
 | launch                       | Launch    | Launch Mw2 Remastered (reconnect only works if the game is spawned by this app) |
-| cache                        | Cache     | Reset / Clear cache (useful if reconnect can not find server name in cache)     |
+| cache                        | Cache     | Update / Reset cache (useful if reconnect can not find server name in cache)    |
 | [console](#console-help)     | Logs      | Display and interact with the Mw2 Remastered console                            |
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                       |
 | local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)          |
