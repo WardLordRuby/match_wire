@@ -49,10 +49,7 @@ impl<'a> Display for DisplayHistory<'a> {
     }
 }
 
-async fn display_history<'a>(
-    history: &'a [HostName],
-    host_to_connect: &'a HashMap<String, SocketAddr>,
-) {
+fn display_history<'a>(history: &'a [HostName], host_to_connect: &'a HashMap<String, SocketAddr>) {
     let ips = history
         .iter()
         .rev()
@@ -75,7 +72,7 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
         return CommandHandle::Processed;
     }
     if args.history {
-        display_history(&cache.connection_history, &cache.host_to_connect).await;
+        display_history(&cache.connection_history, &cache.host_to_connect);
         return CommandHandle::Processed;
     }
     if let Err(err) = context.check_h2m_connection().await {

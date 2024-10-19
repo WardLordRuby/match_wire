@@ -24,7 +24,7 @@ use std::{
 use tracing::{error, info, warn};
 
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
-pub type LineCallback = dyn Fn(&mut LineReader) -> io::Result<()>;
+pub type InitLineCallback = dyn FnOnce(&mut LineReader) -> io::Result<()>;
 pub type CtxCallback = dyn Fn(&mut CommandContext);
 pub type AsyncCtxCallback =
     dyn for<'a> FnOnce(
@@ -46,7 +46,7 @@ pub struct LineReader<'a> {
 
 pub struct InputHook {
     uid: usize,
-    init: Option<Box<LineCallback>>,
+    init: Option<Box<InitLineCallback>>,
     event_hook: Box<InputEventHook>,
 }
 
@@ -81,7 +81,7 @@ static CALLBACK_UID: AtomicUsize = AtomicUsize::new(0);
 impl InputHook {
     pub fn from(
         uid: usize,
-        init: Option<Box<LineCallback>>,
+        init: Option<Box<InitLineCallback>>,
         event_hook: Box<InputEventHook>,
     ) -> Self {
         assert_ne!(uid, CALLBACK_UID.load(Ordering::SeqCst));
@@ -91,7 +91,10 @@ impl InputHook {
             event_hook,
         }
     }
-    pub fn with_new_uid(init: Option<Box<LineCallback>>, event_hook: Box<InputEventHook>) -> Self {
+    pub fn with_new_uid(
+        init: Option<Box<InitLineCallback>>,
+        event_hook: Box<InputEventHook>,
+    ) -> Self {
         InputHook {
             uid: Self::new_uid(),
             init,

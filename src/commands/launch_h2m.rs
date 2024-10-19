@@ -48,10 +48,10 @@ struct VS_FIXEDFILEINFO {
     dwFileDateLS: DWORD,
 }
 
-const H2M_WINDOW_NAME: &str = "h2m";
+const H2M_WINDOW_NAMES: [&str; 3] = ["h2m", "hmw", "horizonmw"];
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
-const H2M_WINDOW_CLASS_NAMES: [&str; 2] = ["H1", "H2M Splash Screen"];
+const H2M_WINDOW_CLASS_NAMES: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
 const JOIN_STR: &str = "Joining ";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 // const CONNECTING_STR: &str = "Connecti";
@@ -510,7 +510,10 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         .to_string_lossy()
         .to_ascii_lowercase();
 
-    if !window_title.contains(H2M_WINDOW_NAME) {
+    if !H2M_WINDOW_NAMES
+        .iter()
+        .any(|game_name| window_title.contains(game_name))
+    {
         return 1;
     }
 

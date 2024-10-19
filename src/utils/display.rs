@@ -193,14 +193,7 @@ impl Display for HmwUpdateHelp {
 
 impl Display for GameDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} ",
-            self.path
-                .file_name()
-                .expect("was not modified since we set file_name")
-                .to_string_lossy()
-        )?;
+        write!(f, "{} ", self.game_file_name())?;
         let color = match (&self.hash_curr, &self.hash_latest) {
             (Some(curr), Some(latest)) => {
                 if curr == latest {

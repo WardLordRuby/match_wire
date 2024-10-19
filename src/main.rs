@@ -55,7 +55,7 @@ fn main() {
             Ok(data) => data,
             Err(err) => {
                 eprintln!("{RED}{err}{WHITE}");
-                await_user_for_end().await;
+                await_user_for_end();
                 return;
             }
         };

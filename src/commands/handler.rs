@@ -11,8 +11,8 @@ use crate::{
         display::{ConnectionHelp, HmwUpdateHelp},
         input::{
             line::{
-                AsyncCtxCallback, EventLoop, InputEventHook, InputHook, InputHookErr, LineCallback,
-                LineData,
+                AsyncCtxCallback, EventLoop, InitLineCallback, InputEventHook, InputHook,
+                InputHookErr, LineData,
             },
             style::{RED, WHITE, YELLOW},
         },
@@ -23,6 +23,7 @@ use crate::{
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::{
+    borrow::Cow,
     ffi::OsString,
     fmt::Display,
     path::{Path, PathBuf},
@@ -69,6 +70,13 @@ impl GameDetails {
             hash_curr,
             hash_latest: None,
         }
+    }
+
+    pub fn game_file_name(&self) -> Cow<'_, str> {
+        self.path
+            .file_name()
+            .expect("was not modified since it was set")
+            .to_string_lossy()
     }
 
     fn update(&mut self, from: (Option<f64>, Option<String>)) {
@@ -399,7 +407,7 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     match launch_h2m_pseudo(&context.game.path) {
         Ok(conpty) => {
-            info!("Launching H2M-mod...");
+            info!("Launching {}...", context.game.game_file_name());
             context.game.update(exe_details(&context.game.path));
             context.init_pty(conpty);
             if let Err(err) = listener_routine(context).await {
@@ -426,6 +434,7 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
     initalize_listener(context).await?;
     let pty = context.pty_handle();
     let msg_sender = context.msg_sender();
+    let game_name = context.game.game_file_name().into_owned();
     tokio::task::spawn(async move {
         const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
         if let Some(handle) = pty {
@@ -435,14 +444,14 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
                 match handle.read().await.is_alive() {
                     Ok(true) => {
                         if attempt == 3 {
-                            break vec![Message::Info(String::from(
-                                "Connected to H2M-mod console",
-                            ))];
+                            break vec![Message::Info(
+                                format!("Connected to {game_name} console",),
+                            )];
                         }
                     }
                     Ok(false) => {
                         break vec![
-                            Message::Err(String::from("Could not establish connection to H2M-mod")),
+                            Message::Err(format!("Could not establish connection to {game_name}")),
                             Message::Str(format!(
                                 "use command `{YELLOW}launch{WHITE}` to re-launch game"
                             )),
@@ -489,9 +498,10 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
         }
 
         let uid = InputHook::new_uid();
+        let game_name = context.game.game_file_name().into_owned();
 
-        let init: Box<LineCallback> = Box::new(|handle| {
-            handle.set_prompt(String::from("h2m-mod.exe"));
+        let init: Box<InitLineCallback> = Box::new(|handle| {
+            handle.set_prompt(game_name);
             handle.set_completion(false);
             Ok(())
         });
@@ -597,11 +607,12 @@ fn print_version(app: &AppDetails, game: &GameDetails) -> CommandHandle {
 async fn quit(context: &mut CommandContext) -> CommandHandle {
     if context.check_h2m_connection().await.is_ok() && h2m_running() {
         println!(
-            "{RED}Quitting {} will also close H2M-mod\n{YELLOW}Are you sure you want to quit?{WHITE}",
-            env!("CARGO_PKG_NAME")
+            "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
+            env!("CARGO_PKG_NAME"),
+            context.game.game_file_name()
         );
 
-        let init: Box<LineCallback> = Box::new(|handle| {
+        let init: Box<InitLineCallback> = Box::new(|handle| {
             handle.set_prompt(format!(
                 "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
             ));

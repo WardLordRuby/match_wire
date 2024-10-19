@@ -46,12 +46,14 @@ const MOD_FILES_MODULE_NAME: &str = "mod";
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub const H2M_MAX_TEAM_SIZE: i64 = 9;
 
-pub const REQUIRED_FILES: [&str; 5] = [
+pub const REQUIRED_FILES: [&str; 7] = [
     "h1_mp64_ship.exe",
     "h2m-mod",
     "players2",
     "h2m-mod.exe",
     "h2m-revived.exe",
+    "hmw-mod",
+    "hmw-mod.exe",
 ];
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
@@ -106,7 +108,7 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Option<String>> {
         .modules
         .iter_mut()
         .find(|module| module.name == MOD_FILES_MODULE_NAME)
-        .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[3])))
+        .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[6])))
 }
 
 #[derive(Debug)]
@@ -178,19 +180,21 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
                     ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
                 ));
             }
-            if !files.contains(REQUIRED_FILES[1]) {
+            if !files.contains(REQUIRED_FILES[5]) && !files.contains(REQUIRED_FILES[1]) {
                 return Err(
-                    "H2M mod files not found, H2M mod files are available to download for free through the Horizon MW launcher\n\
+                    "Mw2 Remastered mod files not found, HMW mod files are available to download for free through the Horizon MW launcher\n\
                     https://discord.com/invite/HorizonMW"
                 );
             }
-            let found_game = if files.contains(REQUIRED_FILES[3]) {
+            let found_game = if files.contains(REQUIRED_FILES[6]) {
+                REQUIRED_FILES[6]
+            } else if files.contains(REQUIRED_FILES[3]) {
                 REQUIRED_FILES[3]
             } else if files.contains(REQUIRED_FILES[4]) {
                 REQUIRED_FILES[4]
             } else {
                 return Err(
-                    "h2m-mod.exe not found, H2M mod files are available to download for free through the Horizon MW launcher\n\
+                    "Mod exe not found, HMW mod files are available to download for free through the Horizon MW launcher\n\
                     https://discord.com/invite/HorizonMW"
                 );
             };
@@ -248,7 +252,7 @@ pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
     (version, hash)
 }
 
-pub async fn await_user_for_end() {
+pub fn await_user_for_end() {
     println!("Press enter to exit...");
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin);
