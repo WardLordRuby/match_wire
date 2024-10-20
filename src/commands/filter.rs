@@ -12,7 +12,7 @@ use crate::{
 };
 
 use reqwest::Client;
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info, instrument, trace};
 
 use std::{
@@ -441,20 +441,17 @@ pub async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
 
 pub async fn queue_info_requests(
     servers: Vec<Sourced>,
-    tasks: &mut Vec<JoinHandle<Result<Server, GetInfoMetaData>>>,
+    tasks: &mut JoinSet<Result<Server, GetInfoMetaData>>,
     remove_duplicates: bool,
     client: &Client,
 ) {
     let mut dup = HashSet::new();
+
     for server in servers.into_iter() {
         if remove_duplicates && !dup.insert(server.socket_addr()) {
             continue;
         }
-
-        let client = client.clone();
-        tasks.push(tokio::spawn(async move {
-            try_get_info(Request::New(server), client).await
-        }));
+        tasks.spawn(try_get_info(Request::New(server), client.clone()));
     }
 }
 
@@ -511,7 +508,7 @@ async fn filter_server_list(
         );
 
         let mut server_list = Vec::new();
-        let mut tasks = Vec::new();
+        let mut tasks = JoinSet::new();
         let mut check_again = Vec::new();
         let mut new_lookups = HashSet::new();
         let client = reqwest::Client::new();
@@ -529,11 +526,11 @@ async fn filter_server_list(
             if new_lookups.insert(socket_addr.ip()) {
                 let client = client.clone();
                 trace!("Requsting location data for: {}", socket_addr.ip());
-                tasks.push(tokio::spawn(async move {
+                tasks.spawn(async move {
                     try_location_lookup(&socket_addr.ip(), client)
                         .await
                         .map(|location| (sourced_data, location.code))
-                }))
+                });
             } else {
                 check_again.push(sourced_data)
             }
@@ -541,8 +538,8 @@ async fn filter_server_list(
 
         let mut failure_count = 0_usize;
 
-        for task in tasks {
-            match task.await {
+        while let Some(res) = tasks.join_next().await {
+            match res {
                 Ok(Ok((sourced_data, cont_code))) => {
                     cache
                         .ip_to_region
@@ -599,7 +596,7 @@ async fn filter_server_list(
         || args.without_bots
         || !args.include_unresponsive
     {
-        let mut tasks = Vec::with_capacity(servers.len());
+        let mut tasks = JoinSet::new();
         let mut host_list = Vec::with_capacity(servers.len());
 
         let client = reqwest::Client::builder()
@@ -618,20 +615,20 @@ async fn filter_server_list(
 
         while !tasks.is_empty() {
             println!("{}", DisplayGetInfoCount(tasks.len(), sent_retires));
-            let mut retries = Vec::new();
-            for task in tasks {
-                match task.await {
+            let mut retries = JoinSet::new();
+            while let Some(res) = tasks.join_next().await {
+                match res {
                     Ok(Ok(server)) => host_list.push(server),
                     Ok(Err(mut err)) => {
                         if err.retries < max_attempts {
                             let client = client.clone();
-                            retries.push(tokio::task::spawn(async move {
+                            retries.spawn(async move {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(
                                     RETRY_TIME_SCALE * (err.retries + 1) as u64,
                                 ))
                                 .await;
                                 try_get_info(Request::Retry(err), client).await
-                            }));
+                            });
                         } else {
                             did_not_respond.add(&err.meta);
                             error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
