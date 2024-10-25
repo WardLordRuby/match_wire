@@ -1,7 +1,8 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [filter-help]: https://i.imgur.com/abZEeNh.png "query arguments"
 [reconnect-help]: https://i.imgur.com/fvRZ7PW.png "history arguments"
-[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.5.6/match_wire.exe
+[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/latest/download/match_wire.exe
+[nexus-link]: https://www.nexusmods.com/callofdutymodernwarfareremastered/mods/2
 [hmw-discord]: https://discord.com/invite/HorizonMW
 [hmw-launcher-dl]: http://price.horizonmw.org/launcher/HMW_Launcher.zip
 [rust-dl]: https://www.rust-lang.org/tools/install
@@ -10,7 +11,8 @@
 </div>
 
 # MatchWire
-[![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/match_wire/total?label=Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
+[![GitHub Downloads](https://img.shields.io/github/downloads/WardLordRuby/match_wire/total?label=GitHub%20Downloads&labelColor=%2323282e&color=%230e8726)][latest-dl]
+[![Nexus Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgist.githubusercontent.com%2FWardLordRuby%2Fd6ef5e71d937c2310cc8058638ca17fe%2Fraw%2F&query=%24.23308787515394.mod_downloads&label=Nexus%20Downloads&labelColor=%2323282e)][nexus-link]
 [![GitHub License](https://img.shields.io/github/license/WardLordRuby/match_wire?label=License&labelColor=%2323282e)](LICENSE)  
 
 MatchWire is a game launcher that enhances the core H2M/HMW (Mw2 Remastered) experience by offering key quality-of-life improvements. From its core MatchWire is designed to be
