@@ -91,7 +91,7 @@ impl Display for DisplayHistoryErr {
     }
 }
 
-pub struct DisplayPanic<'a>(pub &'a std::panic::PanicInfo<'a>);
+pub struct DisplayPanic<'a>(pub &'a std::panic::PanicHookInfo<'a>);
 
 impl Display for DisplayPanic<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
