@@ -20,10 +20,10 @@ lto = true
 
 [dependencies]
 reqwest = { version = "0.12.8", features = ["json"] }
-serde = { version = "1.0.210", features = ["derive"] }
+serde = { version = "1.0.213", features = ["derive"] }
 serde_json = "1.0.131"
 clap = { version = "4.5.20", features = ["derive"] }
-tokio = { version = "1.40.0", features = ["macros", "sync", "signal"]}
+tokio = { version = "1.41.0", features = ["macros", "sync", "signal"]}
 tokio-stream = "0.1.16"
 tracing = { version = "0.1.40", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
@@ -32,7 +32,7 @@ shellwords = "1.1.0"
 crossterm = { version = "0.28.1", features = ["event-stream"]}
 winpty-rs = "0.4.0"
 winapi = { version = "0.3.9", features = ["winver"]}
-regex = "1.11.0"
+regex = "1.11.1"
 sha2 = "0.10.8"
 
 [build-dependencies]
