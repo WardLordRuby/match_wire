@@ -22,6 +22,7 @@ pub mod utils {
 use clap::CommandFactory;
 use cli::UserCommand;
 use commands::{handler::AppDetails, launch_h2m::get_exe_version};
+use constcat::concat;
 use crossterm::cursor;
 use sha2::{Digest, Sha256};
 use std::{
@@ -42,6 +43,9 @@ pub const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
 const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
 const MOD_FILES_MODULE_NAME: &str = "mod";
+const HMW_DOWNLOAD_HINT: &str =
+    "HMW mod files are available to download for free through the Horizon MW launcher\n\
+    https://docs.horizonmw.org/download/";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -181,10 +185,10 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
                 ));
             }
             if !files.contains(REQUIRED_FILES[5]) && !files.contains(REQUIRED_FILES[1]) {
-                return Err(
-                    "Mw2 Remastered mod files not found, HMW mod files are available to download for free through the Horizon MW launcher\n\
-                    https://discord.com/invite/HorizonMW"
-                );
+                return Err(concat!(
+                    "Mw2 Remastered mod files not found, ",
+                    HMW_DOWNLOAD_HINT
+                ));
             }
             let found_game = if files.contains(REQUIRED_FILES[6]) {
                 REQUIRED_FILES[6]
@@ -193,10 +197,7 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
             } else if files.contains(REQUIRED_FILES[4]) {
                 REQUIRED_FILES[4]
             } else {
-                return Err(
-                    "Mod exe not found, HMW mod files are available to download for free through the Horizon MW launcher\n\
-                    https://discord.com/invite/HorizonMW"
-                );
+                return Err(concat!("Mod exe not found, ", HMW_DOWNLOAD_HINT));
             };
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))

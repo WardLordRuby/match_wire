@@ -34,6 +34,7 @@ winpty-rs = "0.4.0"
 winapi = { version = "0.3.9", features = ["winver"]}
 regex = "1.11.1"
 sha2 = "0.10.8"
+constcat = "0.5.1"
 
 [build-dependencies]
 winresource = "0.1.17"

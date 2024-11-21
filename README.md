@@ -4,7 +4,7 @@
 [latest-dl]: https://github.com/WardLordRuby/match_wire/releases/latest/download/match_wire.exe
 [nexus-link]: https://www.nexusmods.com/callofdutymodernwarfareremastered/mods/2
 [hmw-discord]: https://discord.com/invite/HorizonMW
-[hmw-launcher-dl]: http://price.horizonmw.org/launcher/HMW_Launcher.zip
+[hmw-launcher-dl]: https://docs.horizonmw.org/download/
 [rust-dl]: https://www.rust-lang.org/tools/install
 <div align="center">
     <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
