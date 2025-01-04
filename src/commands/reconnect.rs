@@ -18,7 +18,7 @@ pub const HISTORY_MAX: usize = 6;
 
 struct DisplayHistory<'a>(&'a [HostName], &'a [Cow<'static, str>]);
 
-impl<'a> Display for DisplayHistory<'a> {
+impl Display for DisplayHistory<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut longest_host_len = 0;
         let mut longest_connect_len = 0;

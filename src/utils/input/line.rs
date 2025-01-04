@@ -29,7 +29,7 @@ pub type CtxCallback = dyn Fn(&mut CommandContext);
 pub type AsyncCtxCallback =
     dyn for<'a> FnOnce(
         &'a mut CommandContext,
-    ) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
 
 pub struct LineReader<'a> {
     pub completion: Completion,

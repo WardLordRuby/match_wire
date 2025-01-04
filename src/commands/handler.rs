@@ -475,7 +475,7 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
 
 struct DisplayLogs<'a>(&'a [String]);
 
-impl<'a> Display for DisplayLogs<'a> {
+impl Display for DisplayLogs<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for line in self.0 {
             writeln!(f, "{line}")?;
