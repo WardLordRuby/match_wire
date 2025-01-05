@@ -69,13 +69,14 @@ const NEW_LINE: u16 = 10;
 // const COLOR_CMD_BYTE: u16 = 109;
 
 #[inline]
-fn case_insensitve_cmp_direct(window: &[u16]) -> bool {
+fn case_insensitve_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
     debug_assert_eq!(window.len(), CONNECT_BYTES_LOWER.len());
     for (i, &byte) in window.iter().enumerate() {
         if byte != CONNECT_BYTES_LOWER[i] && byte != CONNECT_BYTES_UPPER[i] {
             return false;
         }
     }
+    *kind = Connection::Direct;
     true
 }
 
@@ -141,14 +142,17 @@ impl HostName {
             let (pre, host_name) = stripped.split_once("} ").ok_or_else(|| {
                 format!("Unexpected HMW console output found. ansi_stripped_input: '{stripped}', does not contain: '}} '")
             })?;
-            let (_, ip_str) = pre.rsplit_once('{').ok_or_else(|| {
-                format!("Unexpected HMW console output found. left_stripped_split: '{pre}', does not contain '{{'")
-            })?;
-            let ip = ip_str
-                .parse::<SocketAddr>()
-                .map_err(|err| err.to_string())?;
+            let ip = pre
+                .rsplit_once('{')
+                .ok_or_else(|| format!("Unexpected HMW console output found. left_stripped_split: '{pre}', does not contain '{{'"))
+                .and_then(|(_, ip_str)| {
+                    ip_str.parse::<SocketAddr>()
+                        .map_err(|err| format!("Failed to parse: {ip_str}, {err}"))
+                })
+                .map_err(|err| error!("{err}"))
+                .ok();
 
-            (host_name.to_string(), Some(ip))
+            (host_name.to_string(), ip)
         };
 
         Ok(HostNameRequestMeta::new(host_name, socket_addr))
@@ -167,7 +171,10 @@ impl HostName {
             reqwest::Client::new(),
         )
         .await?;
-        let host_name = server_info.info.expect("request returned `Ok`").host_name;
+        let host_name = server_info
+            .info
+            .expect("always `Some` when `try_get_info` is `Ok`")
+            .host_name;
         Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
     }
 }
@@ -323,18 +330,13 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                 }
 
                 let mut connect_kind = Connection::Browser;
-                if wide_encode_buf
-                    .windows(connecting_bytes.len())
-                    .any(|window| {
-                        window == connecting_bytes || {
-                            let direct = case_insensitve_cmp_direct(window);
-                            if direct {
-                                connect_kind = Connection::Direct;
-                            }
-                            direct
-                        }
-                    })
-                    && !wide_encode_buf.starts_with(&ERROR_BYTES)
+                if !wide_encode_buf.starts_with(&ERROR_BYTES)
+                    && wide_encode_buf
+                        .windows(connecting_bytes.len())
+                        .any(|window| {
+                            window == connecting_bytes
+                                || case_insensitve_cmp_direct(window, &mut connect_kind)
+                        })
                 {
                     add_to_history(
                         &cache_arc,
