@@ -140,20 +140,20 @@ impl CommandContext {
     pub fn forward_logs(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.forward_logs)
     }
-    pub async fn check_h2m_connection(&mut self) -> Result<(), String> {
+    pub async fn check_h2m_connection(&mut self) -> Result<(), Cow<'static, str>> {
         if let Some(ref lock) = self.pty_handle {
             let handle = lock.read().await;
             return match handle.is_alive() {
                 Ok(true) => Ok(()),
-                Ok(false) => Err(String::from("No connection to H2M is active")),
+                Ok(false) => Err(Cow::Borrowed("No connection to H2M is active")),
                 Err(err) => {
                     drop(handle);
                     self.pty_handle = None;
-                    Err(err.to_string_lossy().to_string())
+                    Err(Cow::Owned(err.to_string_lossy().to_string()))
                 }
             };
         }
-        Err(String::from("No Pseudoconsole set"))
+        Err(Cow::Borrowed("No Pseudoconsole set"))
     }
     #[inline]
     pub fn local_dir(&self) -> Option<&Path> {

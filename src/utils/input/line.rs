@@ -50,12 +50,6 @@ pub struct InputHook {
     event_hook: Box<InputEventHook>,
 }
 
-impl InputHook {
-    pub fn uid(&self) -> usize {
-        self.uid
-    }
-}
-
 pub struct InputHookErr {
     uid: usize,
     err: String,
@@ -91,6 +85,7 @@ impl InputHook {
             event_hook,
         }
     }
+
     pub fn with_new_uid(
         init: Option<Box<InitLineCallback>>,
         event_hook: Box<InputEventHook>,
@@ -101,6 +96,12 @@ impl InputHook {
             event_hook,
         }
     }
+
+    #[inline]
+    pub fn uid(&self) -> usize {
+        self.uid
+    }
+
     #[inline]
     pub fn new_uid() -> usize {
         CALLBACK_UID.fetch_add(1, Ordering::SeqCst)
