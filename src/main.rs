@@ -21,7 +21,7 @@ use match_wire::{
     },
     CACHED_DATA, LOCAL_DATA, LOG_ONLY,
 };
-use std::{io, path::PathBuf, sync::atomic::Ordering};
+use std::{borrow::Cow, io, path::PathBuf, sync::atomic::Ordering};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
@@ -191,13 +191,13 @@ struct StartupData {
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn app_startup() -> Result<StartupData, String> {
+async fn app_startup() -> Result<StartupData, Cow<'static, str>> {
     let exe_dir =
         std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
 
     #[cfg(not(debug_assertions))]
     let game = {
-        let game_exe_path = match_wire::contains_required_files(&exe_dir).map_err(String::from)?;
+        let game_exe_path = match_wire::contains_required_files(&exe_dir)?;
         let (version, hash) = match_wire::exe_details(&game_exe_path);
         GameDetails::new(game_exe_path, version, hash)
     };
