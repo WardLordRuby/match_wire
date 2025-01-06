@@ -134,15 +134,27 @@ const COMMAND_INNER: [InnerScheme; 9] = [
 
 const FILTER_INNER: [InnerScheme; 11] = [
     // limit
-    InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
+    InnerScheme::empty_with(
+        COMMAND_RECS[0],
+        RecKind::user_defined_with_num_args(1),
+        false,
+    ),
     // player-min
-    InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
+    InnerScheme::empty_with(
+        COMMAND_RECS[0],
+        RecKind::user_defined_with_num_args(1),
+        false,
+    ),
     // team-size-max
-    InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
+    InnerScheme::empty_with(
+        COMMAND_RECS[0],
+        RecKind::user_defined_with_num_args(1),
+        false,
+    ),
     // region
     InnerScheme::new(
         RecData::new(
-            Some("filter"),
+            Some(COMMAND_RECS[0]),
             Some(&FILTER_REGIONS_ALIAS),
             None,
             Some(&FILTER_REGIONS),
@@ -154,7 +166,7 @@ const FILTER_INNER: [InnerScheme; 11] = [
     // source
     InnerScheme::new(
         RecData::new(
-            Some("filter"),
+            Some(COMMAND_RECS[0]),
             Some(&FILTER_SOURCE_ALIAS),
             None,
             Some(&FILTER_SOURCE_RECS),
@@ -165,29 +177,37 @@ const FILTER_INNER: [InnerScheme; 11] = [
     ),
     // includes
     InnerScheme::empty_with(
-        "filter",
+        COMMAND_RECS[0],
         RecKind::user_defined_with_num_args(usize::MAX),
         false,
     ),
     // excludes
     InnerScheme::empty_with(
-        "filter",
+        COMMAND_RECS[0],
         RecKind::user_defined_with_num_args(usize::MAX),
         false,
     ),
     // with-bots
-    InnerScheme::flag("filter", false),
+    InnerScheme::flag(COMMAND_RECS[0], false),
     // without-bots
-    InnerScheme::flag("filter", false),
+    InnerScheme::flag(COMMAND_RECS[0], false),
     // include-unresponsive
-    InnerScheme::flag("filter", false),
+    InnerScheme::flag(COMMAND_RECS[0], false),
     // retry-max
-    InnerScheme::empty_with("filter", RecKind::user_defined_with_num_args(1), false),
+    InnerScheme::empty_with(
+        COMMAND_RECS[0],
+        RecKind::user_defined_with_num_args(1),
+        false,
+    ),
 ];
 
 const RECONNECT_INNTER: [InnerScheme; 2] = [
     // history
-    InnerScheme::end("reconnect"),
+    InnerScheme::end(COMMAND_RECS[1]),
     // connect
-    InnerScheme::empty_with("reconnect", RecKind::user_defined_with_num_args(1), true),
+    InnerScheme::empty_with(
+        COMMAND_RECS[1],
+        RecKind::user_defined_with_num_args(1),
+        true,
+    ),
 ];
