@@ -187,8 +187,21 @@ impl CommandContext {
         Arc::clone(&self.msg_sender)
     }
     #[inline]
-    pub fn h2m_version(&self) -> Option<f64> {
+    pub fn game_version(&self) -> Option<f64> {
         self.game.version
+    }
+    pub fn game_name(&self) -> Cow<'static, str> {
+        let file_name = self.game.game_file_name();
+        if file_name == REQUIRED_FILES[6] || file_name == REQUIRED_FILES[5] {
+            return Cow::Borrowed("HMW");
+        }
+        if file_name == REQUIRED_FILES[3]
+            || file_name == REQUIRED_FILES[1]
+            || file_name == REQUIRED_FILES[4]
+        {
+            return Cow::Borrowed("H2M");
+        }
+        Cow::Owned(file_name.into_owned())
     }
     #[inline]
     fn init_pty(&mut self, pty: PTY) {
@@ -418,7 +431,7 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
 pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
     match launch_h2m_pseudo(&context.game.path) {
         Ok(conpty) => {
-            info!("Launching {}...", context.game.game_file_name());
+            info!("Launching {}...", context.game_name());
             context.game.update(exe_details(&context.game.path));
             context.init_pty(conpty);
             if let Err(err) = listener_routine(context).await {
@@ -445,7 +458,7 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
     initalize_listener(context).await?;
     let pty = context.pty_handle();
     let msg_sender = context.msg_sender();
-    let game_name = context.game.game_file_name().into_owned();
+    let game_name = context.game_name();
     tokio::task::spawn(async move {
         const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
         if let Some(handle) = pty {
@@ -509,10 +522,10 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
         }
 
         let uid = InputHook::new_uid();
-        let game_name = context.game.game_file_name().into_owned();
+        let game_exe_name = context.game.game_file_name().into_owned();
 
         let init: Box<InitLineCallback> = Box::new(|handle| {
-            handle.set_prompt(game_name);
+            handle.set_prompt(game_exe_name);
             handle.set_completion(false);
             Ok(())
         });
@@ -620,7 +633,7 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
         println!(
             "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
             env!("CARGO_PKG_NAME"),
-            context.game.game_file_name()
+            context.game_name()
         );
 
         let init: Box<InitLineCallback> = Box::new(|handle| {

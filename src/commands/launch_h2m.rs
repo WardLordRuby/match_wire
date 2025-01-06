@@ -285,7 +285,8 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
     let forward_logs_arc = context.forward_logs();
     let msg_sender_arc = context.msg_sender();
     let pty = context.pty_handle().unwrap();
-    let version = context.h2m_version().unwrap_or(1.0);
+    let version = context.game_version().unwrap_or(1.0);
+    let game_name = context.game_name();
 
     tokio::spawn(async move {
         let mut buffer = OsString::new();
@@ -409,7 +410,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         }
         send_msg_over(
             &msg_sender_arc,
-            Message::Warn(String::from("No longer reading H2M console ouput")),
+            Message::Warn(format!("No longer reading {game_name} console ouput")),
         )
         .await;
     });
