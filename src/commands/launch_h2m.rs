@@ -5,7 +5,6 @@ use crate::{
     },
     parse_hostname, strip_ansi_private_modes, strip_ansi_sequences,
     utils::caching::Cache,
-    LOG_ONLY,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,7 +18,7 @@ use std::{
     },
 };
 use tokio::sync::{mpsc::Sender, Mutex};
-use tracing::{error, trace};
+use tracing::trace;
 use winapi::{
     shared::{minwindef::DWORD, windef::HWND},
     um::{
@@ -88,11 +87,11 @@ pub struct HostName {
 
 pub struct HostNameRequestMeta {
     pub host_name: HostName,
-    pub socket_addr: Option<SocketAddr>,
+    pub socket_addr: Option<Result<SocketAddr, String>>,
 }
 
 impl HostNameRequestMeta {
-    fn new(host_name_raw: String, socket_addr: Option<SocketAddr>) -> Self {
+    fn new(host_name_raw: String, socket_addr: Option<Result<SocketAddr, String>>) -> Self {
         HostNameRequestMeta {
             host_name: HostName {
                 parsed: parse_hostname(&host_name_raw),
@@ -104,7 +103,6 @@ impl HostNameRequestMeta {
 }
 
 enum HostRequestErr {
-    #[allow(dead_code)]
     AddrParseErr(AddrParseError),
     RequestErr(String),
 }
@@ -148,11 +146,9 @@ impl HostName {
                 .and_then(|(_, ip_str)| {
                     ip_str.parse::<SocketAddr>()
                         .map_err(|err| format!("Failed to parse: {ip_str}, {err}"))
-                })
-                .map_err(|err| error!("{err}"))
-                .ok();
+                });
 
-            (host_name.to_string(), ip)
+            (host_name.to_string(), Some(ip))
         };
 
         Ok(HostNameRequestMeta::new(host_name, socket_addr))
@@ -175,7 +171,7 @@ impl HostName {
             .info
             .expect("always `Some` when `try_get_info` is `Ok`")
             .host_name;
-        Ok(HostNameRequestMeta::new(host_name, Some(socket_addr)))
+        Ok(HostNameRequestMeta::new(host_name, Some(Ok(socket_addr))))
     }
 }
 
@@ -199,7 +195,7 @@ async fn add_to_history(
     ) {
         let mut cache = cache_arc.lock().await;
         let mut modified = true;
-        if let Some(ip) = host_name_meta.socket_addr {
+        if let Some(Ok(ip)) = host_name_meta.socket_addr {
             cache
                 .host_to_connect
                 .entry(host_name_meta.host_name.raw.clone())
@@ -235,7 +231,12 @@ async fn add_to_history(
     match kind {
         Connection::Browser => {
             let meta = match HostName::from_browser(wide_encode, version) {
-                Ok(data) => data,
+                Ok(mut data) => {
+                    if let Some(Err(ref mut err)) = data.socket_addr {
+                        let _ = background_msg.send(Message::Err(std::mem::take(err))).await;
+                    }
+                    data
+                }
                 Err(err) => {
                     let _ = background_msg.send(Message::Err(err)).await;
                     return;
@@ -246,6 +247,7 @@ async fn add_to_history(
         Connection::Direct => {
             let cache_arc = cache_arc.clone();
             let update_cache = update_cache.clone();
+            let background_msg = background_msg.clone();
             let wide_encode = wide_encode.to_vec();
             tokio::task::spawn(async move {
                 let meta = match HostName::from_request(&wide_encode).await {
@@ -254,7 +256,9 @@ async fn add_to_history(
                         match request_err {
                             // NOTE: disregard `AddrParseErr` because of partial read of pseudo console input bug
                             HostRequestErr::AddrParseErr(err) => trace!("{err}"),
-                            HostRequestErr::RequestErr(err) => error!(name: LOG_ONLY, "{err}"),
+                            HostRequestErr::RequestErr(err) => {
+                                let _ = background_msg.send(Message::Err(err)).await;
+                            }
                         }
                         return;
                     }

@@ -23,6 +23,7 @@ mod tests {
         for (i, host) in INPUT.iter().enumerate() {
             let wide_bytes = host.encode_utf16().collect::<Vec<_>>();
             let data = HostName::from_browser(&wide_bytes[..], 0.4).unwrap();
+            assert!(data.socket_addr.is_none());
             assert_eq!(data.host_name.parsed, OUTPUT[i].0);
             assert_eq!(data.host_name.raw, OUTPUT[i].1);
         }
@@ -49,7 +50,7 @@ mod tests {
             let data = HostName::from_browser(&wide_bytes[..], 1.1).unwrap();
             assert_eq!(data.host_name.parsed, OUTPUT[i].0);
             assert_eq!(data.host_name.raw, OUTPUT[i].1);
-            assert_eq!(data.socket_addr.unwrap(), OUTPUT[i].2);
+            assert_eq!(data.socket_addr.unwrap().unwrap(), OUTPUT[i].2);
         }
     }
 
