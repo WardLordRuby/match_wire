@@ -21,7 +21,6 @@ use std::{
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use tracing::{error, info, warn};
 
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
 pub type InitLineCallback = dyn FnOnce(&mut LineReader) -> io::Result<()>;
@@ -264,14 +263,9 @@ impl<'a> LineReader<'a> {
     }
 
     pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {
-        self.move_to_beginning(self.line_len())?;
-        match msg {
-            Message::Str(msg) => println!("{msg}"),
-            Message::Info(msg) => info!("{msg}"),
-            Message::Warn(msg) => warn!("{msg}"),
-            Message::Err(msg) => error!("{msg}"),
-        }
-        Ok(())
+        let res = self.move_to_beginning(self.line_len());
+        msg.print();
+        res
     }
 
     #[inline]

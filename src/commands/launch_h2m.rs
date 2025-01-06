@@ -79,6 +79,13 @@ fn case_insensitve_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
     true
 }
 
+async fn send_msg_over(sender: &Arc<Sender<Message>>, message: Message) {
+    sender
+        .send(message)
+        .await
+        .unwrap_or_else(|returned| returned.0.print());
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HostName {
     pub parsed: String,
@@ -233,12 +240,12 @@ async fn add_to_history(
             let meta = match HostName::from_browser(wide_encode, version) {
                 Ok(mut data) => {
                     if let Some(Err(ref mut err)) = data.socket_addr {
-                        let _ = background_msg.send(Message::Err(std::mem::take(err))).await;
+                        send_msg_over(background_msg, Message::Err(std::mem::take(err))).await;
                     }
                     data
                 }
                 Err(err) => {
-                    let _ = background_msg.send(Message::Err(err)).await;
+                    send_msg_over(background_msg, Message::Err(err)).await;
                     return;
                 }
             };
@@ -257,7 +264,7 @@ async fn add_to_history(
                             // NOTE: disregard `AddrParseErr` because of partial read of pseudo console input bug
                             HostRequestErr::AddrParseErr(err) => trace!("{err}"),
                             HostRequestErr::RequestErr(err) => {
-                                let _ = background_msg.send(Message::Err(err)).await;
+                                send_msg_over(&background_msg, Message::Err(err)).await;
                             }
                         }
                         return;
@@ -311,7 +318,11 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                         buffer.push(os_string);
                     }
                     Err(err) => {
-                        let _ = msg_sender_arc.send(Message::Err(format!("{err:?}"))).await;
+                        send_msg_over(
+                            &msg_sender_arc,
+                            Message::Err(err.to_string_lossy().to_string()),
+                        )
+                        .await;
                         break 'task;
                     }
                 }
@@ -396,11 +407,11 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
             buffer = OsString::from_wide(&wide_encode_buf);
         }
-        let _ = msg_sender_arc
-            .send(Message::Warn(String::from(
-                "No longer reading H2M console ouput",
-            )))
-            .await;
+        send_msg_over(
+            &msg_sender_arc,
+            Message::Warn(String::from("No longer reading H2M console ouput")),
+        )
+        .await;
     });
     Ok(())
 }

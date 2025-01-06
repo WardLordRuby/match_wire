@@ -36,7 +36,7 @@ use tokio::{
     sync::{mpsc::Sender, Mutex, RwLock},
     task::JoinError,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use winptyrs::PTY;
 
 pub enum Message {
@@ -44,6 +44,17 @@ pub enum Message {
     Info(String),
     Err(String),
     Warn(String),
+}
+
+impl Message {
+    pub fn print(&self) {
+        match self {
+            Message::Str(msg) => println!("{msg}"),
+            Message::Info(msg) => info!("{msg}"),
+            Message::Warn(msg) => warn!("{msg}"),
+            Message::Err(msg) => error!("{msg}"),
+        }
+    }
 }
 
 pub struct GameDetails {
