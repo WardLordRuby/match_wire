@@ -89,14 +89,14 @@ macro_rules! break_if {
 
 pub async fn get_latest_version() -> reqwest::Result<AppDetails> {
     let client = reqwest::Client::new();
-    let version = client
+    client
         .get(VERSION_URL)
         .timeout(Duration::from_secs(6))
         .send()
         .await?
         .json::<Version>()
-        .await?;
-    Ok(AppDetails::from(version))
+        .await
+        .map(AppDetails::from)
 }
 
 pub async fn get_latest_hmw_hash() -> reqwest::Result<Option<String>> {

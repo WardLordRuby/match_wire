@@ -62,15 +62,32 @@ impl Message {
 
 pub struct GameDetails {
     pub path: PathBuf,
+    pub game_name: Cow<'static, str>,
     pub version: Option<f64>,
     pub hash_curr: Option<String>,
     pub hash_latest: Option<String>,
 }
 
 impl GameDetails {
+    fn set_game_name(path: &Path) -> Cow<'static, str> {
+        let file_name = path
+            .file_name()
+            .expect("path points to exe")
+            .to_string_lossy();
+
+        match file_name.as_ref() {
+            n if n == REQUIRED_FILES[6] || n == REQUIRED_FILES[5] => Cow::Borrowed("HMW"),
+            n if n == REQUIRED_FILES[3] || n == REQUIRED_FILES[1] || n == REQUIRED_FILES[4] => {
+                Cow::Borrowed("H2M")
+            }
+            _ => Cow::Owned(file_name.into_owned()),
+        }
+    }
+
     pub fn default(exe_dir: &Path) -> Self {
         GameDetails {
-            path: exe_dir.join(REQUIRED_FILES[3]),
+            path: exe_dir.join(REQUIRED_FILES[6]),
+            game_name: Cow::Borrowed("HMW"),
             version: None,
             hash_curr: None,
             hash_latest: None,
@@ -79,6 +96,7 @@ impl GameDetails {
 
     pub fn new(path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
         GameDetails {
+            game_name: GameDetails::set_game_name(&path),
             path,
             version,
             hash_curr,
@@ -194,17 +212,7 @@ impl CommandContext {
         self.game.version
     }
     pub fn game_name(&self) -> Cow<'static, str> {
-        let file_name = self.game.game_file_name();
-        if file_name == REQUIRED_FILES[6] || file_name == REQUIRED_FILES[5] {
-            return Cow::Borrowed("HMW");
-        }
-        if file_name == REQUIRED_FILES[3]
-            || file_name == REQUIRED_FILES[1]
-            || file_name == REQUIRED_FILES[4]
-        {
-            return Cow::Borrowed("H2M");
-        }
-        Cow::Owned(file_name.into_owned())
+        Cow::clone(&self.game.game_name)
     }
     #[inline]
     fn init_pty(&mut self, pty: PTY) {
