@@ -1,7 +1,7 @@
 use crate::{
     cli::HistoryArgs,
     commands::{
-        handler::{CommandContext, CommandHandle},
+        handler::{CommandContext, CommandHandle, CommandSender},
         launch_h2m::HostName,
     },
     utils::{
@@ -9,7 +9,7 @@ use crate::{
         input::style::{WHITE, YELLOW},
     },
 };
-use std::{borrow::Cow, collections::HashMap, ffi::OsString, fmt::Display, net::SocketAddr};
+use std::{borrow::Cow, collections::HashMap, fmt::Display, net::SocketAddr};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 use winptyrs::PTY;
@@ -99,7 +99,9 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     drop(cache);
 
     if let Some(ip_port) = connect {
-        let lock = context.pty_handle().unwrap();
+        let lock = context
+            .pty_handle()
+            .expect("above guard checks `check_h2m_connection().is_ok()`");
         connect_to(ip_port, &lock)
             .await
             .unwrap_or_else(|err| error!("{err}"));
@@ -111,20 +113,9 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
-async fn connect_to(ip_port: SocketAddr, lock: &RwLock<PTY>) -> Result<(), String> {
-    let handle = lock.read().await;
-    let send_command = |command: &str| match handle.write(OsString::from(command)) {
-        Ok(chars) => {
-            if chars == 0 {
-                Err(String::from("Failed to send command to h2m console"))
-            } else {
-                Ok(())
-            }
-        }
-        Err(err) => Err(err.to_string_lossy().to_string()),
-    };
-
-    send_command("disconnect\r\n")?;
+async fn connect_to(ip_port: SocketAddr, lock: &RwLock<PTY>) -> Result<(), Cow<'_, str>> {
+    let game_console = lock.read().await;
+    game_console.send_cmd("disconnect")?;
     std::thread::sleep(std::time::Duration::from_millis(10));
-    send_command(&format!("connect {ip_port}\r\n"))
+    game_console.send_cmd(format!("connect {ip_port}"))
 }

@@ -12,7 +12,7 @@ use crate::{
         input::{
             line::{
                 AsyncCtxCallback, EventLoop, InitLineCallback, InputEventHook, InputHook,
-                InputHookErr, LineData,
+                InputHookErr, LineData, LineReader,
             },
             style::{RED, WHITE, YELLOW},
         },
@@ -33,7 +33,7 @@ use std::{
     },
 };
 use tokio::{
-    sync::{mpsc::Sender, Mutex, RwLock},
+    sync::{mpsc::Sender, Mutex, RwLock, RwLockReadGuard},
     task::JoinError,
 };
 use tracing::{error, info, warn};
@@ -207,6 +207,21 @@ impl CommandContext {
     fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
+
+    async fn try_send_console_command<S: AsRef<str>>(
+        &mut self,
+        command: S,
+        input_hook_uid: usize,
+    ) -> Result<Result<(), Cow<'static, str>>, InputHookErr> {
+        self.check_h2m_connection().await.map_err(|err| {
+            InputHookErr::new(input_hook_uid, format!("Could not send command: {err}"))
+        })?;
+
+        let lock = self.pty_handle().expect("above guard");
+        let game_console = lock.read().await;
+
+        Ok(game_console.send_cmd(command))
+    }
 }
 
 type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
@@ -349,7 +364,7 @@ pub async fn try_execute_command(
             Command::Reconnect { args } => reconnect(args, context).await,
             Command::Launch => launch_handler(context).await,
             Command::Cache { option } => modify_cache(context, option).await,
-            Command::Console => open_h2m_console(context).await,
+            Command::Console => open_game_console(context).await,
             Command::GameDir => open_dir(context.game.path.parent()),
             Command::LocalEnv => open_dir(context.local_dir.as_deref()),
             Command::Version => print_version(&context.app, &context.game),
@@ -509,11 +524,53 @@ impl Display for DisplayLogs<'_> {
 }
 
 #[inline]
-pub fn end_forward(context: &mut CommandContext) {
+fn end_forward_logs(context: &mut CommandContext) {
     context.forward_logs().store(false, Ordering::SeqCst);
 }
 
-async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
+pub trait CommandSender {
+    fn send_cmd<S: AsRef<str>>(&self, command: S) -> Result<(), Cow<'static, str>>;
+}
+
+impl CommandSender for RwLockReadGuard<'_, PTY> {
+    /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
+    fn send_cmd<S: AsRef<str>>(&self, command: S) -> Result<(), Cow<'static, str>> {
+        let cmd_str = command.as_ref();
+        let mut os_command = OsString::from(cmd_str);
+        os_command.push("\r\n");
+
+        match self.write(os_command) {
+            Ok(chars) => {
+                if chars != cmd_str.chars().count() as u32 + 2 {
+                    return Err(Cow::Borrowed("Failed to send command to h2m console"));
+                }
+                Ok(())
+            }
+            Err(err) => Err(Cow::Owned(err.to_string_lossy().to_string())),
+        }
+    }
+}
+
+impl LineReader<'_> {
+    pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: usize) {
+        self.set_prompt(LineData::default_prompt());
+        self.set_completion(true);
+        if let Some(callback) = self.next_input_hook() {
+            if callback.uid() == uid {
+                self.pop_input_hook();
+            }
+        }
+        end_forward_logs(ctx);
+    }
+
+    fn close_game_console(&mut self) -> (EventLoop, bool) {
+        self.set_prompt(LineData::default_prompt());
+        self.set_completion(true);
+        (EventLoop::Callback(Box::new(end_forward_logs)), true)
+    }
+}
+
+async fn open_game_console(context: &mut CommandContext) -> CommandHandle {
     if context.check_h2m_connection().await.is_err() || !h2m_running() {
         let history = context.h2m_console_history.lock().await;
         if !history.is_empty() {
@@ -551,9 +608,7 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
                 handle.ctrl_c_line()?;
                 return Ok((EventLoop::Continue, false));
             }
-            handle.set_prompt(LineData::default_prompt());
-            handle.set_completion(true);
-            Ok((EventLoop::Callback(Box::new(end_forward)), true))
+            Ok(handle.close_game_console())
         }
         Event::Key(KeyEvent {
             code: KeyCode::Char(c),
@@ -567,9 +622,7 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
             ..
         }) => {
             if handle.line.input().is_empty() {
-                handle.set_prompt(LineData::default_prompt());
-                handle.set_completion(true);
-                return Ok((EventLoop::Callback(Box::new(end_forward)), true));
+                return Ok(handle.close_game_console());
             }
             handle.remove_char()?;
             Ok((EventLoop::Continue, false))
@@ -585,23 +638,17 @@ async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
             let cmd = handle.line.take_input();
             handle.new_line()?;
 
-            let send_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
+            let send_user_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
                 Box::pin(async move {
-                    context.check_h2m_connection().await.map_err(|err| {
-                        InputHookErr::new(uid, format!("Could not send command: {err}"))
-                    })?;
-
-                    let pty_handle = context.pty_handle().expect("above guard");
-                    let h2m_console = pty_handle.write().await;
-
-                    if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
-                        error!("failed to write command to h2m console");
-                    }
-                    Ok(())
+                    context
+                        .try_send_console_command(cmd, uid)
+                        .await?
+                        .unwrap_or_else(|err| error!("{err}"));
+                    Ok(EventLoop::Continue)
                 })
             });
 
-            Ok((EventLoop::AsyncCallback(send_cmd), false))
+            Ok((EventLoop::AsyncCallback(send_user_cmd), false))
         }
         _ => Ok((EventLoop::Continue, false)),
     });
@@ -646,7 +693,9 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
         Ok(())
     });
 
-    let input_hook: Box<InputEventHook> = Box::new(|handle, event| match event {
+    let uid = InputHook::new_uid();
+
+    let input_hook: Box<InputEventHook> = Box::new(move |handle, event| match event {
         Event::Key(
             KeyEvent {
                 code: KeyCode::Char('c'),
@@ -657,12 +706,29 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
                 code: KeyCode::Char('y'),
                 ..
             },
-        ) => Ok((EventLoop::Break, true)),
+        ) => {
+            let send_quit_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
+                Box::pin(async move {
+                    Ok(match context.try_send_console_command("quit", uid).await? {
+                        Ok(()) => {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            EventLoop::Break
+                        }
+                        Err(err) => {
+                            error!("{err}");
+                            EventLoop::Continue
+                        }
+                    })
+                })
+            });
+
+            Ok((EventLoop::AsyncCallback(send_quit_cmd), true))
+        }
         _ => {
             handle.set_prompt(LineData::default_prompt());
             Ok((EventLoop::Continue, true))
         }
     });
 
-    CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
+    CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
 }

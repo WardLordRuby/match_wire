@@ -1,5 +1,5 @@
 use crate::{
-    commands::handler::{end_forward, CommandContext, Message},
+    commands::handler::{CommandContext, Message},
     strip_ansi_sequences,
     utils::input::{
         completion::{CommandScheme, Completion, Direction},
@@ -25,10 +25,11 @@ use std::{
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
 pub type InitLineCallback = dyn FnOnce(&mut LineReader) -> io::Result<()>;
 pub type CtxCallback = dyn Fn(&mut CommandContext);
+/// Note: Currently recursive callbacks are not supported in the returned result
 pub type AsyncCtxCallback =
     dyn for<'a> FnOnce(
         &'a mut CommandContext,
-    ) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<EventLoop, InputHookErr>> + 'a>>;
 
 pub struct LineReader<'a> {
     pub completion: Completion,
@@ -249,17 +250,6 @@ impl<'a> LineReader<'a> {
     /// references the first queued `input_hook`
     pub fn next_input_hook(&mut self) -> Option<&InputHook> {
         self.input_hooks.front()
-    }
-
-    pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: usize) {
-        self.set_prompt(LineData::default_prompt());
-        self.set_completion(true);
-        if let Some(callback) = self.next_input_hook() {
-            if callback.uid() == uid {
-                self.pop_input_hook();
-            }
-        }
-        end_forward(ctx);
     }
 
     pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {

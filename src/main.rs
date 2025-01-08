@@ -128,9 +128,13 @@ fn main() {
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
                                 Ok(EventLoop::AsyncCallback(callback)) => {
-                                    if let Err(err) = callback(&mut command_context).await {
-                                        error!("{err}");
-                                        line_handle.conditionally_remove_hook(&mut command_context, err.uid());
+                                    match callback(&mut command_context).await {
+                                        Ok(EventLoop::Break) => break,
+                                        Ok(_) => (),
+                                        Err(err) => {
+                                            error!("{err}");
+                                            line_handle.conditionally_remove_hook(&mut command_context, err.uid());
+                                        }
                                     }
                                 },
                                 Ok(EventLoop::TryProcessCommand) => {
