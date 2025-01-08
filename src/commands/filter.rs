@@ -4,7 +4,10 @@ use crate::{
     lowercase_vec, parse_hostname,
     utils::{
         caching::Cache,
-        display::{DisplayCountOf, DisplayGetInfoCount, DisplayServerCount, SingularPlural},
+        display::{
+            DisplayCachedServerUse, DisplayCountOf, DisplayGetInfoCount, DisplayServerCount,
+            SingularPlural,
+        },
         input::style::{GREEN, RED, WHITE, YELLOW},
         json_data::*,
     },
@@ -398,10 +401,7 @@ async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Source
                     .collect::<Vec<_>>();
                 if !backup.is_empty() {
                     error!("{err}");
-                    warn!(
-                        "Using cached iw4 {}",
-                        SingularPlural(backup.len(), "server", "servers")
-                    );
+                    warn!("{}", DisplayCachedServerUse("iw4", backup.len()));
                     return Ok(backup);
                 }
             }
@@ -431,10 +431,7 @@ async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Source
                     .collect::<Vec<_>>();
                 if !backup.is_empty() {
                     error!("{err}");
-                    warn!(
-                        "Using cached HMW {}",
-                        SingularPlural(backup.len(), "server", "servers")
-                    );
+                    warn!("{}", DisplayCachedServerUse("HMW", backup.len()));
                     return Ok(backup);
                 }
             }
@@ -516,24 +513,15 @@ where
 }
 
 fn to_region_set(regions: &[Region]) -> HashSet<[char; 2]> {
-    regions
-        .iter()
-        .fold(HashSet::new(), |mut output, user_region| {
-            for &cont_code in user_region.to_chars() {
-                output.insert(cont_code);
-            }
-            output
-        })
-}
-
-impl Region {
-    fn to_chars(self) -> &'static [[char; 2]] {
-        match self {
+    fn to_chars(region: &Region) -> &'static [[char; 2]] {
+        match region {
             Region::Apac => &APAC_CONT_CODES,
             Region::EU => &EU_CONT_CODE,
             Region::NA => &NA_CONT_CODE,
         }
     }
+
+    regions.iter().flat_map(to_chars).copied().collect()
 }
 
 #[instrument(level = "trace", skip_all)]

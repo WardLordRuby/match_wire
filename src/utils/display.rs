@@ -42,6 +42,21 @@ impl Display for DisplayServerCount {
     }
 }
 
+///`(source, count)`
+pub struct DisplayCachedServerUse(pub &'static str, pub usize);
+
+impl Display for DisplayCachedServerUse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Using {} cached {} {}",
+            self.1,
+            self.0,
+            SingularPlural(self.1, "server", "servers")
+        )
+    }
+}
+
 /// `(count, sent_retires)`
 pub struct DisplayGetInfoCount(pub usize, pub bool);
 
