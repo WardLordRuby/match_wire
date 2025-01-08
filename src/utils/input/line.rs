@@ -25,11 +25,10 @@ use std::{
 pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
 pub type InitLineCallback = dyn FnOnce(&mut LineReader) -> io::Result<()>;
 pub type CtxCallback = dyn Fn(&mut CommandContext);
-/// Note: Currently recursive callbacks are not supported in the returned result
 pub type AsyncCtxCallback =
     dyn for<'a> FnOnce(
         &'a mut CommandContext,
-    ) -> Pin<Box<dyn Future<Output = Result<EventLoop, InputHookErr>> + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
 
 pub struct LineReader<'a> {
     pub completion: Completion,

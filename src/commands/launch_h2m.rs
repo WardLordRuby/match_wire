@@ -277,14 +277,13 @@ async fn add_to_history(
 }
 
 pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), String> {
-    context.check_h2m_connection().await?;
+    let pty = context.check_h2m_connection().await?;
 
     let console_history_arc = context.h2m_console_history();
     let cache_arc = context.cache();
     let cache_needs_update = context.cache_needs_update();
     let forward_logs_arc = context.forward_logs();
     let msg_sender_arc = context.msg_sender();
-    let pty = context.pty_handle().unwrap();
     let version = context.game_version().unwrap_or(1.0);
     let game_name = context.game_name();
 

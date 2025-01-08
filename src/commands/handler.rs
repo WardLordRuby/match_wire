@@ -7,7 +7,7 @@ use crate::{
     },
     exe_details,
     utils::{
-        caching::{build_cache, Cache},
+        caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, HmwUpdateHelp},
         input::{
             line::{
@@ -18,10 +18,13 @@ use crate::{
         },
         json_data::Version,
     },
-    CACHED_DATA, REQUIRED_FILES,
+    CACHED_DATA, LOG_ONLY, REQUIRED_FILES,
 };
 use clap::Parser;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::{
+    event::{Event, KeyCode, KeyEvent, KeyModifiers},
+    terminal,
+};
 use std::{
     borrow::Cow,
     ffi::OsString,
@@ -151,11 +154,11 @@ impl CommandContext {
     pub fn forward_logs(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.forward_logs)
     }
-    pub async fn check_h2m_connection(&mut self) -> Result<(), Cow<'static, str>> {
+    pub async fn check_h2m_connection(&mut self) -> Result<Arc<RwLock<PTY>>, Cow<'static, str>> {
         if let Some(ref lock) = self.pty_handle {
             let handle = lock.read().await;
             return match handle.is_alive() {
-                Ok(true) => Ok(()),
+                Ok(true) => Ok(Arc::clone(lock)),
                 Ok(false) => Err(Cow::Borrowed("No connection to H2M is active")),
                 Err(err) => {
                     drop(handle);
@@ -208,16 +211,39 @@ impl CommandContext {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
 
-    async fn try_send_console_command<S: AsRef<str>>(
+    pub async fn graceful_shutdown(&mut self) {
+        if self.cache_needs_update().load(Ordering::SeqCst) {
+            write_cache(self)
+                .await
+                .unwrap_or_else(|err| error!(name: LOG_ONLY, "{err}"))
+        }
+        self.try_send_quit_cmd().await;
+        terminal::disable_raw_mode().unwrap();
+        info!(name: LOG_ONLY, "graceful app shutdown");
+    }
+
+    async fn try_send_quit_cmd(&mut self) {
+        if let Ok(lock) = self.check_h2m_connection().await {
+            let game_console = lock.read().await;
+            match game_console.send_cmd("quit") {
+                Ok(()) => {
+                    info!(name: LOG_ONLY, "{}'s console accepted quit command", self.game_name());
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+                Err(err) => error!(name: LOG_ONLY, "{err}"),
+            }
+        }
+    }
+
+    async fn try_send_cmd_from_hook<S: AsRef<str>>(
         &mut self,
         command: S,
         input_hook_uid: usize,
     ) -> Result<Result<(), Cow<'static, str>>, InputHookErr> {
-        self.check_h2m_connection().await.map_err(|err| {
+        let lock = self.check_h2m_connection().await.map_err(|err| {
             InputHookErr::new(input_hook_uid, format!("Could not send command: {err}"))
         })?;
 
-        let lock = self.pty_handle().expect("above guard");
         let game_console = lock.read().await;
 
         Ok(game_console.send_cmd(command))
@@ -471,42 +497,40 @@ pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
 /// if calling manually you are responsible for setting pty inside of context
 pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String> {
     initalize_listener(context).await?;
-    let pty = context.pty_handle();
+    let handle = context
+        .pty_handle()
+        .expect("initalize_listener returned early if this is `None`");
     let msg_sender = context.msg_sender();
     let game_name = context.game_name();
     tokio::task::spawn(async move {
         const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
-        if let Some(handle) = pty {
-            let mut attempt = 1;
-            let messages = loop {
-                tokio::time::sleep(SLEEP * attempt).await;
-                match handle.read().await.is_alive() {
-                    Ok(true) => {
-                        if attempt == 3 {
-                            break vec![Message::Info(
-                                format!("Connected to {game_name} console",),
-                            )];
-                        }
+        let mut attempt = 1;
+        let messages = loop {
+            tokio::time::sleep(SLEEP * attempt).await;
+            match handle.read().await.is_alive() {
+                Ok(true) => {
+                    if attempt == 3 {
+                        break vec![Message::Info(format!("Connected to {game_name} console",))];
                     }
-                    Ok(false) => {
-                        break vec![
-                            Message::Err(format!("Could not establish connection to {game_name}")),
-                            Message::Str(format!(
-                                "use command `{YELLOW}launch{WHITE}` to re-launch game"
-                            )),
-                        ];
-                    }
-                    Err(err) => break vec![Message::Err(err.to_string_lossy().to_string())],
                 }
-                attempt += 1;
-            };
-
-            for msg in messages {
-                msg_sender
-                    .send(msg)
-                    .await
-                    .unwrap_or_else(|err| error!("{err}"));
+                Ok(false) => {
+                    break vec![
+                        Message::Err(format!("Could not establish connection to {game_name}")),
+                        Message::Str(format!(
+                            "use command `{YELLOW}launch{WHITE}` to re-launch game"
+                        )),
+                    ];
+                }
+                Err(err) => break vec![Message::Err(err.to_string_lossy().to_string())],
             }
+            attempt += 1;
+        };
+
+        for msg in messages {
+            msg_sender
+                .send(msg)
+                .await
+                .unwrap_or_else(|err| error!("{err}"));
         }
     });
     Ok(())
@@ -641,10 +665,10 @@ async fn open_game_console(context: &mut CommandContext) -> CommandHandle {
             let send_user_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
                 Box::pin(async move {
                     context
-                        .try_send_console_command(cmd, uid)
+                        .try_send_cmd_from_hook(cmd, uid)
                         .await?
                         .unwrap_or_else(|err| error!("{err}"));
-                    Ok(EventLoop::Continue)
+                    Ok(())
                 })
             });
 
@@ -693,9 +717,7 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
         Ok(())
     });
 
-    let uid = InputHook::new_uid();
-
-    let input_hook: Box<InputEventHook> = Box::new(move |handle, event| match event {
+    let input_hook: Box<InputEventHook> = Box::new(|handle, event| match event {
         Event::Key(
             KeyEvent {
                 code: KeyCode::Char('c'),
@@ -706,29 +728,12 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
                 code: KeyCode::Char('y'),
                 ..
             },
-        ) => {
-            let send_quit_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
-                Box::pin(async move {
-                    Ok(match context.try_send_console_command("quit", uid).await? {
-                        Ok(()) => {
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            EventLoop::Break
-                        }
-                        Err(err) => {
-                            error!("{err}");
-                            EventLoop::Continue
-                        }
-                    })
-                })
-            });
-
-            Ok((EventLoop::AsyncCallback(send_quit_cmd), true))
-        }
+        ) => Ok((EventLoop::Break, true)),
         _ => {
             handle.set_prompt(LineData::default_prompt());
             Ok((EventLoop::Continue, true))
         }
     });
 
-    CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
+    CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
 }

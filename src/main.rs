@@ -115,7 +115,7 @@ fn main() {
                 biased;
 
                 _ = close_listener.recv() => {
-                    info!(name: LOG_ONLY, "app shutdown");
+                    info!(name: LOG_ONLY, "forceful app shutdown");
                     terminal::disable_raw_mode().unwrap();
                     return;
                 }
@@ -128,13 +128,9 @@ fn main() {
                                 Ok(EventLoop::Break) => break,
                                 Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
                                 Ok(EventLoop::AsyncCallback(callback)) => {
-                                    match callback(&mut command_context).await {
-                                        Ok(EventLoop::Break) => break,
-                                        Ok(_) => (),
-                                        Err(err) => {
-                                            error!("{err}");
-                                            line_handle.conditionally_remove_hook(&mut command_context, err.uid());
-                                        }
+                                    if let Err(err) = callback(&mut command_context).await {
+                                        error!("{err}");
+                                        line_handle.conditionally_remove_hook(&mut command_context, err.uid());
                                     }
                                 },
                                 Ok(EventLoop::TryProcessCommand) => {
@@ -174,13 +170,7 @@ fn main() {
                 }
             }
         }
-        if command_context.cache_needs_update().load(Ordering::SeqCst) {
-            if let Err(err) =  write_cache(&command_context).await {
-                error!(name: LOG_ONLY, "{err}");
-            }
-        }
-        info!(name: LOG_ONLY, "app shutdown");
-        terminal::disable_raw_mode().unwrap();
+        command_context.graceful_shutdown().await;
     });
 }
 

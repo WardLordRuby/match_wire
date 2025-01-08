@@ -75,11 +75,15 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
         display_history(&cache.connection_history, &cache.host_to_connect);
         return CommandHandle::Processed;
     }
-    if let Err(err) = context.check_h2m_connection().await {
-        error!("{err}");
-        println!("{ConnectionHelp}");
-        return CommandHandle::Processed;
-    }
+    let lock = match context.check_h2m_connection().await {
+        Ok(lock) => lock,
+        Err(err) => {
+            error!("{err}");
+            println!("{ConnectionHelp}");
+            return CommandHandle::Processed;
+        }
+    };
+
     let history_len = cache.connection_history.len();
     if let Some(num) = args.connect {
         if num > 1 {
@@ -99,9 +103,6 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
     drop(cache);
 
     if let Some(ip_port) = connect {
-        let lock = context
-            .pty_handle()
-            .expect("above guard checks `check_h2m_connection().is_ok()`");
         connect_to(ip_port, &lock)
             .await
             .unwrap_or_else(|err| error!("{err}"));
@@ -116,6 +117,6 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
 async fn connect_to(ip_port: SocketAddr, lock: &RwLock<PTY>) -> Result<(), Cow<'_, str>> {
     let game_console = lock.read().await;
     game_console.send_cmd("disconnect")?;
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     game_console.send_cmd(format!("connect {ip_port}"))
 }
