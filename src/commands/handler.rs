@@ -514,99 +514,99 @@ pub fn end_forward(context: &mut CommandContext) {
 }
 
 async fn open_h2m_console(context: &mut CommandContext) -> CommandHandle {
-    if context.check_h2m_connection().await.is_ok() && h2m_running() {
-        {
-            let history = context.h2m_console_history.lock().await;
-            context.forward_logs.store(true, Ordering::SeqCst);
+    if context.check_h2m_connection().await.is_err() || !h2m_running() {
+        let history = context.h2m_console_history.lock().await;
+        if !history.is_empty() {
+            println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
+            std::thread::sleep(std::time::Duration::from_secs(2));
             print!("{}", DisplayLogs(&history));
+        } else {
+            println!("{YELLOW}No active connection to H2M{WHITE}");
         }
+        return CommandHandle::Processed;
+    }
 
-        let uid = InputHook::new_uid();
-        let game_exe_name = context.game.game_file_name().into_owned();
+    {
+        let history = context.h2m_console_history.lock().await;
+        context.forward_logs.store(true, Ordering::SeqCst);
+        print!("{}", DisplayLogs(&history));
+    }
 
-        let init: Box<InitLineCallback> = Box::new(|handle| {
-            handle.set_prompt(game_exe_name);
-            handle.set_completion(false);
-            Ok(())
-        });
+    let uid = InputHook::new_uid();
+    let game_exe_name = context.game.game_file_name().into_owned();
 
-        let input_hook: Box<InputEventHook> = Box::new(move |handle, event| match event {
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }) => {
-                if !handle.line.input().is_empty() {
-                    handle.ctrl_c_line()?;
-                    return Ok((EventLoop::Continue, false));
-                }
+    let init: Box<InitLineCallback> = Box::new(|handle| {
+        handle.set_prompt(game_exe_name);
+        handle.set_completion(false);
+        Ok(())
+    });
+
+    let input_hook: Box<InputEventHook> = Box::new(move |handle, event| match event {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        }) => {
+            if !handle.line.input().is_empty() {
+                handle.ctrl_c_line()?;
+                return Ok((EventLoop::Continue, false));
+            }
+            handle.set_prompt(LineData::default_prompt());
+            handle.set_completion(true);
+            Ok((EventLoop::Callback(Box::new(end_forward)), true))
+        }
+        Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            ..
+        }) => {
+            handle.insert_char(c);
+            Ok((EventLoop::Continue, false))
+        }
+        Event::Key(KeyEvent {
+            code: KeyCode::Backspace,
+            ..
+        }) => {
+            if handle.line.input().is_empty() {
                 handle.set_prompt(LineData::default_prompt());
                 handle.set_completion(true);
-                Ok((EventLoop::Callback(Box::new(end_forward)), true))
+                return Ok((EventLoop::Callback(Box::new(end_forward)), true));
             }
-            Event::Key(KeyEvent {
-                code: KeyCode::Char(c),
-                ..
-            }) => {
-                handle.insert_char(c);
-                Ok((EventLoop::Continue, false))
-            }
-            Event::Key(KeyEvent {
-                code: KeyCode::Backspace,
-                ..
-            }) => {
-                if handle.line.input().is_empty() {
-                    handle.set_prompt(LineData::default_prompt());
-                    handle.set_completion(true);
-                    return Ok((EventLoop::Callback(Box::new(end_forward)), true));
-                }
-                handle.remove_char()?;
-                Ok((EventLoop::Continue, false))
-            }
-            Event::Key(KeyEvent {
-                code: KeyCode::Enter,
-                ..
-            }) => {
-                if handle.line.input().is_empty() {
-                    handle.new_line()?;
-                    return Ok((EventLoop::Continue, false));
-                }
-                let cmd = handle.line.take_input();
+            handle.remove_char()?;
+            Ok((EventLoop::Continue, false))
+        }
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            ..
+        }) => {
+            if handle.line.input().is_empty() {
                 handle.new_line()?;
-
-                let send_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
-                    Box::pin(async move {
-                        context.check_h2m_connection().await.map_err(|err| {
-                            InputHookErr::new(uid, format!("Could not send command: {err}"))
-                        })?;
-
-                        let pty_handle = context.pty_handle().expect("above guard");
-                        let h2m_console = pty_handle.write().await;
-
-                        if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
-                            error!("failed to write command to h2m console");
-                        }
-                        Ok(())
-                    })
-                });
-
-                Ok((EventLoop::AsyncCallback(send_cmd), false))
+                return Ok((EventLoop::Continue, false));
             }
-            _ => Ok((EventLoop::Continue, false)),
-        });
+            let cmd = handle.line.take_input();
+            handle.new_line()?;
 
-        return CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook));
-    }
+            let send_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
+                Box::pin(async move {
+                    context.check_h2m_connection().await.map_err(|err| {
+                        InputHookErr::new(uid, format!("Could not send command: {err}"))
+                    })?;
 
-    let history = context.h2m_console_history.lock().await;
-    if !history.is_empty() {
-        println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        print!("{}", DisplayLogs(&history));
-    } else {
-        println!("{YELLOW}No active connection to H2M{WHITE}");
-    }
-    CommandHandle::Processed
+                    let pty_handle = context.pty_handle().expect("above guard");
+                    let h2m_console = pty_handle.write().await;
+
+                    if h2m_console.write(OsString::from(cmd + "\r\n")).is_err() {
+                        error!("failed to write command to h2m console");
+                    }
+                    Ok(())
+                })
+            });
+
+            Ok((EventLoop::AsyncCallback(send_cmd), false))
+        }
+        _ => Ok((EventLoop::Continue, false)),
+    });
+
+    CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
 }
 
 fn open_dir(path: Option<&Path>) -> CommandHandle {
@@ -629,37 +629,40 @@ fn print_version(app: &AppDetails, game: &GameDetails) -> CommandHandle {
 }
 
 async fn quit(context: &mut CommandContext) -> CommandHandle {
-    if context.check_h2m_connection().await.is_ok() && h2m_running() {
-        println!(
-            "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
-            env!("CARGO_PKG_NAME"),
-            context.game_name()
-        );
+    if context.check_h2m_connection().await.is_err() || !h2m_running() {
+        return CommandHandle::Exit;
+    }
 
-        let init: Box<InitLineCallback> = Box::new(|handle| {
-            handle.set_prompt(format!(
-                "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
-            ));
-            Ok(())
-        });
+    println!(
+        "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
+        env!("CARGO_PKG_NAME"),
+        context.game_name()
+    );
 
-        let input_hook: Box<InputEventHook> = Box::new(|handle, event| match event {
-            Event::Key(KeyEvent {
+    let init: Box<InitLineCallback> = Box::new(|handle| {
+        handle.set_prompt(format!(
+            "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
+        ));
+        Ok(())
+    });
+
+    let input_hook: Box<InputEventHook> = Box::new(|handle, event| match event {
+        Event::Key(
+            KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            }) => Ok((EventLoop::Break, true)),
-            Event::Key(KeyEvent {
+            }
+            | KeyEvent {
                 code: KeyCode::Char('y'),
                 ..
-            }) => Ok((EventLoop::Break, true)),
-            _ => {
-                handle.set_prompt(LineData::default_prompt());
-                Ok((EventLoop::Continue, true))
-            }
-        });
+            },
+        ) => Ok((EventLoop::Break, true)),
+        _ => {
+            handle.set_prompt(LineData::default_prompt());
+            Ok((EventLoop::Continue, true))
+        }
+    });
 
-        return CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook));
-    }
-    CommandHandle::Exit
+    CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
 }
