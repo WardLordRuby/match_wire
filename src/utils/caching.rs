@@ -1,7 +1,7 @@
 use crate::{
     cli::Source,
     commands::{
-        filter::{hmw_servers, iw4_servers, queue_info_requests, Server, Sourced},
+        filter::{get_sourced_servers, queue_info_requests, Server, Sourced, DEFUALT_SOURCES},
         handler::CommandContext,
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
@@ -128,21 +128,14 @@ pub async fn build_cache(
 ) -> Result<CacheFile, (&'static str, CacheFile)> {
     println!("{GREEN}Updating cache...{WHITE}");
 
-    let mut servers = iw4_servers(None).await.unwrap_or_else(|err| {
-        error!("{err}");
-        Vec::new()
-    });
-    match hmw_servers(None).await {
-        Ok(ref mut hmw) => servers.append(hmw),
-        Err(err) => error!("{err}"),
-    };
-
-    if servers.is_empty() {
-        return Err((
-            "Could not connect to either master server source",
-            CacheFile::from_backups(connection_history.map(|v| v.to_vec()), regions.cloned()),
-        ));
-    }
+    let servers = get_sourced_servers(DEFUALT_SOURCES, None)
+        .await
+        .map_err(|err| {
+            (
+                err,
+                CacheFile::from_backups(connection_history.map(|v| v.to_vec()), regions.cloned()),
+            )
+        })?;
 
     let mut cache = Cache::new();
     let mut tasks = JoinSet::new();

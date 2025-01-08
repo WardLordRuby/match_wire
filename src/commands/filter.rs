@@ -13,7 +13,7 @@ use crate::{
 
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinSet};
-use tracing::{error, info, instrument, trace};
+use tracing::{error, info, instrument, trace, warn};
 
 use std::{
     borrow::Cow,
@@ -37,12 +37,13 @@ const FAVORITES: &str = "favourites.json";
 
 const DEFAULT_H2M_SERVER_CAP: usize = 100;
 const DEFUALT_INFO_RETRIES: u8 = 3;
+pub const DEFUALT_SOURCES: [Source; 2] = [Source::Iw4Master, Source::HmwMaster];
 const RETRY_TIME_SCALE: u64 = 800; // ms
 const LOCAL_HOST: &str = "localhost";
 
 pub const GAME_ID: &str = "H2M";
-const CODE_NA: [char; 2] = ['N', 'A'];
-const CODE_EU: [char; 2] = ['E', 'U'];
+const NA_CONT_CODE: [[char; 2]; 1] = [['N', 'A']];
+const EU_CONT_CODE: [[char; 2]; 1] = [['E', 'U']];
 const APAC_CONT_CODES: [[char; 2]; 3] = [['A', 'F'], ['A', 'S'], ['O', 'C']];
 
 fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
@@ -53,17 +54,6 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
         from.as_str()
     };
     write!(into, "[{ips}]")
-}
-
-impl Region {
-    fn matches(&self, country_code: [char; 2]) -> bool {
-        match self {
-            Region::NA if country_code != CODE_NA => false,
-            Region::EU if country_code != CODE_EU => false,
-            Region::Apac if !APAC_CONT_CODES.contains(&country_code) => false,
-            _ => true,
-        }
-    }
 }
 
 async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
@@ -284,11 +274,11 @@ pub async fn try_get_info(
             err
         }
     };
-    let server_responce = match client.get(&meta_data.url).send().await {
+    let server_response = match client.get(&meta_data.url).send().await {
         Ok(res) => res,
         Err(err) => return Err(meta_data.set_err_msg(err.without_url().to_string())),
     };
-    match server_responce.json::<GetInfo>().await {
+    match server_response.json::<GetInfo>().await {
         Ok(info) => Ok(Server {
             source: meta_data.meta,
             info: Some(info),
@@ -373,7 +363,7 @@ impl Sourced {
     }
 }
 
-pub async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
+async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
     match get_iw4_master().await {
         Ok(mut hosts) => {
             hosts
@@ -395,9 +385,8 @@ pub async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
         }
         Err(err) => {
             if let Some(cache) = cache {
-                error!(name: LOG_ONLY, "{err}");
                 let cache = cache.lock().await;
-                return Ok(cache
+                let backup = cache
                     .iw4m
                     .iter()
                     .flat_map(|(&ip, ports)| {
@@ -406,14 +395,22 @@ pub async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
                             .map(|&port| Sourced::Iw4Cached(SocketAddr::new(ip, port)))
                             .collect::<Vec<_>>()
                     })
-                    .collect());
+                    .collect::<Vec<_>>();
+                if !backup.is_empty() {
+                    error!("{err}");
+                    warn!(
+                        "Using cached iw4 {}",
+                        SingularPlural(backup.len(), "server", "servers")
+                    );
+                    return Ok(backup);
+                }
             }
             Err(err)
         }
     }
 }
 
-pub async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
+async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
     match get_hmw_master().await {
         Ok(list) => Ok(list
             .into_iter()
@@ -421,9 +418,8 @@ pub async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
             .collect()),
         Err(err) => {
             if let Some(cache) = cache {
-                error!(name: LOG_ONLY, "{err}");
                 let cache = cache.lock().await;
-                return Ok(cache
+                let backup = cache
                     .hmw
                     .iter()
                     .flat_map(|(&ip, ports)| {
@@ -432,7 +428,15 @@ pub async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<So
                             .map(|&port| Sourced::HmwCached(SocketAddr::new(ip, port)))
                             .collect::<Vec<_>>()
                     })
-                    .collect());
+                    .collect::<Vec<_>>();
+                if !backup.is_empty() {
+                    error!("{err}");
+                    warn!(
+                        "Using cached HMW {}",
+                        SingularPlural(backup.len(), "server", "servers")
+                    );
+                    return Ok(backup);
+                }
             }
             Err(err)
         }
@@ -455,18 +459,81 @@ pub async fn queue_info_requests(
     }
 }
 
-fn to_server(disregard_meta: bool, vec: Vec<Sourced>) -> Vec<Server> {
-    let no_info = |source: Sourced| -> Server { Server { source, info: None } };
-    let with_info = |source: Sourced| -> Server {
-        if let Sourced::Iw4(meta) = source {
-            Server::from(meta)
-        } else {
-            Server { source, info: None }
-        }
-    };
+trait Conversion {
+    fn to_server(self, limit: usize) -> Vec<Server>;
+}
 
-    let operation = if disregard_meta { no_info } else { with_info };
-    vec.into_iter().map(operation).collect()
+impl Conversion for Vec<Sourced> {
+    fn to_server(self, limit: usize) -> Vec<Server> {
+        let no_info = |source: Sourced| -> Server { Server { source, info: None } };
+        let with_info = |source: Sourced| -> Server {
+            if let Sourced::Iw4(meta) = source {
+                Server::from(meta)
+            } else {
+                Server { source, info: None }
+            }
+        };
+
+        let operation = if self.len() <= limit {
+            no_info
+        } else {
+            with_info
+        };
+        self.into_iter().map(operation).collect()
+    }
+}
+
+pub async fn get_sourced_servers<I>(
+    sources: I,
+    cache: Option<&Mutex<Cache>>,
+) -> Result<Vec<Sourced>, &'static str>
+where
+    I: IntoIterator<Item = Source>,
+{
+    let mut servers = Vec::new();
+
+    for source in sources {
+        let fetched_res = match source {
+            Source::HmwMaster => hmw_servers(cache).await,
+            Source::Iw4Master => iw4_servers(cache).await,
+        };
+        match fetched_res {
+            Ok(mut sourced_servers) => {
+                if servers.is_empty() {
+                    servers = sourced_servers;
+                } else {
+                    servers.append(&mut sourced_servers);
+                }
+            }
+            Err(err) => error!("{err}"),
+        };
+    }
+
+    if servers.is_empty() {
+        return Err("Could not populate any servers from source(s)");
+    }
+    Ok(servers)
+}
+
+fn to_region_set(regions: &[Region]) -> HashSet<[char; 2]> {
+    regions
+        .iter()
+        .fold(HashSet::new(), |mut output, user_region| {
+            for &cont_code in user_region.to_chars() {
+                output.insert(cont_code);
+            }
+            output
+        })
+}
+
+impl Region {
+    fn to_chars(self) -> &'static [[char; 2]] {
+        match self {
+            Region::Apac => &APAC_CONT_CODES,
+            Region::EU => &EU_CONT_CODE,
+            Region::NA => &NA_CONT_CODE,
+        }
+    }
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -474,40 +541,25 @@ async fn filter_server_list(
     args: &Filters,
     cache: Arc<Mutex<Cache>>,
     limit: usize,
-) -> reqwest::Result<(Vec<Server>, bool)> {
-    let mut servers = Vec::new();
+) -> Result<(Vec<Server>, bool), &'static str> {
+    let mut servers = match args.source.as_deref() {
+        Some(user_sources) => {
+            get_sourced_servers(
+                user_sources.iter().copied().collect::<HashSet<_>>(),
+                Some(&cache),
+            )
+            .await
+        }
+        None => get_sourced_servers(DEFUALT_SOURCES, Some(&cache)).await,
+    }?;
 
-    if let Some(ref list) = args.source {
-        if list.contains(&Source::Iw4Master) {
-            match iw4_servers(Some(&cache)).await {
-                Ok(iw4) => servers = iw4,
-                Err(err) => error!("{err}"),
-            }
-        }
-        if list.contains(&Source::HmwMaster) {
-            match hmw_servers(Some(&cache)).await {
-                Ok(ref mut hmw) => servers.append(hmw),
-                Err(err) => error!("{err}"),
-            }
-        }
-    } else {
-        servers = iw4_servers(Some(&cache)).await.unwrap_or_else(|err| {
-            error!("{err}");
-            Vec::new()
-        });
-        match hmw_servers(Some(&cache)).await {
-            Ok(ref mut hmw) => servers.append(hmw),
-            Err(err) => error!("{err}"),
-        }
-    };
-
-    let cache_modified = if let Some(ref regions) = args.region {
+    let cache_modified = if let Some(regions) = args.region.as_deref().map(to_region_set) {
         println!(
             "Determining region of {}...",
             DisplayServerCount(servers.len(), GREEN)
         );
 
-        let mut server_list = Vec::new();
+        let mut valid_regions = Vec::new();
         let mut tasks = JoinSet::new();
         let mut check_again = Vec::new();
         let mut new_lookups = HashSet::new();
@@ -518,8 +570,8 @@ async fn filter_server_list(
         for sourced_data in servers {
             let socket_addr = sourced_data.socket_addr();
             if let Some(cached_region) = cache.ip_to_region.get(&socket_addr.ip()) {
-                if regions.iter().any(|region| region.matches(*cached_region)) {
-                    server_list.push(sourced_data);
+                if regions.contains(cached_region) {
+                    valid_regions.push(sourced_data);
                 }
                 continue;
             }
@@ -544,8 +596,8 @@ async fn filter_server_list(
                     cache
                         .ip_to_region
                         .insert(sourced_data.socket_addr().ip(), cont_code);
-                    if regions.iter().any(|region| region.matches(cont_code)) {
-                        server_list.push(sourced_data)
+                    if regions.contains(&cont_code) {
+                        valid_regions.push(sourced_data)
                     }
                 }
                 Ok(Err(err)) => {
@@ -569,8 +621,8 @@ async fn filter_server_list(
 
         for sourced_data in check_again {
             if let Some(cached_region) = cache.ip_to_region.get(&sourced_data.socket_addr().ip()) {
-                if regions.iter().any(|region| region.matches(*cached_region)) {
-                    server_list.push(sourced_data)
+                if regions.contains(cached_region) {
+                    valid_regions.push(sourced_data)
                 }
             }
         }
@@ -582,7 +634,7 @@ async fn filter_server_list(
             )
         }
 
-        servers = server_list;
+        servers = valid_regions;
         !new_lookups.is_empty()
     } else {
         false
@@ -597,7 +649,7 @@ async fn filter_server_list(
         || !args.include_unresponsive
     {
         let mut tasks = JoinSet::new();
-        let mut host_list = Vec::with_capacity(servers.len());
+        let mut valid_servers = Vec::with_capacity(servers.len());
 
         let client = reqwest::Client::builder()
             .timeout(tokio::time::Duration::from_secs(3))
@@ -618,7 +670,7 @@ async fn filter_server_list(
             let mut retries = JoinSet::new();
             while let Some(res) = tasks.join_next().await {
                 match res {
-                    Ok(Ok(server)) => host_list.push(server),
+                    Ok(Ok(server)) => valid_servers.push(server),
                     Ok(Err(mut err)) => {
                         if err.retries < max_attempts {
                             let client = client.clone();
@@ -635,7 +687,7 @@ async fn filter_server_list(
                             if use_backup_server_info {
                                 if let Sourced::Iw4(meta) = err.meta {
                                     used_backup_data += 1;
-                                    host_list.push(Server::from(meta));
+                                    valid_servers.push(Server::from(meta));
                                 }
                             }
                         }
@@ -662,35 +714,35 @@ async fn filter_server_list(
         let include = args.includes.as_ref().map(|s| lowercase_vec(s));
         let exclude = args.excludes.as_ref().map(|s| lowercase_vec(s));
 
-        for i in (0..host_list.len()).rev() {
-            let server = &host_list[i];
+        for i in (0..valid_servers.len()).rev() {
+            let server = &valid_servers[i];
 
             let Some(ref info) = server.info else {
-                host_list.swap_remove(i);
+                valid_servers.swap_remove(i);
                 continue;
             };
 
             if let Some(team_size_max) = args.team_size_max {
                 if info.max_clients > team_size_max * 2 {
-                    host_list.swap_remove(i);
+                    valid_servers.swap_remove(i);
                     continue;
                 }
             }
 
             if let Some(player_min) = args.player_min {
                 if info.clients < player_min {
-                    host_list.swap_remove(i);
+                    valid_servers.swap_remove(i);
                     continue;
                 }
             }
 
             if args.with_bots && info.bots == 0 {
-                host_list.swap_remove(i);
+                valid_servers.swap_remove(i);
                 continue;
             }
 
             if args.without_bots && info.bots != 0 {
-                host_list.swap_remove(i);
+                valid_servers.swap_remove(i);
                 continue;
             }
 
@@ -701,7 +753,7 @@ async fn filter_server_list(
                     .iter()
                     .any(|string| hostname_l.as_ref().unwrap().contains(string))
                 {
-                    host_list.swap_remove(i);
+                    valid_servers.swap_remove(i);
                     continue;
                 }
             }
@@ -713,13 +765,13 @@ async fn filter_server_list(
                     .iter()
                     .any(|string| hostname_l.as_ref().unwrap().contains(string))
                 {
-                    host_list.swap_remove(i);
+                    valid_servers.swap_remove(i);
                 }
             }
         }
-        host_list
+        valid_servers
     } else {
-        to_server(servers.len() <= limit, servers)
+        servers.to_server(limit)
     };
 
     Ok((servers, cache_modified))

@@ -135,7 +135,7 @@ pub enum Region {
 
 pub const SOURCE_LEN: usize = 2;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum Source {
     #[value(alias = "iw4")]
     Iw4Master,
