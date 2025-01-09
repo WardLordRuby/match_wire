@@ -59,16 +59,23 @@ fn main() {
                 return;
             }
         };
-
-        startup_data.splash_task.await.unwrap().unwrap();
+        
+        let (splash_res, launch_res, app_ver_res, hmw_hash_res) = tokio::join!(
+            startup_data.splash_task,
+            startup_data.launch_task,
+            startup_data.version_task,
+            startup_data.hmw_hash_task
+        );
+        
+        splash_res.unwrap().unwrap();
 
         let (message_tx, mut message_rx) = mpsc::channel(50);
 
         let mut command_context = CommandContextBuilder::new()
             .cache(startup_data.cache)
-            .launch_res(startup_data.launch_task.await)
-            .app_ver_res(startup_data.version_task.await)
-            .hmw_hash_res(startup_data.hmw_hash_task.await)
+            .launch_res(launch_res)
+            .app_ver_res(app_ver_res)
+            .hmw_hash_res(hmw_hash_res)
             .game_details(startup_data.game)
             .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
