@@ -80,16 +80,28 @@ pub struct Continent {
     pub code: [char; 2],
 }
 
+trait ContCodeDeserialize {
+    fn to_cont_code<'de, D>(self) -> Result<[char; 2], D::Error>
+    where
+        D: Deserializer<'de>;
+}
+
+impl ContCodeDeserialize for String {
+    fn to_cont_code<'de, D>(self) -> Result<[char; 2], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        self.chars().collect::<Vec<_>>().try_into().map_err(|_| {
+            serde::de::Error::custom(format!("Expected 2 character Country code, found: {self}"))
+        })
+    }
+}
+
 fn deserialize_country_code<'de, D>(deserializer: D) -> Result<[char; 2], D::Error>
 where
     D: Deserializer<'de>,
 {
-    let string = String::deserialize(deserializer)?;
-    string.chars().collect::<Vec<_>>().try_into().map_err(|_| {
-        serde::de::Error::custom(format!(
-            "Expected 2 character Country code, found: {string}"
-        ))
-    })
+    String::deserialize(deserializer)?.to_cont_code::<D>()
 }
 
 #[derive(Deserialize, Debug)]
@@ -124,18 +136,11 @@ fn deserialize_country_code_map<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    let string_map: HashMap<IpAddr, String> = HashMap::deserialize(deserializer)?;
+    let string_map = HashMap::<IpAddr, String>::deserialize(deserializer)?;
 
     string_map
         .into_iter()
-        .map(|(ip, code)| {
-            let chars = code.chars().collect::<Vec<_>>().try_into().map_err(|_| {
-                serde::de::Error::custom(format!(
-                    "Expected 2 character Country code, found: {code}"
-                ))
-            })?;
-            Ok((ip, chars))
-        })
+        .map(|(ip, code)| Ok((ip, code.to_cont_code::<D>()?)))
         .collect()
 }
 
