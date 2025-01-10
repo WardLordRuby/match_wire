@@ -231,15 +231,19 @@ impl CommandContext {
     }
 
     async fn try_send_quit_cmd(&mut self) {
-        if let Ok(lock) = self.check_h2m_connection().await {
-            let game_console = lock.read().await;
-            match game_console.send_cmd("quit") {
-                Ok(()) => {
-                    info!(name: LOG_ONLY, "{}'s console accepted quit command", self.game_name());
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                }
-                Err(err) => error!(name: LOG_ONLY, "{err}"),
+        if !h2m_running() {
+            return;
+        }
+        let Ok(lock) = self.check_h2m_connection().await else {
+            return;
+        };
+        let game_console = lock.read().await;
+        match game_console.send_cmd("quit") {
+            Ok(()) => {
+                info!(name: LOG_ONLY, "{}'s console accepted quit command", self.game_name());
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
+            Err(err) => error!(name: LOG_ONLY, "{err}"),
         }
     }
 
