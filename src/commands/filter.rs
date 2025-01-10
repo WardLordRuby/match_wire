@@ -366,7 +366,7 @@ impl Sourced {
     }
 }
 
-async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
+async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<Sourced>> {
     match get_iw4_master().await {
         Ok(mut hosts) => {
             hosts
@@ -410,7 +410,7 @@ async fn iw4_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Source
     }
 }
 
-async fn hmw_servers(cache: Option<&Mutex<Cache>>) -> reqwest::Result<Vec<Sourced>> {
+async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<Sourced>> {
     match get_hmw_master().await {
         Ok(list) => Ok(list
             .into_iter()
@@ -482,28 +482,35 @@ impl Conversion for Vec<Sourced> {
 
 pub async fn get_sourced_servers<I>(
     sources: I,
-    cache: Option<&Mutex<Cache>>,
+    cache: Option<&Arc<Mutex<Cache>>>,
 ) -> Result<Vec<Sourced>, &'static str>
 where
     I: IntoIterator<Item = Source>,
 {
+    let mut tasks = JoinSet::from_iter(sources.into_iter().map(|source| {
+        let cache = cache.map(Arc::clone);
+        async move {
+            match source {
+                Source::HmwMaster => hmw_servers(cache).await,
+                Source::Iw4Master => iw4_servers(cache).await,
+            }
+        }
+    }));
+
     let mut servers = Vec::new();
 
-    for source in sources {
-        let fetched_res = match source {
-            Source::HmwMaster => hmw_servers(cache).await,
-            Source::Iw4Master => iw4_servers(cache).await,
-        };
-        match fetched_res {
-            Ok(mut sourced_servers) => {
+    while let Some(task_res) = tasks.join_next().await {
+        match task_res {
+            Ok(Ok(mut sourced_servers)) => {
                 if servers.is_empty() {
                     servers = sourced_servers;
                 } else {
                     servers.append(&mut sourced_servers);
                 }
             }
-            Err(err) => error!("{err}"),
-        };
+            Ok(Err(err)) => error!("{err}"),
+            Err(err) => error!("{err:?}"),
+        }
     }
 
     if servers.is_empty() {
