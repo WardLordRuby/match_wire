@@ -20,7 +20,6 @@ use std::{
     path::Path,
     time::{Duration, SystemTime},
 };
-use tokio::task::JoinSet;
 use tracing::{error, info, instrument, trace};
 
 pub struct Cache {
@@ -138,14 +137,13 @@ pub async fn build_cache(
         })?;
 
     let mut cache = Cache::new();
-    let mut tasks = JoinSet::new();
 
     let client = reqwest::Client::builder()
         .timeout(tokio::time::Duration::from_secs(3))
         .build()
         .unwrap();
 
-    queue_info_requests(servers, &mut tasks, false, &client).await;
+    let mut tasks = queue_info_requests(servers, false, &client).await;
 
     while let Some(res) = tasks.join_next().await {
         match res {

@@ -838,11 +838,11 @@ impl LineReader<'_> {
                 RecKind::Help | RecKind::Null if !trailing.is_empty() => true,
                 _ => false,
             };
+            if !self.completion.indexer.multiple {
+                return *err;
+            }
         }
-        if self.completion.indexer.multiple {
-            return errs[0] && errs[1];
-        }
-        errs[0]
+        errs[0] && errs[1]
     }
 
     fn check_for_errors(&mut self) {

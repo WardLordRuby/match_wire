@@ -297,18 +297,13 @@ pub struct HostMeta {
 
 impl HostMeta {
     fn try_from(host_ip: &str, webfront_url: &str, server: ServerInfo) -> Option<Self> {
-        resolve_address(&server.ip, host_ip, webfront_url).map_or_else(
-            |err| {
-                error!(name: LOG_ONLY, "{err}");
-                None
-            },
-            |ip| {
-                Some(HostMeta {
-                    resolved_addr: SocketAddr::new(ip, server.port),
-                    server,
-                })
-            },
-        )
+        resolve_address(&server.ip, host_ip, webfront_url)
+            .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+            .map(|ip| HostMeta {
+                resolved_addr: SocketAddr::new(ip, server.port),
+                server,
+            })
+            .ok()
     }
 }
 
@@ -442,18 +437,17 @@ async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
 
 pub async fn queue_info_requests(
     servers: Vec<Sourced>,
-    tasks: &mut JoinSet<Result<Server, GetInfoMetaData>>,
     remove_duplicates: bool,
     client: &Client,
-) {
+) -> JoinSet<Result<Server, GetInfoMetaData>> {
     let mut dup = HashSet::new();
 
-    for server in servers.into_iter() {
-        if remove_duplicates && !dup.insert(server.socket_addr()) {
-            continue;
-        }
-        tasks.spawn(try_get_info(Request::New(server), client.clone()));
-    }
+    JoinSet::from_iter(
+        servers
+            .into_iter()
+            .filter(|server| !remove_duplicates || dup.insert(server.socket_addr()))
+            .map(|server| try_get_info(Request::New(server), client.clone())),
+    )
 }
 
 trait Conversion {
@@ -643,7 +637,6 @@ async fn filter_server_list(
         || args.without_bots
         || !args.include_unresponsive
     {
-        let mut tasks = JoinSet::new();
         let mut valid_servers = Vec::with_capacity(servers.len());
 
         let client = reqwest::Client::builder()
@@ -651,7 +644,7 @@ async fn filter_server_list(
             .build()
             .unwrap();
 
-        queue_info_requests(servers, &mut tasks, true, &client).await;
+        let mut tasks = queue_info_requests(servers, true, &client).await;
 
         let use_backup_server_info =
             !args.with_bots && !args.without_bots && args.include_unresponsive;
