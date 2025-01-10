@@ -21,8 +21,8 @@ use match_wire::{
     },
     CACHED_DATA, LOCAL_DATA, LOG_ONLY,
 };
-use std::{borrow::Cow, io, path::PathBuf, sync::atomic::Ordering};
-use tokio::{sync::mpsc, task::JoinHandle};
+use std::{borrow::Cow, io, path::PathBuf};
+use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 use winptyrs::PTY;
@@ -66,38 +66,24 @@ fn main() {
             startup_data.version_task,
             startup_data.hmw_hash_task
         );
-        
+
         splash_res.unwrap().unwrap();
+        
+        let try_start_listener = matches!(launch_res, Ok(Ok(_)));
 
-        let (message_tx, mut message_rx) = mpsc::channel(50);
-
-        let mut command_context = CommandContextBuilder::new()
+        let (mut command_context, mut message_rx, mut update_cache_rx) = CommandContextBuilder::new()
             .cache(startup_data.cache)
             .launch_res(launch_res)
             .app_ver_res(app_ver_res)
             .hmw_hash_res(hmw_hash_res)
             .game_details(startup_data.game)
-            .msg_sender(message_tx)
             .local_dir(startup_data.local_dir)
             .build()
-            .unwrap();
+            .expect("all required inputs are provided");
 
-        let (update_cache_tx, mut update_cache_rx) = mpsc::channel(20);
-
-        tokio::spawn({
-            let cache_needs_update = command_context.cache_needs_update();
-            async move {
-                loop {
-                    if cache_needs_update.compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst).is_ok()
-                        && update_cache_tx.send(true).await.is_err() {
-                            break;
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
-                }
-            }
-        });
-
-        listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!(name: LOG_ONLY, "{err}"));
+        if try_start_listener {
+            listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!("{err}"));
+        }
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
@@ -206,12 +192,12 @@ async fn app_startup() -> Result<StartupData, Cow<'static, str>> {
     #[cfg(debug_assertions)]
     let game = GameDetails::default(&exe_dir);
 
-    let version_task = tokio::task::spawn(get_latest_version());
-    let hmw_hash_task = tokio::task::spawn(get_latest_hmw_hash());
+    let version_task = tokio::spawn(get_latest_version());
+    let hmw_hash_task = tokio::spawn(get_latest_hmw_hash());
 
-    let splash_task = tokio::task::spawn(splash_screen());
+    let splash_task = tokio::spawn(splash_screen());
 
-    let launch_task = tokio::task::spawn({
+    let launch_task = tokio::spawn({
         let game_exe_path = game.path.clone();
         async move {
             // delay h2m doesn't block splash screen

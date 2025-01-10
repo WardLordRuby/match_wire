@@ -8,7 +8,7 @@ use crate::{
     exe_details,
     utils::{
         caching::{build_cache, write_cache, Cache},
-        display::{ConnectionHelp, HmwUpdateHelp},
+        display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         input::{
             line::{
                 AsyncCtxCallback, EventLoop, InitLineCallback, InputEventHook, InputHook,
@@ -28,7 +28,6 @@ use crossterm::{
 use std::{
     borrow::Cow,
     ffi::OsString,
-    fmt::Display,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -36,7 +35,10 @@ use std::{
     },
 };
 use tokio::{
-    sync::{mpsc::Sender, Mutex, RwLock, RwLockReadGuard},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Mutex, RwLock, RwLockReadGuard,
+    },
     task::JoinError,
 };
 use tracing::{error, info, warn};
@@ -271,7 +273,6 @@ pub struct CommandContextBuilder {
     cache: Option<Cache>,
     launch_res: Option<LaunchResult>,
     game: Option<GameDetails>,
-    msg_sender: Option<Sender<Message>>,
     local_dir: Option<PathBuf>,
     app_ver_res: Option<AppVersionResult>,
     hmw_hash_res: Option<HmwHashResult>,
@@ -283,10 +284,6 @@ impl CommandContextBuilder {
     }
     pub fn cache(mut self, cache: Cache) -> Self {
         self.cache = Some(cache);
-        self
-    }
-    pub fn msg_sender(mut self, sender: Sender<Message>) -> Self {
-        self.msg_sender = Some(sender);
         self
     }
     pub fn local_dir(mut self, local_dir: Option<PathBuf>) -> Self {
@@ -310,7 +307,9 @@ impl CommandContextBuilder {
         self
     }
 
-    pub fn build(self) -> Result<CommandContext, &'static str> {
+    pub fn build(
+        self,
+    ) -> Result<(CommandContext, Receiver<Message>, Receiver<bool>), &'static str> {
         let handle = if let Some(Ok(Ok(handle))) = self.launch_res {
             Some(handle)
         } else {
@@ -321,6 +320,7 @@ impl CommandContextBuilder {
                     Ok(Ok(_)) => unreachable!("by happy path"),
                 };
                 error!("Could not launch H2M as child process: {err}");
+                println!("{}", ConnectionHelp);
             }
             None
         };
@@ -364,23 +364,45 @@ impl CommandContextBuilder {
             }
         }
 
-        Ok(CommandContext {
-            cache: self
-                .cache
-                .map(|cache| Arc::new(Mutex::new(cache)))
-                .ok_or("cache is required")?,
-            msg_sender: self
-                .msg_sender
-                .map(Arc::new)
-                .ok_or("msg_sender is required")?,
-            app,
-            game,
-            local_dir: self.local_dir,
-            pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
-            cache_needs_update: Arc::new(AtomicBool::new(false)),
-            forward_logs: Arc::new(AtomicBool::new(false)),
-            h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
-        })
+        let cache_needs_update = Arc::new(AtomicBool::new(false));
+        let (update_cache_tx, update_cache_rx) = channel(20);
+
+        tokio::spawn({
+            let cache_needs_update = Arc::clone(&cache_needs_update);
+            async move {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
+                    if cache_needs_update
+                        .compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst)
+                        .is_ok()
+                        && update_cache_tx.send(true).await.is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let (message_tx, message_rx) = channel(50);
+
+        Ok((
+            CommandContext {
+                cache: self
+                    .cache
+                    .map(|cache| Arc::new(Mutex::new(cache)))
+                    .ok_or("cache is required")?,
+                msg_sender: Arc::new(message_tx),
+                app,
+                game,
+                local_dir: self.local_dir,
+                pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
+                cache_needs_update,
+                forward_logs: Arc::new(AtomicBool::new(false)),
+                h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
+            },
+            message_rx,
+            update_cache_rx,
+        ))
     }
 }
 
@@ -514,7 +536,7 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
         .expect("initalize_listener returned early if this is `None`");
     let msg_sender = context.msg_sender();
     let game_name = context.game_name();
-    tokio::task::spawn(async move {
+    tokio::spawn(async move {
         const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
         let mut attempt = 1;
         let messages = loop {
@@ -528,9 +550,7 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
                 Ok(false) => {
                     break vec![
                         Message::Err(format!("Could not establish connection to {game_name}")),
-                        Message::Str(format!(
-                            "use command `{YELLOW}launch{WHITE}` to re-launch game"
-                        )),
+                        Message::Str(format!("{}", ConnectionHelp)),
                     ];
                 }
                 Err(err) => break vec![Message::Err(err.to_string_lossy().to_string())],
@@ -546,17 +566,6 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
         }
     });
     Ok(())
-}
-
-struct DisplayLogs<'a>(&'a [String]);
-
-impl Display for DisplayLogs<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for line in self.0 {
-            writeln!(f, "{line}")?;
-        }
-        Ok(())
-    }
 }
 
 #[inline]
@@ -611,7 +620,7 @@ async fn open_game_console(context: &mut CommandContext) -> CommandHandle {
         let history = context.h2m_console_history.lock().await;
         if !history.is_empty() {
             println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             print!("{}", DisplayLogs(&history));
         } else {
             println!("{YELLOW}No active connection to H2M{WHITE}");

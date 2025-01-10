@@ -256,7 +256,7 @@ async fn add_to_history(
             let update_cache = update_cache.clone();
             let background_msg = background_msg.clone();
             let wide_encode = wide_encode.to_vec();
-            tokio::task::spawn(async move {
+            tokio::spawn(async move {
                 let meta = match HostName::from_request(&wide_encode).await {
                     Ok(data) => data,
                     Err(request_err) => {

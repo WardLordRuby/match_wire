@@ -2,13 +2,14 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, GameDetails},
-        launch_h2m::LaunchError,
+        launch_h2m::{h2m_running, LaunchError},
     },
     utils::{
         caching::ReadCacheErr,
         input::style::{GREEN, RED, WHITE, YELLOW},
     },
 };
+use constcat::concat;
 use std::fmt::Display;
 
 const SOURCE_HMW: &str = "HMW master server";
@@ -22,8 +23,36 @@ impl Display for ConnectionHelp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Close H2M and use command `{YELLOW}launch{WHITE}` to establish valid connection"
+            "{}",
+            if h2m_running() {
+                concat!(
+                    "Close MW2 Remastered and use command `",
+                    YELLOW,
+                    "launch",
+                    WHITE,
+                    "` to establish valid connection"
+                )
+            } else {
+                concat!(
+                    "use command `",
+                    YELLOW,
+                    "launch",
+                    WHITE,
+                    "` to re-launch game"
+                )
+            }
         )
+    }
+}
+
+pub struct DisplayLogs<'a>(pub &'a [String]);
+
+impl Display for DisplayLogs<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for line in self.0 {
+            writeln!(f, "{line}")?;
+        }
+        Ok(())
     }
 }
 
