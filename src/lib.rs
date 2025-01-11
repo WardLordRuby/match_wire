@@ -334,11 +334,12 @@ pub async fn splash_screen() -> io::Result<()> {
         use std::io::Write;
 
         // font: 4Max - patorjk.com
-        let text = r#"
-        8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888       
-        88b  d88   dPYb     88   dP   `" 88  88      Yb  db  dP  88 88__dP 88__         
-        88YbdP88  dP__Yb    88   Yb      888888       YbdPYbdP   88 88"Yb  88""         
-        88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888       "#;
+        const SPLASH_TEXT: [&str; 4] = [
+            r#"8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888"#,
+            r#"88b  d88   dPYb     88   dP   `" 88  88      Yb  db  dP  88 88__dP 88__  "#,
+            r#"88YbdP88  dP__Yb    88   Yb      888888       YbdPYbdP   88 88"Yb  88""  "#,
+            r#"88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888"#,
+        ];
 
         let mut stdout = std::io::stdout();
 
@@ -346,12 +347,10 @@ pub async fn splash_screen() -> io::Result<()> {
 
         let (width, height) = terminal::size()?;
 
-        let lines = text.lines().collect::<Vec<_>>();
+        let start_y = height.saturating_sub(SPLASH_TEXT.len() as u16) / 2;
 
-        let start_y = height.saturating_sub(lines.len() as u16) / 2;
-
-        for (i, line) in lines.iter().enumerate() {
-            let start_x = width.saturating_sub(line.len() as u16) / 2;
+        for (i, &line) in SPLASH_TEXT.iter().enumerate() {
+            let start_x = width.saturating_sub(line.chars().count() as u16) / 2;
             execute!(
                 stdout,
                 cursor::MoveTo(start_x, start_y + i as u16),
