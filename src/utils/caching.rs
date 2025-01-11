@@ -7,13 +7,12 @@ use crate::{
         reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
-    utils::{
-        input::style::{GREEN, WHITE},
-        json_data::{CacheFile, ServerCache},
-    },
+    utils::json_data::{CacheFile, ContCodeMap, ServerCache},
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
+use constcat::concat;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     io,
     net::{IpAddr, SocketAddr},
@@ -45,8 +44,19 @@ impl From<CacheFile> for Cache {
     }
 }
 
-impl Cache {
-    fn new() -> Self {
+impl From<Cache> for ServerCache {
+    fn from(value: Cache) -> Self {
+        ServerCache {
+            iw4m: value.iw4m,
+            hmw: value.hmw,
+            regions: value.ip_to_region,
+            host_names: value.host_to_connect,
+        }
+    }
+}
+
+impl Default for Cache {
+    fn default() -> Self {
         Cache {
             host_to_connect: HashMap::new(),
             ip_to_region: HashMap::new(),
@@ -56,7 +66,9 @@ impl Cache {
             created: SystemTime::now(),
         }
     }
+}
 
+impl Cache {
     pub fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
         let map = match source {
             Source::HmwMaster => &mut self.hmw,
@@ -102,6 +114,15 @@ impl Cache {
 }
 
 impl CacheFile {
+    fn from(connection_history: Option<Vec<HostName>>, cache: Cache) -> Self {
+        CacheFile {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            created: std::time::SystemTime::now(),
+            connection_history: connection_history.unwrap_or_default(),
+            cache: ServerCache::from(cache),
+        }
+    }
+
     fn from_backups(
         connection_history: Option<Vec<HostName>>,
         regions: Option<HashMap<IpAddr, [char; 2]>>,
@@ -111,10 +132,8 @@ impl CacheFile {
             created: std::time::SystemTime::now(),
             connection_history: connection_history.unwrap_or_default(),
             cache: ServerCache {
-                iw4m: HashMap::new(),
-                hmw: HashMap::new(),
                 regions: regions.unwrap_or_default(),
-                host_names: HashMap::new(),
+                ..Default::default()
             },
         }
     }
@@ -122,21 +141,15 @@ impl CacheFile {
 
 #[instrument(level = "trace", skip_all)]
 pub async fn build_cache(
-    connection_history: Option<&[HostName]>,
-    regions: Option<&HashMap<IpAddr, [char; 2]>>,
+    connection_history: Option<Vec<HostName>>,
+    mut regions: Option<HashMap<IpAddr, [char; 2]>>,
 ) -> Result<CacheFile, (&'static str, CacheFile)> {
-    println!("{GREEN}Updating cache...{WHITE}");
+    let servers = match get_sourced_servers(DEFUALT_SOURCES, None).await {
+        Ok(data) => data,
+        Err(err) => return Err((err, CacheFile::from_backups(connection_history, regions))),
+    };
 
-    let servers = get_sourced_servers(DEFUALT_SOURCES, None)
-        .await
-        .map_err(|err| {
-            (
-                err,
-                CacheFile::from_backups(connection_history.map(|v| v.to_vec()), regions.cloned()),
-            )
-        })?;
-
-    let mut cache = Cache::new();
+    let mut cache = Cache::default();
 
     let client = reqwest::Client::builder()
         .timeout(tokio::time::Duration::from_secs(3))
@@ -150,8 +163,8 @@ pub async fn build_cache(
             Ok(result) => match result {
                 Ok(server) => {
                     let region = regions
-                        .as_ref()
-                        .and_then(|cache| cache.get(&server.source.socket_addr().ip()).copied());
+                        .as_mut()
+                        .and_then(|cache| cache.remove(&server.source.socket_addr().ip()));
                     cache.push(server, region)
                 }
                 Err(mut err) => {
@@ -170,41 +183,35 @@ pub async fn build_cache(
                     }
                 }
             },
-            Err(err) => error!(name: LOG_ONLY, "{err}"),
+            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
 
-    Ok(CacheFile {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        created: std::time::SystemTime::now(),
-        connection_history: connection_history.map(|v| v.to_vec()).unwrap_or_default(),
-        cache: ServerCache {
-            iw4m: cache.iw4m,
-            hmw: cache.hmw,
-            regions: cache.ip_to_region,
-            host_names: cache.host_to_connect,
-        },
-    })
+    Ok(CacheFile::from(connection_history, cache))
 }
 
 pub struct ReadCacheErr {
-    pub err: String,
+    pub err: Cow<'static, str>,
     pub connection_history: Option<Vec<HostName>>,
     pub region_cache: Option<HashMap<IpAddr, [char; 2]>>,
 }
 
 impl ReadCacheErr {
-    fn new(err: String) -> Self {
+    fn new<C: Into<Cow<'static, str>>>(err: C) -> Self {
         ReadCacheErr {
-            err,
+            err: err.into(),
             connection_history: None,
             region_cache: None,
         }
     }
 
-    fn with_old(err: String, history: Vec<HostName>, region: HashMap<IpAddr, [char; 2]>) -> Self {
+    fn with_old<C: Into<Cow<'static, str>>>(
+        err: C,
+        history: Vec<HostName>,
+        region: HashMap<IpAddr, [char; 2]>,
+    ) -> Self {
         ReadCacheErr {
-            err,
+            err: err.into(),
             connection_history: Some(history),
             region_cache: Some(region),
         }
@@ -214,7 +221,7 @@ impl ReadCacheErr {
 impl From<io::Error> for ReadCacheErr {
     fn from(value: io::Error) -> Self {
         ReadCacheErr {
-            err: format!("{value}, Starting new cache file"),
+            err: format!("{value}, Starting new cache file").into(),
             connection_history: None,
             region_cache: None,
         }
@@ -224,7 +231,7 @@ impl From<io::Error> for ReadCacheErr {
 impl From<serde_json::Error> for ReadCacheErr {
     fn from(value: serde_json::Error) -> Self {
         ReadCacheErr {
-            err: format!("{value}, Starting new cache file"),
+            err: format!("{value}, Starting new cache file").into(),
             connection_history: None,
             region_cache: None,
         }
@@ -232,17 +239,18 @@ impl From<serde_json::Error> for ReadCacheErr {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
+pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
     match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
         Ok(OperationResult::Bool(true)) => {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
             let reader = io::BufReader::new(file);
             let data = serde_json::from_reader::<_, CacheFile>(reader)?;
+            trace!("Cache read from file");
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(data.created) {
                 Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
                     return Err(ReadCacheErr::with_old(
-                        "cache is too old".to_string(),
+                        "cache is too old",
                         data.connection_history,
                         data.cache.regions,
                     ))
@@ -256,11 +264,10 @@ pub async fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
                 }
                 _ => (),
             }
-            trace!("Cache read from file");
             Ok(Cache::from(data))
         }
         Ok(OperationResult::Bool(false)) => {
-            Err(ReadCacheErr::new(format!("{CACHED_DATA} not found")))
+            Err(ReadCacheErr::new(concat!(CACHED_DATA, " not found")))
         }
         Err(err) => Err(err.into()),
         _ => unreachable!(),
@@ -268,32 +275,36 @@ pub async fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn write_cache<'a>(context: &CommandContext) -> io::Result<()> {
+pub async fn write_cache(context: &CommandContext) -> io::Result<()> {
     let local_env_dir = context.local_dir();
     let Some(local_path) = local_env_dir else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
-    let data = {
+    {
         let cache_lock = context.cache();
         let cache = cache_lock.lock().await;
-        CacheFile {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            created: cache.created,
-            cache: ServerCache {
-                iw4m: cache.iw4m.clone(),
-                hmw: cache.hmw.clone(),
-                regions: cache.ip_to_region.clone(),
-                host_names: cache.host_to_connect.clone(),
-            },
-            connection_history: if cache.connection_history.len() > HISTORY_MAX {
-                cache.connection_history[cache.connection_history.len() - HISTORY_MAX..].to_vec()
-            } else {
-                cache.connection_history.clone()
-            },
-        }
-    };
-    serde_json::to_writer_pretty(file, &data).map_err(io::Error::other)?;
+
+        serde_json::to_writer_pretty(
+            file,
+            &serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "created": cache.created,
+                "connection_history": if cache.connection_history.len() > HISTORY_MAX {
+                    &cache.connection_history[cache.connection_history.len() - HISTORY_MAX..]
+                } else {
+                    &cache.connection_history
+                },
+                "cache": {
+                    "iw4m": cache.iw4m,
+                    "hmw": cache.hmw,
+                    "regions": ContCodeMap(&cache.ip_to_region),
+                    "host_names": cache.host_to_connect,
+                },
+            }),
+        )
+        .map_err(io::Error::other)?;
+    }
     info!(name: LOG_ONLY, "Cache saved locally");
     Ok(())
 }

@@ -503,7 +503,7 @@ where
                 }
             }
             Ok(Err(err)) => error!("{err}"),
-            Err(err) => error!("{err:?}"),
+            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
 

@@ -37,6 +37,9 @@ use utils::{
     json_data::{HmwManifest, Version},
 };
 
+#[cfg(not(debug_assertions))]
+use crossterm::{execute, terminal};
+
 pub const LOG_ONLY: &str = "log_only";
 
 pub const VERSION_URL: &str =
@@ -328,7 +331,6 @@ pub fn print_help() {
 pub async fn splash_screen() -> io::Result<()> {
     #[cfg(not(debug_assertions))]
     {
-        use crossterm::{execute, terminal};
         use std::io::Write;
 
         // font: 4Max - patorjk.com
@@ -361,8 +363,19 @@ pub async fn splash_screen() -> io::Result<()> {
         stdout.flush()?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        execute!(stdout, terminal::LeaveAlternateScreen)?;
     }
 
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub fn print_during_splash<F: FnOnce()>(_stdout: &mut std::io::Stdout, print: F) {
+    print();
+}
+
+#[cfg(not(debug_assertions))]
+pub fn print_during_splash<F: FnOnce()>(stdout: &mut std::io::Stdout, print: F) {
+    execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
+    print();
+    execute!(stdout, terminal::EnterAlternateScreen).unwrap();
 }

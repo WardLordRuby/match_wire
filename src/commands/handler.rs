@@ -270,7 +270,7 @@ type HmwHashResult = Result<reqwest::Result<Option<String>>, JoinError>;
 
 #[derive(Default)]
 pub struct CommandContextBuilder {
-    cache: Option<Cache>,
+    cache: Option<Result<Cache, JoinError>>,
     launch_res: Option<LaunchResult>,
     game: Option<GameDetails>,
     local_dir: Option<PathBuf>,
@@ -282,7 +282,7 @@ impl CommandContextBuilder {
     pub fn new() -> Self {
         CommandContextBuilder::default()
     }
-    pub fn cache(mut self, cache: Cache) -> Self {
+    pub fn cache(mut self, cache: Result<Cache, JoinError>) -> Self {
         self.cache = Some(cache);
         self
     }
@@ -389,7 +389,13 @@ impl CommandContextBuilder {
             CommandContext {
                 cache: self
                     .cache
-                    .map(|cache| Arc::new(Mutex::new(cache)))
+                    .map(|cache| {
+                        Arc::new(Mutex::new(cache.unwrap_or_else(|err| {
+                            error!("Critical error building cache, could not populate cache");
+                            error!(name: LOG_ONLY, "{err:?}");
+                            Cache::default()
+                        })))
+                    })
                     .ok_or("cache is required")?,
                 msg_sender: Arc::new(message_tx),
                 app,
@@ -467,14 +473,22 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
         return CommandHandle::Processed;
     };
 
+    info!("Updating cache...");
     let cache_file = match arg {
         CacheCmd::Update => {
             let cache_arc = context.cache();
-            let cache = cache_arc.lock().await;
+            let mut cache = cache_arc.lock().await;
 
-            match build_cache(Some(&cache.connection_history), Some(&cache.ip_to_region)).await {
+            match build_cache(
+                Some(std::mem::take(&mut cache.connection_history)),
+                Some(std::mem::take(&mut cache.ip_to_region)),
+            )
+            .await
+            {
                 Ok(data) => data,
-                Err((err, _)) => {
+                Err((err, backup)) => {
+                    cache.connection_history = backup.connection_history;
+                    cache.ip_to_region = backup.cache.regions;
                     error!("{err}, cache remains unchanged");
                     return CommandHandle::Processed;
                 }

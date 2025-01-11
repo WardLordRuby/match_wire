@@ -8,7 +8,7 @@ use match_wire::{
         },
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
-    get_latest_hmw_hash, get_latest_version, print_help, splash_screen,
+    get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
     utils::{
         caching::{build_cache, read_cache, write_cache, Cache},
         display::DisplayPanic,
@@ -51,7 +51,7 @@ fn main() {
         .expect("Failed to create single-threaded runtime");
 
     main_runtime.block_on(async {
-        let startup_data = match app_startup().await {
+        let startup_data = match app_startup() {
             Ok(data) => data,
             Err(err) => {
                 eprintln!("{RED}{err}{WHITE}");
@@ -59,20 +59,23 @@ fn main() {
                 return;
             }
         };
-        
-        let (splash_res, launch_res, app_ver_res, hmw_hash_res) = tokio::join!(
+
+        let (splash_res, launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
             startup_data.splash_task,
             startup_data.launch_task,
             startup_data.version_task,
-            startup_data.hmw_hash_task
+            startup_data.hmw_hash_task,
+            startup_data.cache_task
         );
 
         splash_res.unwrap().unwrap();
-        
+        #[cfg(not(debug_assertions))]
+        execute!(term, terminal::LeaveAlternateScreen).unwrap();
+
         let try_start_listener = matches!(launch_res, Ok(Ok(_)));
 
         let (mut command_context, mut message_rx, mut update_cache_rx) = CommandContextBuilder::new()
-            .cache(startup_data.cache)
+            .cache(cache_res)
             .launch_res(launch_res)
             .app_ver_res(app_ver_res)
             .hmw_hash_res(hmw_hash_res)
@@ -168,9 +171,9 @@ fn main() {
 }
 
 struct StartupData {
-    cache: Cache,
     local_dir: Option<PathBuf>,
     game: GameDetails,
+    cache_task: JoinHandle<Cache>,
     splash_task: JoinHandle<io::Result<()>>,
     launch_task: JoinHandle<Result<PTY, LaunchError>>,
     version_task: JoinHandle<reqwest::Result<AppDetails>>,
@@ -178,7 +181,7 @@ struct StartupData {
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn app_startup() -> Result<StartupData, Cow<'static, str>> {
+fn app_startup() -> Result<StartupData, Cow<'static, str>> {
     let exe_dir =
         std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
 
@@ -206,65 +209,64 @@ async fn app_startup() -> Result<StartupData, Cow<'static, str>> {
         }
     });
 
-    let mut local_dir = None;
-    let mut connection_history = None;
-    let mut region_cache = None;
-    if let Some(path) = std::env::var_os(LOCAL_DATA) {
-        let mut dir = PathBuf::from(path);
+    let mut stdout = std::io::stdout();
 
-        if let Err(err) = check_app_dir_exists(&mut dir) {
-            eprintln!("{RED}{err}{WHITE}");
+    let mut local_dir = std::env::var_os(LOCAL_DATA).map(PathBuf::from);
+    let mut cache_res = None;
+    if let Some(ref mut dir) = local_dir {
+        if let Err(err) = check_app_dir_exists(dir) {
+            print_during_splash(&mut stdout, || eprintln!("{RED}{err}{WHITE}"));
         } else {
-            init_subscriber(&dir).unwrap_or_else(|err| eprintln!("{RED}{err}{WHITE}"));
+            init_subscriber(dir).unwrap_or_else(|err| {
+                print_during_splash(&mut stdout, || eprintln!("{RED}{err}{WHITE}"))
+            });
             info!(name: LOG_ONLY, "App startup");
-            local_dir = Some(dir);
-            match read_cache(local_dir.as_ref().unwrap()).await {
-                Ok(cache) => {
-                    return Ok(StartupData {
-                        cache,
-                        local_dir,
-                        game,
-                        splash_task,
-                        launch_task,
-                        version_task,
-                        hmw_hash_task,
-                    })
-                }
-                Err(err) => {
-                    warn!("{err}");
-                    connection_history = err.connection_history;
-                    region_cache = err.region_cache;
-                }
-            }
+            cache_res = Some(read_cache(dir));
         }
     } else {
-        eprintln!("{RED}Could not find %appdata%/local{WHITE}");
+        print_during_splash(&mut stdout, || {
+            eprintln!("{RED}Could not find %appdata%/local{WHITE}")
+        });
 
         #[cfg(debug_assertions)]
         init_subscriber(std::path::Path::new("")).unwrap();
     }
 
-    let cache_file = build_cache(connection_history.as_deref(), region_cache.as_ref())
-        .await
-        .unwrap_or_else(|(err, backup)| {
-            error!("{err}");
-            backup
-        });
-
-    if let Some(ref dir) = local_dir {
-        match std::fs::File::create(dir.join(CACHED_DATA)) {
-            Ok(file) => {
-                if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
-                    error!("{err}")
+    let cache_task = tokio::spawn({
+        let cache_path = local_dir.as_deref().map(|local| local.join(CACHED_DATA));
+        async move {
+            let (connection_history, region_cache) = match cache_res {
+                Some(Ok(cache)) => return cache,
+                Some(Err(err)) => {
+                    print_during_splash(&mut stdout, || error!("{err}"));
+                    (err.connection_history, err.region_cache)
+                }
+                None => (None, None),
+            };
+            print_during_splash(&mut stdout, || info!("Updating cache..."));
+            let cache_file = build_cache(connection_history, region_cache)
+                .await
+                .unwrap_or_else(|(err, backup)| {
+                    print_during_splash(&mut stdout, || error!("{err}"));
+                    backup
+                });
+            if let Some(cache) = cache_path.as_deref() {
+                match std::fs::File::create(cache) {
+                    Ok(file) => match serde_json::to_writer_pretty(file, &cache_file) {
+                        Ok(()) => info!(name: LOG_ONLY, "Cache saved locally"),
+                        Err(err) => print_during_splash(&mut stdout, || error!("{err}")),
+                    },
+                    Err(err) => print_during_splash(&mut stdout, || error!("{err}")),
                 }
             }
-            Err(err) => error!("{err}"),
+            Cache::from(cache_file)
         }
-    }
+    });
+
     Ok(StartupData {
-        cache: Cache::from(cache_file),
         local_dir,
         game,
+        cache_task,
         splash_task,
         launch_task,
         version_task,

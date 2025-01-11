@@ -118,7 +118,7 @@ pub struct CacheFile {
     pub cache: ServerCache,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct ServerCache {
     pub iw4m: HashMap<IpAddr, Vec<u16>>,
     pub hmw: HashMap<IpAddr, Vec<u16>>,
@@ -157,6 +157,16 @@ where
         map_serializer.serialize_entry(ip, &code_str)?;
     }
     map_serializer.end()
+}
+pub struct ContCodeMap<'a>(pub &'a HashMap<IpAddr, [char; 2]>);
+
+impl Serialize for ContCodeMap<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serialize_country_code_map(self.0, serializer)
+    }
 }
 
 #[derive(Deserialize)]

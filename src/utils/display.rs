@@ -34,7 +34,7 @@ impl Display for ConnectionHelp {
                 )
             } else {
                 concat!(
-                    "use command `",
+                    "Use command `",
                     YELLOW,
                     "launch",
                     WHITE,
