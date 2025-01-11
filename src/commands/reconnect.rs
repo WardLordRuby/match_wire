@@ -8,8 +8,11 @@ use crate::{
         display::{ConnectionHelp, DisplayHistoryErr},
         input::style::{WHITE, YELLOW},
     },
+    LOG_ONLY,
 };
-use std::{borrow::Cow, collections::HashMap, fmt::Display, net::SocketAddr};
+use std::{
+    borrow::Cow, collections::HashMap, fmt::Display, net::SocketAddr, sync::atomic::Ordering,
+};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 use winptyrs::PTY;
@@ -84,28 +87,34 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
         }
     };
 
-    let history_len = cache.connection_history.len();
-    if let Some(num) = args.connect {
+    let mut target = cache.connection_history.len() - 1;
+    let mut modify_cache = false;
+    if let Some(num) = args.connect.map(|n| n as usize) {
         if num > 1 {
-            if num as usize > history_len {
-                error!("{}", DisplayHistoryErr(history_len));
+            if num > cache.connection_history.len() {
+                error!("{}", DisplayHistoryErr(cache.connection_history.len()));
                 return CommandHandle::Processed;
             }
-            let entry = cache.connection_history.remove(history_len - num as usize);
-            cache.connection_history.push(entry);
+            target = cache.connection_history.len() - num;
+            modify_cache = true;
         }
     }
     let connect = cache
         .host_to_connect
-        .get(&cache.connection_history.last().unwrap().raw)
+        .get(&cache.connection_history[target].raw)
         .copied();
 
-    drop(cache);
-
     if let Some(ip_port) = connect {
-        connect_to(ip_port, &lock)
-            .await
-            .unwrap_or_else(|err| error!("{err}"));
+        if let Err(err) = connect_to(ip_port, &lock).await {
+            error!("{err}");
+            return CommandHandle::Processed;
+        }
+        info!(name: LOG_ONLY, "Connected to {ip_port}");
+        if modify_cache {
+            let entry = cache.connection_history.remove(target);
+            cache.connection_history.push(entry);
+            context.cache_needs_update().store(true, Ordering::SeqCst);
+        }
     } else {
         error!("Could not find server in cache");
         println!("use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server");
