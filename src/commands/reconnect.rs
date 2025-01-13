@@ -95,29 +95,29 @@ pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> Comma
                 error!("{}", DisplayHistoryErr(cache.connection_history.len()));
                 return CommandHandle::Processed;
             }
-            target = cache.connection_history.len() - num;
-            modify_cache = true;
+            (target, modify_cache) = (cache.connection_history.len() - num, true);
         }
     }
-    let connect = cache
+    let Some(&ip_port) = cache
         .host_to_connect
         .get(&cache.connection_history[target].raw)
-        .copied();
-
-    if let Some(ip_port) = connect {
-        if let Err(err) = connect_to(ip_port, &lock).await {
-            error!("{err}");
-            return CommandHandle::Processed;
-        }
-        info!(name: LOG_ONLY, "Connected to {ip_port}");
-        if modify_cache {
-            let entry = cache.connection_history.remove(target);
-            cache.connection_history.push(entry);
-            context.cache_needs_update().store(true, Ordering::SeqCst);
-        }
-    } else {
+    else {
         error!("Could not find server in cache");
         println!("use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server");
+        return CommandHandle::Processed;
+    };
+
+    if let Err(err) = connect_to(ip_port, &lock).await {
+        error!("{err}");
+        return CommandHandle::Processed;
+    }
+
+    info!(name: LOG_ONLY, "Connected to {ip_port}");
+
+    if modify_cache {
+        let entry = cache.connection_history.remove(target);
+        cache.connection_history.push(entry);
+        context.cache_needs_update().store(true, Ordering::SeqCst);
     }
     CommandHandle::Processed
 }

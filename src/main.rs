@@ -178,7 +178,7 @@ struct StartupData {
     splash_task: JoinHandle<io::Result<()>>,
     launch_task: JoinHandle<Result<PTY, LaunchError>>,
     version_task: JoinHandle<reqwest::Result<AppDetails>>,
-    hmw_hash_task: JoinHandle<reqwest::Result<Option<String>>>,
+    hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
 }
 
 #[instrument(level = "trace", skip_all)]

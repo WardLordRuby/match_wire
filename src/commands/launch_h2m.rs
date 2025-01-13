@@ -252,9 +252,9 @@ async fn add_to_history(
             cache_insert(cache_arc, update_cache, meta).await;
         }
         Connection::Direct => {
-            let cache_arc = cache_arc.clone();
-            let update_cache = update_cache.clone();
-            let background_msg = background_msg.clone();
+            let cache_arc = Arc::clone(cache_arc);
+            let update_cache = Arc::clone(update_cache);
+            let background_msg = Arc::clone(background_msg);
             let wide_encode = wide_encode.to_vec();
             tokio::spawn(async move {
                 let meta = match HostName::from_request(&wide_encode).await {

@@ -62,12 +62,6 @@ impl Message {
         }
     }
     #[inline]
-    fn inner(&self) -> &str {
-        match self {
-            Self::Str(msg) | Self::Info(msg) | Self::Err(msg) | Self::Warn(msg) => msg,
-        }
-    }
-    #[inline]
     pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
         Self::Str(value.into())
     }
@@ -89,14 +83,14 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use crate::utils::input::style::{GREEN, RED, WHITE, YELLOW};
 
-        let (line_color, reset_color) = match self {
-            Self::Str(_) => ("", ""),
-            Self::Info(_) => (GREEN, WHITE),
-            Self::Err(_) => (RED, WHITE),
-            Self::Warn(_) => (YELLOW, WHITE),
+        let (line_color, msg, reset_color): (&str, &str, &str) = match self {
+            Self::Str(msg) => ("", msg, ""),
+            Self::Info(msg) => (GREEN, msg, WHITE),
+            Self::Err(msg) => (RED, msg, WHITE),
+            Self::Warn(msg) => (YELLOW, msg, WHITE),
         };
 
-        writeln!(f, "{line_color}{}{reset_color}", self.inner())
+        writeln!(f, "{line_color}{msg}{reset_color}")
     }
 }
 
@@ -213,19 +207,19 @@ impl CommandContext {
         Arc::clone(&self.forward_logs)
     }
     pub async fn check_h2m_connection(&mut self) -> Result<Arc<RwLock<PTY>>, Cow<'static, str>> {
-        if let Some(ref lock) = self.pty_handle {
-            let handle = lock.read().await;
-            return match handle.is_alive() {
-                Ok(true) => Ok(Arc::clone(lock)),
-                Ok(false) => Err(Cow::Borrowed("No connection to H2M is active")),
-                Err(err) => {
-                    drop(handle);
-                    self.pty_handle = None;
-                    Err(Cow::Owned(err.to_string_lossy().to_string()))
-                }
-            };
+        let Some(ref lock) = self.pty_handle else {
+            return Err(Cow::Borrowed("No Pseudoconsole set"));
+        };
+        let handle = lock.read().await;
+        match handle.is_alive() {
+            Ok(true) => Ok(Arc::clone(lock)),
+            Ok(false) => Err(Cow::Borrowed("No connection to H2M is active")),
+            Err(err) => {
+                drop(handle);
+                self.pty_handle = None;
+                Err(Cow::Owned(err.to_string_lossy().to_string()))
+            }
         }
-        Err(Cow::Borrowed("No Pseudoconsole set"))
     }
     #[inline]
     pub fn local_dir(&self) -> Option<&Path> {
@@ -304,7 +298,7 @@ impl CommandContext {
 
 type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
 type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
-type HmwHashResult = Result<reqwest::Result<Option<String>>, JoinError>;
+type HmwHashResult = Result<reqwest::Result<Result<String, &'static str>>, JoinError>;
 
 #[derive(Default)]
 pub struct CommandContextBuilder {
@@ -351,14 +345,14 @@ impl CommandContextBuilder {
         let handle = if let Some(Ok(Ok(handle))) = self.launch_res {
             Some(handle)
         } else {
-            if let Some(join_res) = self.launch_res {
-                let err = match join_res {
+            if let Some(join_launch_res) = self.launch_res {
+                let err = match join_launch_res {
                     Err(join_err) => join_err.to_string(),
                     Ok(Err(launch_err)) => launch_err.to_string(),
                     Ok(Ok(_)) => unreachable!("by happy path"),
                 };
                 error!("Could not launch H2M as child process: {err}");
-                println!("{}", ConnectionHelp);
+                println!("{ConnectionHelp}");
             }
             None
         };
@@ -371,8 +365,8 @@ impl CommandContextBuilder {
             }
             app
         } else {
-            if let Some(join_res) = self.app_ver_res {
-                let err = match join_res {
+            if let Some(join_app_ver_res) = self.app_ver_res {
+                let err = match join_app_ver_res {
                     Err(join_err) => join_err.to_string(),
                     Ok(Err(reqwest_err)) => reqwest_err.to_string(),
                     Ok(Ok(_)) => unreachable!("by happy path"),
@@ -383,23 +377,24 @@ impl CommandContextBuilder {
         };
 
         let mut game = self.game.ok_or("game details is required")?;
-        if let Some(res) = self.hmw_hash_res {
-            match res {
-                Ok(Ok(option_hash)) => {
-                    if let Some(ref hash_latest) = option_hash {
-                        if let Some(ref hash_curr) = game.hash_curr {
-                            if hash_curr != hash_latest {
-                                info!("{HmwUpdateHelp}")
-                            }
-                        }
-                        game.hash_latest = option_hash;
-                    } else {
-                        error!("hmw manifest.json formatting has changed");
+        if let Some(join_hmw_hash_res) = self.hmw_hash_res {
+            game.hash_latest = if let Ok(Ok(Ok(hash_latest))) = join_hmw_hash_res {
+                if let Some(ref hash_curr) = game.hash_curr {
+                    if hash_curr != &hash_latest {
+                        info!("{HmwUpdateHelp}")
                     }
                 }
-                Ok(Err(err)) => error!("{err}"),
-                Err(err) => error!("{err:?}"),
-            }
+                Some(hash_latest)
+            } else {
+                let err = match join_hmw_hash_res {
+                    Ok(Ok(Err(err))) => Cow::Borrowed(err),
+                    Ok(Err(err)) => Cow::Owned(err.to_string()),
+                    Err(err) => Cow::Owned(err.to_string()),
+                    Ok(Ok(Ok(_))) => unreachable!("by happy path"),
+                };
+                error!("Could not get latest HMW version: {err}");
+                None
+            };
         }
 
         let cache_needs_update = Arc::new(AtomicBool::new(false));

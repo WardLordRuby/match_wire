@@ -110,7 +110,7 @@ pub async fn get_latest_version() -> reqwest::Result<AppDetails> {
         .map(AppDetails::from)
 }
 
-pub async fn get_latest_hmw_hash() -> reqwest::Result<Option<String>> {
+pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static str>> {
     let client = reqwest::Client::new();
     let mut latest = client
         .get(HMW_LATEST_URL)
@@ -123,7 +123,8 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Option<String>> {
         .modules
         .iter_mut()
         .find(|module| module.name == MOD_FILES_MODULE_NAME)
-        .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[6])))
+        .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[6]))
+        .ok_or("hmw manifest.json formatting has changed"))
 }
 
 #[derive(Debug)]
