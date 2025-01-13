@@ -74,34 +74,30 @@ where
     ) -> std::fmt::Result {
         use crate::utils::input::style::{BLUE, GREEN, MAGENTA, RED, WHITE, YELLOW};
 
-        let meta = event.metadata();
+        let line_color = match *event.metadata().level() {
+            Level::ERROR => RED,
+            Level::WARN => YELLOW,
+            Level::INFO => GREEN,
+            Level::DEBUG => BLUE,
+            Level::TRACE => MAGENTA,
+        };
 
-        write!(
-            writer,
-            "{}",
-            match *meta.level() {
-                Level::ERROR => RED,
-                Level::WARN => YELLOW,
-                Level::INFO => GREEN,
-                Level::DEBUG => BLUE,
-                Level::TRACE => MAGENTA,
-            }
-        )?;
-
+        write!(writer, "{line_color}")?;
         self.inner.format_event(ctx, writer.by_ref(), event)?;
-
         write!(writer, "{WHITE}")
     }
 }
 
 #[cfg(not(debug_assertions))]
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
+    use constcat::concat;
     use tracing_subscriber::{filter::DynFilterFn, Layer};
-    let name = env!("CARGO_PKG_NAME");
-    let log_name = format!("{name}.log");
+
+    const NAME: &str = env!("CARGO_PKG_NAME");
+    const LOG_NAME: &str = concat!(NAME, ".log");
 
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
-        .filename_prefix(log_name)
+        .filename_prefix(LOG_NAME)
         .max_log_files(5)
         .build(local_env_dir)
         .map_err(std::io::Error::other)?;
@@ -112,7 +108,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
         ))
         .fmt_fields(PrettyFields::new())
         .with_writer(file_appender)
-        .with_filter(EnvFilter::new(format!("{name}=info,reqwest=warn")));
+        .with_filter(EnvFilter::new(concat!(NAME, "=info,reqwest=warn")));
 
     let exclude_log_only = DynFilterFn::new(|metadata, _| metadata.name() != crate::LOG_ONLY);
 
@@ -124,7 +120,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
                 .with_level(false),
         ))
         .with_writer(std::io::stdout)
-        .with_filter(EnvFilter::new(format!("{name}=info")))
+        .with_filter(EnvFilter::new(concat!(NAME, "=info")))
         .with_filter(exclude_log_only);
 
     tracing_subscriber::registry()
