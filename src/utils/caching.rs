@@ -144,6 +144,8 @@ pub async fn build_cache(
     connection_history: Option<Vec<HostName>>,
     mut regions: Option<HashMap<IpAddr, [char; 2]>>,
 ) -> Result<CacheFile, (&'static str, CacheFile)> {
+    info!("Updating cache...");
+
     let servers = match get_sourced_servers(DEFUALT_SOURCES, None).await {
         Ok(data) => data,
         Err(err) => return Err((err, CacheFile::from_backups(connection_history, regions))),

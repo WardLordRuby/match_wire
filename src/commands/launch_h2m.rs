@@ -240,12 +240,12 @@ async fn add_to_history(
             let meta = match HostName::from_browser(wide_encode, version) {
                 Ok(mut data) => {
                     if let Some(Err(ref mut err)) = data.socket_addr {
-                        send_msg_over(background_msg, Message::Err(std::mem::take(err))).await;
+                        send_msg_over(background_msg, Message::error(std::mem::take(err))).await;
                     }
                     data
                 }
                 Err(err) => {
-                    send_msg_over(background_msg, Message::Err(err)).await;
+                    send_msg_over(background_msg, Message::error(err)).await;
                     return;
                 }
             };
@@ -264,7 +264,7 @@ async fn add_to_history(
                             // NOTE: disregard `AddrParseErr` because of partial read of pseudo console input bug
                             HostRequestErr::AddrParseErr(err) => trace!("{err}"),
                             HostRequestErr::RequestErr(err) => {
-                                send_msg_over(&background_msg, Message::Err(err)).await;
+                                send_msg_over(&background_msg, Message::error(err)).await;
                             }
                         }
                         return;
@@ -320,7 +320,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     Err(err) => {
                         send_msg_over(
                             &msg_sender_arc,
-                            Message::Err(err.to_string_lossy().to_string()),
+                            Message::error(err.to_string_lossy().to_string()),
                         )
                         .await;
                         break 'task;
@@ -400,7 +400,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 
             if forward_logs_arc.load(Ordering::Acquire) && start < console_history.len() {
                 let msg = console_history[start..].join("\n");
-                if msg_sender_arc.send(Message::Str(msg)).await.is_err() {
+                if msg_sender_arc.send(Message::str(msg)).await.is_err() {
                     forward_logs_arc.store(false, Ordering::SeqCst);
                 }
             }
@@ -409,7 +409,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         }
         send_msg_over(
             &msg_sender_arc,
-            Message::Warn(format!("No longer reading {game_name} console ouput")),
+            Message::warn(format!("No longer reading {game_name} console ouput")),
         )
         .await;
     });

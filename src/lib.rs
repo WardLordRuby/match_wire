@@ -21,7 +21,10 @@ pub mod utils {
 
 use clap::CommandFactory;
 use cli::UserCommand;
-use commands::{handler::AppDetails, launch_h2m::get_exe_version};
+use commands::{
+    handler::{AppDetails, Message},
+    launch_h2m::get_exe_version,
+};
 use constcat::concat;
 use crossterm::cursor;
 use sha2::{Digest, Sha256};
@@ -30,6 +33,7 @@ use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
+    sync::{atomic::AtomicBool, LazyLock, Mutex},
     time::Duration,
 };
 use utils::{
@@ -65,6 +69,10 @@ pub const REQUIRED_FILES: [&str; 7] = [
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub const CACHED_DATA: &str = "cache.json";
+
+pub static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
+pub static SPLASH_SCREEN_MSG_BUFFER: LazyLock<Mutex<String>> =
+    LazyLock::new(|| Mutex::new(String::new()));
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -205,7 +213,7 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
                     .expect("Failed to create players2 folder");
-                println!("{GREEN}players2 folder is missing, a new one was created{WHITE}");
+                println!("{GREEN}\"players2\" folder is missing, a new one was created{WHITE}");
             }
             Ok(exe_dir.join(found_game))
         }
@@ -331,7 +339,7 @@ pub fn print_help() {
 pub async fn splash_screen() -> io::Result<()> {
     #[cfg(not(debug_assertions))]
     {
-        use std::io::Write;
+        use std::{io::Write, sync::atomic::Ordering};
 
         // font: 4Max - patorjk.com
         const SPLASH_TEXT: [&str; 4] = [
@@ -343,6 +351,7 @@ pub async fn splash_screen() -> io::Result<()> {
 
         let mut stdout = std::io::stdout();
 
+        SPLASH_SCREEN_VIS.store(true, Ordering::SeqCst);
         execute!(stdout, terminal::EnterAlternateScreen)?;
 
         let (width, height) = terminal::size()?;
@@ -367,14 +376,29 @@ pub async fn splash_screen() -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(not(debug_assertions))]
+pub async fn leave_splash_screen() {
+    let mut stdout = std::io::stdout();
+    execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
+    SPLASH_SCREEN_VIS.store(false, std::sync::atomic::Ordering::Relaxed);
+    let mut buffer = loop {
+        match SPLASH_SCREEN_MSG_BUFFER.try_lock() {
+            Ok(buffer) => break buffer,
+            Err(_) => tokio::time::sleep(tokio::time::Duration::from_millis(20)).await,
+        }
+    };
+    print!("{}", std::mem::take(&mut *buffer))
+}
+
 #[cfg(debug_assertions)]
-pub fn print_during_splash<F: FnOnce()>(_stdout: &mut std::io::Stdout, print: F) {
-    print();
+pub fn print_during_splash(message: Message) {
+    debug_assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
+    message.print();
 }
 
 #[cfg(not(debug_assertions))]
-pub fn print_during_splash<F: FnOnce()>(stdout: &mut std::io::Stdout, print: F) {
-    execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
-    print();
-    execute!(stdout, terminal::EnterAlternateScreen).unwrap();
+/// **Only** use for errors encountered before tracing subscriber has been initalized
+pub fn print_during_splash(message: Message) {
+    let mut msg_queue = SPLASH_SCREEN_MSG_BUFFER.lock().expect("lock uncontested");
+    msg_queue.push_str(&format!("{message}"));
 }

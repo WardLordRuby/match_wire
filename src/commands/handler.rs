@@ -28,6 +28,7 @@ use crossterm::{
 use std::{
     borrow::Cow,
     ffi::OsString,
+    fmt::Display,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -45,20 +46,57 @@ use tracing::{error, info, warn};
 use winptyrs::PTY;
 
 pub enum Message {
-    Str(String),
-    Info(String),
-    Err(String),
-    Warn(String),
+    Str(Cow<'static, str>),
+    Info(Cow<'static, str>),
+    Err(Cow<'static, str>),
+    Warn(Cow<'static, str>),
 }
 
 impl Message {
     pub fn print(&self) {
         match self {
-            Message::Str(msg) => println!("{msg}"),
-            Message::Info(msg) => info!("{msg}"),
-            Message::Warn(msg) => warn!("{msg}"),
-            Message::Err(msg) => error!("{msg}"),
+            Self::Str(msg) => println!("{msg}"),
+            Self::Info(msg) => info!("{msg}"),
+            Self::Warn(msg) => warn!("{msg}"),
+            Self::Err(msg) => error!("{msg}"),
         }
+    }
+    #[inline]
+    fn inner(&self) -> &str {
+        match self {
+            Self::Str(msg) | Self::Info(msg) | Self::Err(msg) | Self::Warn(msg) => msg,
+        }
+    }
+    #[inline]
+    pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
+        Self::Str(value.into())
+    }
+    #[inline]
+    pub fn info<T: Into<Cow<'static, str>>>(value: T) -> Self {
+        Self::Info(value.into())
+    }
+    #[inline]
+    pub fn error<T: Into<Cow<'static, str>>>(value: T) -> Self {
+        Self::Err(value.into())
+    }
+    #[inline]
+    pub fn warn<T: Into<Cow<'static, str>>>(value: T) -> Self {
+        Self::Warn(value.into())
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::utils::input::style::{GREEN, RED, WHITE, YELLOW};
+
+        let (line_color, reset_color) = match self {
+            Self::Str(_) => ("", ""),
+            Self::Info(_) => (GREEN, WHITE),
+            Self::Err(_) => (RED, WHITE),
+            Self::Warn(_) => (YELLOW, WHITE),
+        };
+
+        writeln!(f, "{line_color}{}{reset_color}", self.inner())
     }
 }
 
@@ -473,7 +511,6 @@ async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle 
         return CommandHandle::Processed;
     };
 
-    info!("Updating cache...");
     let cache_file = match arg {
         CacheCmd::Update => {
             let cache_arc = context.cache();
@@ -558,16 +595,16 @@ pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String
             match handle.read().await.is_alive() {
                 Ok(true) => {
                     if attempt == 3 {
-                        break vec![Message::Info(format!("Connected to {game_name} console",))];
+                        break vec![Message::info(format!("Connected to {game_name} console"))];
                     }
                 }
                 Ok(false) => {
                     break vec![
-                        Message::Err(format!("Could not establish connection to {game_name}")),
-                        Message::Str(format!("{}", ConnectionHelp)),
+                        Message::error(format!("Could not establish connection to {game_name}")),
+                        Message::str(ConnectionHelp),
                     ];
                 }
-                Err(err) => break vec![Message::Err(err.to_string_lossy().to_string())],
+                Err(err) => break vec![Message::error(err.to_string_lossy().to_string())],
             }
             attempt += 1;
         };

@@ -60,6 +60,20 @@ impl<E> ColoredFormatter<E> {
 }
 
 #[cfg(not(debug_assertions))]
+fn print_during_splash<F>(print: F) -> std::fmt::Result
+where
+    F: FnOnce(Writer<'_>) -> std::fmt::Result,
+{
+    let mut buffer = String::new();
+    print(Writer::new(&mut buffer))?;
+    let mut msg_queue = crate::SPLASH_SCREEN_MSG_BUFFER
+        .lock()
+        .expect("no one will panic with lock & lock uncontested");
+    msg_queue.push_str(&buffer);
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
 impl<S, N, E> FormatEvent<S, N> for ColoredFormatter<E>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -69,7 +83,7 @@ where
     fn format_event(
         &self,
         ctx: &FmtContext<'_, S, N>,
-        mut writer: Writer<'_>,
+        writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
         use crate::utils::input::style::{BLUE, GREEN, MAGENTA, RED, WHITE, YELLOW};
@@ -82,9 +96,16 @@ where
             Level::TRACE => MAGENTA,
         };
 
-        write!(writer, "{line_color}")?;
-        self.inner.format_event(ctx, writer.by_ref(), event)?;
-        write!(writer, "{WHITE}")
+        let print = |mut writer: Writer<'_>| {
+            write!(writer, "{line_color}")?;
+            self.inner.format_event(ctx, writer.by_ref(), event)?;
+            write!(writer, "{WHITE}")
+        };
+
+        if crate::SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::Acquire) {
+            return print_during_splash(print);
+        }
+        print(writer)
     }
 }
 

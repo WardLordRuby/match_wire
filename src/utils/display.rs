@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use constcat::concat;
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 const SOURCE_HMW: &str = "HMW master server";
 const SOURCE_HMW_CACHED: &str = "Cached HMW server";
@@ -19,29 +19,35 @@ const SOURCE_IW4_CACHED: &str = "Cached Iw4m server";
 
 pub struct ConnectionHelp;
 
+fn connection_help() -> &'static str {
+    if h2m_running() {
+        concat!(
+            "Close MW2 Remastered and use command `",
+            YELLOW,
+            "launch",
+            WHITE,
+            "` to establish valid connection"
+        )
+    } else {
+        concat!(
+            "Use command `",
+            YELLOW,
+            "launch",
+            WHITE,
+            "` to re-launch game"
+        )
+    }
+}
+
 impl Display for ConnectionHelp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            if h2m_running() {
-                concat!(
-                    "Close MW2 Remastered and use command `",
-                    YELLOW,
-                    "launch",
-                    WHITE,
-                    "` to establish valid connection"
-                )
-            } else {
-                concat!(
-                    "Use command `",
-                    YELLOW,
-                    "launch",
-                    WHITE,
-                    "` to re-launch game"
-                )
-            }
-        )
+        write!(f, "{}", connection_help())
+    }
+}
+
+impl From<ConnectionHelp> for Cow<'static, str> {
+    fn from(_value: ConnectionHelp) -> Self {
+        Cow::Borrowed(connection_help())
     }
 }
 

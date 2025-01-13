@@ -4,7 +4,7 @@ use match_wire::{
     commands::{
         handler::{
             listener_routine, try_execute_command, AppDetails, CommandContextBuilder,
-            CommandHandle, GameDetails,
+            CommandHandle, GameDetails, Message,
         },
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
@@ -69,8 +69,9 @@ fn main() {
         );
 
         splash_res.unwrap().unwrap();
+
         #[cfg(not(debug_assertions))]
-        execute!(term, terminal::LeaveAlternateScreen).unwrap();
+        match_wire::leave_splash_screen().await;
 
         let try_start_listener = matches!(launch_res, Ok(Ok(_)));
 
@@ -209,24 +210,19 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
         }
     });
 
-    let mut stdout = std::io::stdout();
-
     let mut local_dir = std::env::var_os(LOCAL_DATA).map(PathBuf::from);
     let mut cache_res = None;
     if let Some(ref mut dir) = local_dir {
         if let Err(err) = check_app_dir_exists(dir) {
-            print_during_splash(&mut stdout, || eprintln!("{RED}{err}{WHITE}"));
+            print_during_splash(Message::error(err.to_string()));
         } else {
-            init_subscriber(dir).unwrap_or_else(|err| {
-                print_during_splash(&mut stdout, || eprintln!("{RED}{err}{WHITE}"))
-            });
+            init_subscriber(dir)
+                .unwrap_or_else(|err| print_during_splash(Message::error(err.to_string())));
             info!(name: LOG_ONLY, "App startup");
             cache_res = Some(read_cache(dir));
         }
     } else {
-        print_during_splash(&mut stdout, || {
-            eprintln!("{RED}Could not find %appdata%/local{WHITE}")
-        });
+        print_during_splash(Message::error("Could not find %appdata%/local"));
 
         #[cfg(debug_assertions)]
         init_subscriber(std::path::Path::new("")).unwrap();
@@ -238,25 +234,24 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
             let (connection_history, region_cache) = match cache_res {
                 Some(Ok(cache)) => return cache,
                 Some(Err(err)) => {
-                    print_during_splash(&mut stdout, || error!("{err}"));
+                    error!("{err}");
                     (err.connection_history, err.region_cache)
                 }
                 None => (None, None),
             };
-            print_during_splash(&mut stdout, || info!("Updating cache..."));
             let cache_file = build_cache(connection_history, region_cache)
                 .await
                 .unwrap_or_else(|(err, backup)| {
-                    print_during_splash(&mut stdout, || error!("{err}"));
+                    error!("{err}");
                     backup
                 });
             if let Some(cache) = cache_path.as_deref() {
                 match std::fs::File::create(cache) {
                     Ok(file) => match serde_json::to_writer_pretty(file, &cache_file) {
                         Ok(()) => info!(name: LOG_ONLY, "Cache saved locally"),
-                        Err(err) => print_during_splash(&mut stdout, || error!("{err}")),
+                        Err(err) => error!("{err}"),
                     },
-                    Err(err) => print_during_splash(&mut stdout, || error!("{err}")),
+                    Err(err) => error!("{err}"),
                 }
             }
             Cache::from(cache_file)
