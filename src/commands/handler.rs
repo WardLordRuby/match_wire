@@ -11,8 +11,8 @@ use crate::{
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         input::{
             line::{
-                AsyncCtxCallback, EventLoop, InitLineCallback, InputEventHook, InputHook,
-                InputHookErr, LineData, LineReader,
+                AsyncCallback, EventLoop, HookUID, InitLineCallback, InputEventHook, InputHook,
+                InputHookErr, LineData, LineReader, Print,
             },
             style::{RED, WHITE, YELLOW},
         },
@@ -29,6 +29,7 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Display,
+    io::{Stdout, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -52,8 +53,8 @@ pub enum Message {
     Warn(Cow<'static, str>),
 }
 
-impl Message {
-    pub fn print(&self) {
+impl Print for Message {
+    fn print(&self) {
         match self {
             Self::Str(msg) => println!("{msg}"),
             Self::Info(msg) => info!("{msg}"),
@@ -61,6 +62,9 @@ impl Message {
             Self::Err(msg) => error!("{msg}"),
         }
     }
+}
+
+impl Message {
     #[inline]
     pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
         Self::Str(value.into())
@@ -284,7 +288,7 @@ impl CommandContext {
     async fn try_send_cmd_from_hook<S: AsRef<str>>(
         &mut self,
         command: S,
-        input_hook_uid: usize,
+        input_hook_uid: HookUID,
     ) -> Result<Result<(), Cow<'static, str>>, InputHookErr> {
         let lock = self.check_h2m_connection().await.map_err(|err| {
             InputHookErr::new(input_hook_uid, format!("Could not send command: {err}"))
@@ -447,7 +451,7 @@ impl CommandContextBuilder {
 
 pub enum CommandHandle {
     Processed,
-    InsertHook(InputHook),
+    InsertHook(InputHook<CommandContext, Stdout>),
     Exit,
 }
 
@@ -642,8 +646,8 @@ impl CommandSender for RwLockReadGuard<'_, PTY> {
     }
 }
 
-impl LineReader<'_> {
-    pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: usize) {
+impl<T: Write> LineReader<CommandContext, T> {
+    pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: HookUID) {
         self.set_prompt(LineData::default_prompt());
         self.set_completion(true);
         if let Some(callback) = self.next_input_hook() {
@@ -654,7 +658,7 @@ impl LineReader<'_> {
         end_forward_logs(ctx);
     }
 
-    fn close_game_console(&mut self) -> (EventLoop, bool) {
+    fn close_game_console(&mut self) -> (EventLoop<CommandContext>, bool) {
         self.set_prompt(LineData::default_prompt());
         self.set_completion(true);
         (EventLoop::Callback(Box::new(end_forward_logs)), true)
@@ -680,69 +684,70 @@ async fn open_game_console(context: &mut CommandContext) -> CommandHandle {
         print!("{}", DisplayLogs(&history));
     }
 
-    let uid = InputHook::new_uid();
+    let uid = HookUID::new();
     let game_exe_name = context.game.game_file_name().into_owned();
 
-    let init: Box<InitLineCallback> = Box::new(|handle| {
+    let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
         handle.set_prompt(game_exe_name);
         handle.set_completion(false);
         Ok(())
     });
 
-    let input_hook: Box<InputEventHook> = Box::new(move |handle, event| match event {
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('c'),
-            modifiers: KeyModifiers::CONTROL,
-            ..
-        }) => {
-            if !handle.line.input().is_empty() {
-                handle.ctrl_c_line()?;
-                return Ok((EventLoop::Continue, false));
+    let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
+        Box::new(move |handle, event| match event {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => {
+                if !handle.line.input().is_empty() {
+                    handle.ctrl_c_line()?;
+                    return Ok((EventLoop::Continue, false));
+                }
+                Ok(handle.close_game_console())
             }
-            Ok(handle.close_game_console())
-        }
-        Event::Key(KeyEvent {
-            code: KeyCode::Char(c),
-            ..
-        }) => {
-            handle.insert_char(c);
-            Ok((EventLoop::Continue, false))
-        }
-        Event::Key(KeyEvent {
-            code: KeyCode::Backspace,
-            ..
-        }) => {
-            if handle.line.input().is_empty() {
-                return Ok(handle.close_game_console());
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                ..
+            }) => {
+                handle.insert_char(c);
+                Ok((EventLoop::Continue, false))
             }
-            handle.remove_char()?;
-            Ok((EventLoop::Continue, false))
-        }
-        Event::Key(KeyEvent {
-            code: KeyCode::Enter,
-            ..
-        }) => {
-            if handle.line.input().is_empty() {
+            Event::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                ..
+            }) => {
+                if handle.line.input().is_empty() {
+                    return Ok(handle.close_game_console());
+                }
+                handle.remove_char()?;
+                Ok((EventLoop::Continue, false))
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            }) => {
+                if handle.line.input().is_empty() {
+                    handle.new_line()?;
+                    return Ok((EventLoop::Continue, false));
+                }
+                let cmd = handle.line.take_input();
                 handle.new_line()?;
-                return Ok((EventLoop::Continue, false));
+
+                let send_user_cmd: Box<AsyncCallback<CommandContext>> = Box::new(move |context| {
+                    Box::pin(async move {
+                        context
+                            .try_send_cmd_from_hook(cmd, uid)
+                            .await?
+                            .unwrap_or_else(|err| error!("{err}"));
+                        Ok(())
+                    })
+                });
+
+                Ok((EventLoop::AsyncCallback(send_user_cmd), false))
             }
-            let cmd = handle.line.take_input();
-            handle.new_line()?;
-
-            let send_user_cmd: Box<AsyncCtxCallback> = Box::new(move |context| {
-                Box::pin(async move {
-                    context
-                        .try_send_cmd_from_hook(cmd, uid)
-                        .await?
-                        .unwrap_or_else(|err| error!("{err}"));
-                    Ok(())
-                })
-            });
-
-            Ok((EventLoop::AsyncCallback(send_user_cmd), false))
-        }
-        _ => Ok((EventLoop::Continue, false)),
-    });
+            _ => Ok((EventLoop::Continue, false)),
+        });
 
     CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
 }
@@ -777,30 +782,31 @@ async fn quit(context: &mut CommandContext) -> CommandHandle {
         context.game_name()
     );
 
-    let init: Box<InitLineCallback> = Box::new(|handle| {
+    let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
         handle.set_prompt(format!(
             "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
         ));
         Ok(())
     });
 
-    let input_hook: Box<InputEventHook> = Box::new(|handle, event| match event {
-        Event::Key(
-            KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
+    let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
+        Box::new(|handle, event| match event {
+            Event::Key(
+                KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }
+                | KeyEvent {
+                    code: KeyCode::Char('y'),
+                    ..
+                },
+            ) => Ok((EventLoop::Break, true)),
+            _ => {
+                handle.set_prompt(LineData::default_prompt());
+                Ok((EventLoop::Continue, true))
             }
-            | KeyEvent {
-                code: KeyCode::Char('y'),
-                ..
-            },
-        ) => Ok((EventLoop::Break, true)),
-        _ => {
-            handle.set_prompt(LineData::default_prompt());
-            Ok((EventLoop::Continue, true))
-        }
-    });
+        });
 
     CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
 }

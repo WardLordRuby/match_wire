@@ -2,9 +2,8 @@
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use match_wire::{
-        commands::launch_h2m::HostName, strip_ansi_private_modes, strip_ansi_sequences,
-    };
+    use match_wire::{commands::launch_h2m::HostName, strip_ansi_private_modes};
+    use strip_ansi::strip_ansi;
 
     #[test]
     fn parse_hostnames_h2m() {
@@ -73,7 +72,7 @@ mod tests {
         ];
 
         for (i, input) in INPUT.iter().enumerate() {
-            let parsed = strip_ansi_sequences(input);
+            let parsed = strip_ansi(input);
             assert_eq!(parsed, OUTPUT[i]);
         }
     }

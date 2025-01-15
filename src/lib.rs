@@ -316,12 +316,6 @@ pub fn parse_hostname(name: &str) -> String {
     host_name
 }
 
-pub fn strip_ansi_sequences(input: &str) -> Cow<'_, str> {
-    let re =
-        regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?(?:25[hl]|47[hl]|1049[hl])").unwrap();
-    re.replace_all(input, "")
-}
-
 pub fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
     let re = regex::Regex::new(r"\x1b\[\?(?:25[hl]|47[hl]|1049[hl])").unwrap();
     re.replace_all(input, "")
@@ -393,6 +387,8 @@ pub async fn leave_splash_screen() {
 
 #[cfg(debug_assertions)]
 pub fn print_during_splash(message: Message) {
+    use utils::input::line::Print;
+
     debug_assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
     message.print();
 }

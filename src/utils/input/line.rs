@@ -1,10 +1,6 @@
-use crate::{
-    commands::handler::{CommandContext, Message},
-    strip_ansi_sequences,
-    utils::input::{
-        completion::{CommandScheme, Completion, Direction},
-        style::PROMPT_END,
-    },
+use crate::utils::input::{
+    completion::{CommandScheme, Completion, Direction},
+    style::PROMPT_END,
 };
 use crossterm::{
     cursor,
@@ -17,48 +13,72 @@ use std::{
     collections::VecDeque,
     fmt::Display,
     future::Future,
-    io::{self, Stdout, Write},
+    io::{self, Write},
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use strip_ansi::strip_ansi;
+use tokio_stream::StreamExt;
 
-pub type InputEventHook = dyn Fn(&mut LineReader, Event) -> io::Result<(EventLoop, bool)>;
-pub type InitLineCallback = dyn FnOnce(&mut LineReader) -> io::Result<()>;
-pub type CtxCallback = dyn Fn(&mut CommandContext);
-pub type AsyncCtxCallback =
-    dyn for<'a> FnOnce(
-        &'a mut CommandContext,
-    ) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
+pub type InputEventHook<Ctx, W> =
+    dyn Fn(&mut LineReader<Ctx, W>, Event) -> io::Result<(EventLoop<Ctx>, bool)>;
+pub type InitLineCallback<Ctx, W> = dyn FnOnce(&mut LineReader<Ctx, W>) -> io::Result<()>;
+pub type Callback<Ctx> = dyn Fn(&mut Ctx);
+pub type AsyncCallback<Ctx> =
+    dyn for<'a> FnOnce(&'a mut Ctx) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
 
-pub struct LineReader<'a> {
+pub trait Print {
+    fn print(&self);
+}
+
+pub struct LineReader<Ctx, W: Write> {
     pub completion: Completion,
     pub line: LineData,
     history: History,
-    term: &'a mut Stdout,
+    term: W,
     /// (columns, rows)
     term_size: (u16, u16),
     uneventful: bool,
     cursor_at_start: bool,
     command_entered: bool,
-    input_hooks: VecDeque<InputHook>,
+    input_hooks: VecDeque<InputHook<Ctx, W>>,
 }
 
-pub struct InputHook {
-    uid: usize,
-    init: Option<Box<InitLineCallback>>,
-    event_hook: Box<InputEventHook>,
+pub struct InputHook<Ctx, W: Write> {
+    uid: HookUID,
+    init: Option<Box<InitLineCallback<Ctx, W>>>,
+    event_hook: Box<InputEventHook<Ctx, W>>,
+}
+
+static CALLBACK_UID: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct HookUID(usize);
+
+impl HookUID {
+    #[inline]
+    pub fn new() -> Self {
+        Self(CALLBACK_UID.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
+impl Default for HookUID {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct InputHookErr {
-    uid: usize,
+    uid: HookUID,
     err: String,
 }
 
 impl InputHookErr {
-    pub fn new(uid: usize, err: String) -> Self {
+    pub fn new(uid: HookUID, err: String) -> Self {
         InputHookErr { uid, err }
     }
-    pub fn uid(&self) -> usize {
+    pub fn uid(&self) -> HookUID {
         self.uid
     }
 }
@@ -69,15 +89,13 @@ impl Display for InputHookErr {
     }
 }
 
-static CALLBACK_UID: AtomicUsize = AtomicUsize::new(0);
-
-impl InputHook {
+impl<Ctx, W: Write> InputHook<Ctx, W> {
     pub fn from(
-        uid: usize,
-        init: Option<Box<InitLineCallback>>,
-        event_hook: Box<InputEventHook>,
+        uid: HookUID,
+        init: Option<Box<InitLineCallback<Ctx, W>>>,
+        event_hook: Box<InputEventHook<Ctx, W>>,
     ) -> Self {
-        assert_ne!(uid, CALLBACK_UID.load(Ordering::SeqCst));
+        assert_ne!(uid.0, CALLBACK_UID.load(Ordering::SeqCst));
         InputHook {
             uid,
             init,
@@ -86,24 +104,19 @@ impl InputHook {
     }
 
     pub fn with_new_uid(
-        init: Option<Box<InitLineCallback>>,
-        event_hook: Box<InputEventHook>,
+        init: Option<Box<InitLineCallback<Ctx, W>>>,
+        event_hook: Box<InputEventHook<Ctx, W>>,
     ) -> Self {
         InputHook {
-            uid: Self::new_uid(),
+            uid: HookUID::new(),
             init,
             event_hook,
         }
     }
 
     #[inline]
-    pub fn uid(&self) -> usize {
+    pub fn uid(&self) -> HookUID {
         self.uid
-    }
-
-    #[inline]
-    pub fn new_uid() -> usize {
-        CALLBACK_UID.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -132,7 +145,7 @@ impl LineData {
 
     #[inline]
     fn prompt_len(prompt: &str) -> u16 {
-        let stripped = strip_ansi_sequences(prompt);
+        let stripped = strip_ansi(prompt);
         stripped.chars().count() as u16 + PROMPT_END.chars().count() as u16
     }
 
@@ -184,21 +197,17 @@ pub struct History {
 // currently `CompletionState` only supports char events at line end
 // `CompletionState` will have to be carefully mannaged if cursor is moveable
 
-pub enum EventLoop {
+pub enum EventLoop<Ctx> {
     Continue,
-    AsyncCallback(Box<AsyncCtxCallback>),
-    Callback(Box<CtxCallback>),
+    AsyncCallback(Box<AsyncCallback<Ctx>>),
+    Callback(Box<Callback<Ctx>>),
     Break,
     TryProcessCommand,
 }
 
-impl<'a> LineReader<'a> {
-    pub fn new(
-        prompt: String,
-        term: &'a mut Stdout,
-        name_ctx: &'static CommandScheme,
-    ) -> io::Result<Self> {
-        let new = LineReader {
+impl<Ctx, W: Write> LineReader<Ctx, W> {
+    pub fn new(prompt: String, term: W, name_ctx: &'static CommandScheme) -> io::Result<Self> {
+        let mut new = LineReader {
             line: LineData::new(prompt),
             history: History::default(),
             term,
@@ -217,8 +226,6 @@ impl<'a> LineReader<'a> {
         &mut self,
         stream: &mut crossterm::event::EventStream,
     ) -> io::Result<()> {
-        use tokio_stream::StreamExt;
-
         let _ = tokio::time::timeout(tokio::time::Duration::from_millis(10), async {
             while stream.fuse().next().await.is_some() {}
         })
@@ -235,23 +242,23 @@ impl<'a> LineReader<'a> {
     }
 
     #[inline]
-    pub fn register_input_hook(&mut self, input_hook: InputHook) {
+    pub fn register_input_hook(&mut self, input_hook: InputHook<Ctx, W>) {
         self.input_hooks.push_back(input_hook);
     }
 
     #[inline]
     /// pops the first queued `input_hook`
-    pub fn pop_input_hook(&mut self) -> Option<InputHook> {
+    pub fn pop_input_hook(&mut self) -> Option<InputHook<Ctx, W>> {
         self.input_hooks.pop_front()
     }
 
     #[inline]
     /// references the first queued `input_hook`
-    pub fn next_input_hook(&mut self) -> Option<&InputHook> {
+    pub fn next_input_hook(&mut self) -> Option<&InputHook<Ctx, W>> {
         self.input_hooks.front()
     }
 
-    pub fn print_background_msg(&mut self, msg: Message) -> io::Result<()> {
+    pub fn print_background_msg(&mut self, msg: impl Print) -> io::Result<()> {
         let res = self.move_to_beginning(self.line_len());
         msg.print();
         res
@@ -435,7 +442,7 @@ impl<'a> LineReader<'a> {
         self.change_line(new_line)
     }
 
-    pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop> {
+    pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop<Ctx>> {
         if !self.input_hooks.is_empty() {
             if let Event::Key(KeyEvent {
                 kind: KeyEventKind::Press,

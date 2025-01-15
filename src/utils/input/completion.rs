@@ -1,7 +1,7 @@
 use crate::utils::input::line::LineReader;
 use std::{
     collections::{HashMap, HashSet},
-    io,
+    io::{self, Write},
     ops::Range,
 };
 
@@ -792,7 +792,7 @@ impl Completion {
     }
 }
 
-impl LineReader<'_> {
+impl<Ctx, W: Write> LineReader<Ctx, W> {
     #[inline]
     fn curr_token(&self) -> &str {
         &self.completion.input.ending.token

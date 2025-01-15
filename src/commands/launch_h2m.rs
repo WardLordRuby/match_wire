@@ -3,8 +3,8 @@ use crate::{
         filter::{try_get_info, GetInfoMetaData, Request, Sourced},
         handler::{CommandContext, Message},
     },
-    parse_hostname, strip_ansi_private_modes, strip_ansi_sequences,
-    utils::caching::Cache,
+    parse_hostname, strip_ansi_private_modes,
+    utils::{caching::Cache, input::line::Print},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +17,7 @@ use std::{
         Arc,
     },
 };
+use strip_ansi::strip_ansi;
 use tokio::sync::{mpsc::Sender, Mutex};
 use tracing::trace;
 use winapi::{
@@ -129,8 +130,7 @@ impl From<GetInfoMetaData> for HostRequestErr {
 
 impl HostName {
     pub fn from_browser(value: &[u16], version: f64) -> Result<HostNameRequestMeta, String> {
-        let input_string = String::from_utf16_lossy(value);
-        let stripped = strip_ansi_sequences(&input_string);
+        let stripped = strip_ansi(&String::from_utf16_lossy(value));
 
         let (host_name, socket_addr) = if version < 1.0 {
             let host_name = stripped
