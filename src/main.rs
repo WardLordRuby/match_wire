@@ -14,7 +14,7 @@ use match_wire::{
         display::DisplayPanic,
         input::{
             completion::CommandScheme,
-            line::{EventLoop, LineReader},
+            line::{EventLoop, LineReaderBuilder},
             style::{RED, WHITE},
         },
         subscriber::init_subscriber,
@@ -96,7 +96,13 @@ fn main() {
         execute!(term, cursor::Show).unwrap();
 
         let mut reader = EventStream::new();
-        let mut line_handle = LineReader::new(String::new(), term, &COMPLETION).unwrap();
+        let mut line_handle = LineReaderBuilder::new()
+            .terminal(term)
+            .terminal_size(terminal::size().unwrap())
+            .with_completion(&COMPLETION)
+            .with_custom_quit_command("quit")
+            .build()
+            .expect("all required inputs are provided & input terminal accepts crossterm commands");
 
         terminal::enable_raw_mode().unwrap();
 

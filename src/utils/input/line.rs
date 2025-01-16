@@ -6,7 +6,7 @@ use crossterm::{
     cursor,
     event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     style::Stylize,
-    terminal::{self, Clear, ClearType::FromCursorDown},
+    terminal::{Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
 use std::{
@@ -39,9 +39,91 @@ pub struct LineReader<Ctx, W: Write> {
     /// (columns, rows)
     term_size: (u16, u16),
     uneventful: bool,
+    custom_quit: Option<String>,
     cursor_at_start: bool,
     command_entered: bool,
     input_hooks: VecDeque<InputHook<Ctx, W>>,
+}
+
+pub struct LineReaderBuilder<W: Write> {
+    completion: Option<&'static CommandScheme>,
+    custom_quit: Option<String>,
+    term: Option<W>,
+    term_size: Option<(u16, u16)>,
+    prompt: Option<String>,
+    prompt_end: Option<&'static str>,
+}
+
+impl<W: Write> Default for LineReaderBuilder<W> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<W: Write> LineReaderBuilder<W> {
+    pub fn new() -> Self {
+        LineReaderBuilder {
+            completion: None,
+            custom_quit: None,
+            term: None,
+            term_size: None,
+            prompt: None,
+            prompt_end: None,
+        }
+    }
+
+    /// `LineReader` must include a terminal that is compatable with executing commands via the `crossterm` crate.
+    pub fn terminal(mut self, term: W) -> Self {
+        self.term = Some(term);
+        self
+    }
+
+    /// `LineReader` must include a terminal size so rendering the window is displayed correctly.  
+    /// `size`: (columns, rows)
+    pub fn terminal_size(mut self, size: (u16, u16)) -> Self {
+        self.term_size = Some(size);
+        self
+    }
+
+    pub fn with_completion(mut self, completion: &'static CommandScheme) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+
+    pub fn with_prompt(mut self, prompt: &str) -> Self {
+        self.prompt = Some(String::from(prompt));
+        self
+    }
+
+    pub fn with_custom_prompt_separator(mut self, separator: &'static str) -> Self {
+        self.prompt_end = Some(separator);
+        self
+    }
+
+    pub fn with_custom_quit_command(mut self, quit_cmd: &str) -> Self {
+        self.custom_quit = Some(String::from(quit_cmd));
+        self
+    }
+
+    pub fn build<Ctx>(self) -> io::Result<LineReader<Ctx, W>> {
+        let mut term = self.term.ok_or(io::Error::other("terminal is required"))?;
+        let term_size = self
+            .term_size
+            .ok_or(io::Error::other("terminal size is required"))?;
+        term.queue(cursor::EnableBlinking)?;
+        Ok(LineReader {
+            line: LineData::new(self.prompt, self.prompt_end, self.completion.is_some()),
+            history: History::default(),
+            term,
+            term_size,
+            uneventful: false,
+            cursor_at_start: false,
+            command_entered: true,
+            custom_quit: self.custom_quit,
+            completion: self.completion.map(Completion::from).unwrap_or_default(),
+            input_hooks: VecDeque::new(),
+        })
+    }
 }
 
 pub struct InputHook<Ctx, W: Write> {
@@ -123,6 +205,7 @@ impl<Ctx, W: Write> InputHook<Ctx, W> {
 #[derive(Default)]
 pub struct LineData {
     prompt: String,
+    prompt_end: &'static str,
     prompt_len: u16,
     input: String,
     len: u16,
@@ -131,14 +214,17 @@ pub struct LineData {
 }
 
 impl LineData {
-    fn new(mut prompt: String) -> Self {
-        if prompt.is_empty() {
-            prompt = LineData::default_prompt();
-        }
+    fn new(
+        prompt: Option<String>,
+        prompt_separator: Option<&'static str>,
+        completion_enabled: bool,
+    ) -> Self {
+        let prompt = prompt.unwrap_or_else(Self::default_prompt);
         LineData {
             prompt_len: LineData::prompt_len(&prompt),
+            prompt_end: prompt_separator.unwrap_or(PROMPT_END),
             prompt,
-            comp_enabled: true,
+            comp_enabled: completion_enabled,
             ..Default::default()
         }
     }
@@ -167,6 +253,11 @@ impl LineData {
     #[inline]
     pub fn prompt(&self) -> &str {
         &self.prompt
+    }
+
+    #[inline]
+    pub fn prompt_separator(&self) -> &'static str {
+        self.prompt_end
     }
 
     #[inline]
@@ -206,22 +297,6 @@ pub enum EventLoop<Ctx> {
 }
 
 impl<Ctx, W: Write> LineReader<Ctx, W> {
-    pub fn new(prompt: String, term: W, name_ctx: &'static CommandScheme) -> io::Result<Self> {
-        let mut new = LineReader {
-            line: LineData::new(prompt),
-            history: History::default(),
-            term,
-            term_size: terminal::size().unwrap(),
-            uneventful: false,
-            cursor_at_start: false,
-            command_entered: true,
-            completion: Completion::from(name_ctx),
-            input_hooks: VecDeque::new(),
-        };
-        new.term.queue(cursor::EnableBlinking)?;
-        Ok(new)
-    }
-
     pub async fn clear_unwanted_inputs(
         &mut self,
         stream: &mut crossterm::event::EventStream,
@@ -271,6 +346,9 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
 
     #[inline]
     pub fn set_completion(&mut self, enabled: bool) {
+        if self.completion.is_empty() {
+            return;
+        }
         self.line.comp_enabled = enabled
     }
 
@@ -466,9 +544,12 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                 ..
             }) => {
                 if self.line.input.is_empty() {
-                    self.line.input.push_str("quit");
-                    self.enter_command()?;
-                    return Ok(EventLoop::TryProcessCommand);
+                    if let Some(quit_cmd) = self.custom_quit.as_deref() {
+                        self.line.input.push_str(quit_cmd);
+                        self.enter_command()?;
+                        return Ok(EventLoop::TryProcessCommand);
+                    }
+                    return Ok(EventLoop::Break);
                 }
                 self.ctrl_c_line()?;
                 Ok(EventLoop::Continue)

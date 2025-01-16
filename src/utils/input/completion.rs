@@ -387,6 +387,7 @@ impl From<&'static CommandScheme> for Completion {
 /// for the user with any given input. `Completion` also holds the current line state in field `input`  
 /// `CompletionState` aims to provide accurate slices into the string `LineReader.line.input`  
 /// since this struct is nested within `LineReader` we manage str slicing by indexes and lens  
+#[derive(Default)]
 pub struct Completion {
     recomendations: Vec<&'static str>,
     input: CompletionState,
@@ -615,6 +616,11 @@ impl SliceData {
 }
 
 impl Completion {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.rec_list.is_empty()
+    }
+
     fn rec_data_from_unchecked(&self, recomendation_i: &i8) -> &RecData {
         if !self.indexer.multiple {
             return self.rec_list[self.indexer.list.0];

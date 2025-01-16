@@ -88,7 +88,7 @@ impl Display for LineData {
             f,
             "{WHITE}{}{}{}",
             self.prompt().bold(),
-            PROMPT_END
+            self.prompt_separator()
                 .bold()
                 .stylize()
                 .with(if self.completion_enabled() {
