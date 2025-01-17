@@ -2,10 +2,7 @@ use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
     await_user_for_end, break_if, check_app_dir_exists,
     commands::{
-        handler::{
-            listener_routine, try_execute_command, AppDetails, CommandContext, CommandHandle,
-            GameDetails, Message,
-        },
+        handler::{AppDetails, CommandContext, CommandHandle, GameDetails, Message},
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
@@ -73,13 +70,11 @@ fn main() {
         #[cfg(not(debug_assertions))]
         match_wire::leave_splash_screen().await;
 
-        let try_start_listener = matches!(launch_res, Ok(Ok(_)));
-
-        let (mut command_context, mut message_rx, mut update_cache_rx) =
+        let (mut command_context, mut message_rx, mut update_cache_rx, try_start_listener) =
             CommandContext::new(launch_res, app_ver_res, hmw_hash_res, cache_res, startup_data.game, startup_data.local_dir);
 
         if try_start_listener {
-            listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!("{err}"));
+            command_context.listener_routine().await.unwrap_or_else(|err| warn!("{err}"));
         }
 
         let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
@@ -130,7 +125,7 @@ fn main() {
                                     }
                                 },
                                 Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
-                                    match try_execute_command(user_tokens, &mut command_context).await {
+                                    match command_context.try_execute_command(user_tokens).await {
                                         CommandHandle::Processed => (),
                                         CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
                                         CommandHandle::Exit => break,

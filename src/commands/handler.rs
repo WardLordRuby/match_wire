@@ -3,7 +3,6 @@ use crate::{
     commands::{
         filter::build_favorites,
         launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
-        reconnect::reconnect,
     },
     exe_details,
     utils::{
@@ -189,6 +188,12 @@ type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
 type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
 type HmwHashResult = Result<reqwest::Result<Result<String, &'static str>>, JoinError>;
 
+pub enum CommandHandle {
+    Processed,
+    InsertHook(InputHook<CommandContext, Stdout>),
+    Exit,
+}
+
 pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
     cache_needs_update: Arc<AtomicBool>,
@@ -209,9 +214,9 @@ impl CommandContext {
         cache: Result<Cache, JoinError>,
         mut game: GameDetails,
         local_dir: Option<PathBuf>,
-    ) -> (Self, Receiver<Message>, Receiver<bool>) {
-        let handle = if let Ok(Ok(handle)) = game_launch {
-            Some(handle)
+    ) -> (Self, Receiver<Message>, Receiver<bool>, bool) {
+        let (handle, try_start_listener) = if let Ok(Ok(handle)) = game_launch {
+            (Some(handle), true)
         } else {
             let err = match game_launch {
                 Err(join_err) => join_err.to_string(),
@@ -220,7 +225,7 @@ impl CommandContext {
             };
             error!("Could not launch H2M as child process: {err}");
             println!("{ConnectionHelp}");
-            None
+            (None, false)
         };
 
         let app = if let Ok(Ok(app)) = app_ver {
@@ -240,13 +245,13 @@ impl CommandContext {
             AppDetails::default()
         };
 
-        game.hash_latest = if let Ok(Ok(Ok(hash_latest))) = hmw_hash {
+        if let Ok(Ok(Ok(hash_latest))) = hmw_hash {
             if let Some(ref hash_curr) = game.hash_curr {
                 if hash_curr != &hash_latest {
                     info!("{HmwUpdateHelp}")
                 }
             }
-            Some(hash_latest)
+            game.hash_latest = Some(hash_latest);
         } else {
             let err = match hmw_hash {
                 Ok(Ok(Err(err))) => Cow::Borrowed(err),
@@ -255,7 +260,6 @@ impl CommandContext {
                 Ok(Ok(Ok(_))) => unreachable!("by happy path"),
             };
             error!("Could not get latest HMW version: {err}");
-            None
         };
 
         let cache_needs_update = Arc::new(AtomicBool::new(false));
@@ -297,6 +301,7 @@ impl CommandContext {
             },
             message_rx,
             update_cache_rx,
+            try_start_listener,
         )
     }
     #[inline]
@@ -399,176 +404,305 @@ impl CommandContext {
 
         Ok(game_console.send_cmd(command))
     }
-}
 
-pub enum CommandHandle {
-    Processed,
-    InsertHook(InputHook<CommandContext, Stdout>),
-    Exit,
-}
-
-pub async fn try_execute_command(
-    mut user_tokens: Vec<String>,
-    context: &mut CommandContext,
-) -> CommandHandle {
-    let mut input_tokens = Vec::with_capacity(user_tokens.len() + 1);
-    input_tokens.push(String::new());
-    input_tokens.append(&mut user_tokens);
-    match UserCommand::try_parse_from(input_tokens) {
-        Ok(cli) => match cli.command {
-            Command::Filter { args } => new_favorites_with(args, context).await,
-            Command::Reconnect { args } => reconnect(args, context).await,
-            Command::Launch => launch_handler(context).await,
-            Command::Cache { option } => modify_cache(context, option).await,
-            Command::Console => open_game_console(context).await,
-            Command::GameDir => open_dir(context.game.path.parent()),
-            Command::LocalEnv => open_dir(context.local_dir.as_deref()),
-            Command::Version => print_version(&context.app, &context.game),
-            Command::Quit => quit(context).await,
-        },
-        Err(err) => {
-            if let Err(prt_err) = err.print() {
-                error!("{err} {prt_err}");
+    pub async fn try_execute_command(&mut self, mut user_tokens: Vec<String>) -> CommandHandle {
+        let mut input_tokens = Vec::with_capacity(user_tokens.len() + 1);
+        input_tokens.push(String::new());
+        input_tokens.append(&mut user_tokens);
+        match UserCommand::try_parse_from(input_tokens) {
+            Ok(cli) => match cli.command {
+                Command::Filter { args } => self.new_favorites_with(args).await,
+                Command::Reconnect { args } => self.reconnect(args).await,
+                Command::Launch => self.launch_handler().await,
+                Command::Cache { option } => self.modify_cache(option).await,
+                Command::Console => self.open_game_console().await,
+                Command::GameDir => open_dir(self.game.path.parent()),
+                Command::LocalEnv => open_dir(self.local_dir.as_deref()),
+                Command::Version => self.print_version(),
+                Command::Quit => self.quit().await,
+            },
+            Err(err) => {
+                if let Err(prt_err) = err.print() {
+                    error!("{err} {prt_err}");
+                }
+                CommandHandle::Processed
             }
-            CommandHandle::Processed
         }
     }
-}
 
-async fn new_favorites_with(args: Option<Filters>, context: &CommandContext) -> CommandHandle {
-    let cache = context.cache();
-    let exe_dir = context.game.path.parent().expect("has parent");
-
-    let new_entries_found = build_favorites(
-        exe_dir,
-        &args.unwrap_or_default(),
-        cache,
-        context.game.version.unwrap_or(1.0),
-    )
-    .await
-    .unwrap_or_else(|err| {
-        error!("{err}");
-        false
-    });
-    if new_entries_found {
-        context.cache_needs_update().store(true, Ordering::Release);
+    pub async fn launch_handler(&mut self) -> CommandHandle {
+        match launch_h2m_pseudo(&self.game.path) {
+            Ok(conpty) => {
+                info!("Launching {}...", self.game_name());
+                self.game.update(exe_details(&self.game.path));
+                self.init_pty(conpty);
+                if let Err(err) = self.listener_routine().await {
+                    error!("{err}")
+                }
+            }
+            Err(err) => match err {
+                LaunchError::Running(msg) => {
+                    if self.check_h2m_connection().await.is_ok() {
+                        info!("Connection already active")
+                    } else {
+                        error!("{msg}");
+                        println!("{ConnectionHelp}");
+                    }
+                }
+                LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),
+            },
+        };
+        CommandHandle::Processed
     }
 
-    CommandHandle::Processed
-}
+    /// if calling manually you are responsible for setting pty inside of context
+    pub async fn listener_routine(&mut self) -> Result<(), String> {
+        initalize_listener(self).await?;
+        let handle = self
+            .pty_handle()
+            .expect("initalize_listener returned early if this is `None`");
+        let msg_sender = self.msg_sender();
+        let game_name = self.game_name();
+        tokio::spawn(async move {
+            const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
+            let mut attempt = 1;
+            let messages = loop {
+                tokio::time::sleep(SLEEP * attempt).await;
+                match handle.read().await.is_alive() {
+                    Ok(true) => {
+                        if attempt == 3 {
+                            break vec![Message::info(format!("Connected to {game_name} console"))];
+                        }
+                    }
+                    Ok(false) => {
+                        break vec![
+                            Message::error(format!(
+                                "Could not establish connection to {game_name}"
+                            )),
+                            Message::str(ConnectionHelp),
+                        ];
+                    }
+                    Err(err) => break vec![Message::error(err.to_string_lossy().to_string())],
+                }
+                attempt += 1;
+            };
 
-async fn modify_cache(context: &CommandContext, arg: CacheCmd) -> CommandHandle {
-    let Some(ref local_dir) = context.local_dir else {
-        error!("Can not create cache with out a valid save directory");
-        return CommandHandle::Processed;
-    };
+            for msg in messages {
+                msg_sender
+                    .send(msg)
+                    .await
+                    .unwrap_or_else(|err| error!("{err}"));
+            }
+        });
+        Ok(())
+    }
 
-    let cache_file = match arg {
-        CacheCmd::Update => {
-            let cache_arc = context.cache();
-            let mut cache = cache_arc.lock().await;
+    async fn new_favorites_with(&self, args: Option<Filters>) -> CommandHandle {
+        let cache = self.cache();
+        let exe_dir = self.game.path.parent().expect("has parent");
 
-            match build_cache(
-                Some(std::mem::take(&mut cache.connection_history)),
-                Some(std::mem::take(&mut cache.ip_to_region)),
-            )
-            .await
-            {
+        let new_entries_found = build_favorites(
+            exe_dir,
+            &args.unwrap_or_default(),
+            cache,
+            self.game.version.unwrap_or(1.0),
+        )
+        .await
+        .unwrap_or_else(|err| {
+            error!("{err}");
+            false
+        });
+        if new_entries_found {
+            self.cache_needs_update().store(true, Ordering::Release);
+        }
+
+        CommandHandle::Processed
+    }
+
+    fn print_version(&self) -> CommandHandle {
+        println!("{}", self.app);
+        if self.game.version.is_some() || self.game.hash_curr.is_some() {
+            println!("{}", self.game)
+        }
+        CommandHandle::Processed
+    }
+
+    async fn modify_cache(&self, arg: CacheCmd) -> CommandHandle {
+        let Some(ref local_dir) = self.local_dir else {
+            error!("Can not create cache with out a valid save directory");
+            return CommandHandle::Processed;
+        };
+
+        let cache_file = match arg {
+            CacheCmd::Update => {
+                let cache_arc = self.cache();
+                let mut cache = cache_arc.lock().await;
+
+                match build_cache(
+                    Some(std::mem::take(&mut cache.connection_history)),
+                    Some(std::mem::take(&mut cache.ip_to_region)),
+                )
+                .await
+                {
+                    Ok(data) => data,
+                    Err((err, backup)) => {
+                        cache.connection_history = backup.connection_history;
+                        cache.ip_to_region = backup.cache.regions;
+                        error!("{err}, cache remains unchanged");
+                        return CommandHandle::Processed;
+                    }
+                }
+            }
+            CacheCmd::Reset => match build_cache(None, None).await {
                 Ok(data) => data,
-                Err((err, backup)) => {
-                    cache.connection_history = backup.connection_history;
-                    cache.ip_to_region = backup.cache.regions;
+                Err((err, _)) => {
                     error!("{err}, cache remains unchanged");
                     return CommandHandle::Processed;
                 }
-            }
-        }
-        CacheCmd::Reset => match build_cache(None, None).await {
-            Ok(data) => data,
-            Err((err, _)) => {
-                error!("{err}, cache remains unchanged");
-                return CommandHandle::Processed;
-            }
-        },
-    };
-
-    match std::fs::File::create(local_dir.join(CACHED_DATA)) {
-        Ok(file) => {
-            if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
-                error!("{err}")
-            }
-        }
-        Err(err) => error!("{err}"),
-    }
-    let cache = context.cache();
-    let mut cache = cache.lock().await;
-    *cache = Cache::from(cache_file);
-    CommandHandle::Processed
-}
-
-pub async fn launch_handler(context: &mut CommandContext) -> CommandHandle {
-    match launch_h2m_pseudo(&context.game.path) {
-        Ok(conpty) => {
-            info!("Launching {}...", context.game_name());
-            context.game.update(exe_details(&context.game.path));
-            context.init_pty(conpty);
-            if let Err(err) = listener_routine(context).await {
-                error!("{err}")
-            }
-        }
-        Err(err) => match err {
-            LaunchError::Running(msg) => {
-                if context.check_h2m_connection().await.is_ok() {
-                    info!("Connection already active")
-                } else {
-                    error!("{msg}");
-                    println!("{ConnectionHelp}");
-                }
-            }
-            LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),
-        },
-    };
-    CommandHandle::Processed
-}
-
-/// if calling manually you are responsible for setting pty inside of context
-pub async fn listener_routine(context: &mut CommandContext) -> Result<(), String> {
-    initalize_listener(context).await?;
-    let handle = context
-        .pty_handle()
-        .expect("initalize_listener returned early if this is `None`");
-    let msg_sender = context.msg_sender();
-    let game_name = context.game_name();
-    tokio::spawn(async move {
-        const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
-        let mut attempt = 1;
-        let messages = loop {
-            tokio::time::sleep(SLEEP * attempt).await;
-            match handle.read().await.is_alive() {
-                Ok(true) => {
-                    if attempt == 3 {
-                        break vec![Message::info(format!("Connected to {game_name} console"))];
-                    }
-                }
-                Ok(false) => {
-                    break vec![
-                        Message::error(format!("Could not establish connection to {game_name}")),
-                        Message::str(ConnectionHelp),
-                    ];
-                }
-                Err(err) => break vec![Message::error(err.to_string_lossy().to_string())],
-            }
-            attempt += 1;
+            },
         };
 
-        for msg in messages {
-            msg_sender
-                .send(msg)
-                .await
-                .unwrap_or_else(|err| error!("{err}"));
+        match std::fs::File::create(local_dir.join(CACHED_DATA)) {
+            Ok(file) => {
+                if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
+                    error!("{err}")
+                }
+            }
+            Err(err) => error!("{err}"),
         }
-    });
-    Ok(())
+        let cache = self.cache();
+        let mut cache = cache.lock().await;
+        *cache = Cache::from(cache_file);
+        CommandHandle::Processed
+    }
+
+    async fn open_game_console(&mut self) -> CommandHandle {
+        if self.check_h2m_connection().await.is_err() || !h2m_running() {
+            let history = self.h2m_console_history.lock().await;
+            if !history.is_empty() {
+                println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                print!("{}", DisplayLogs(&history));
+            } else {
+                println!("{YELLOW}No active connection to H2M{WHITE}");
+            }
+            return CommandHandle::Processed;
+        }
+
+        {
+            let history = self.h2m_console_history.lock().await;
+            self.forward_logs.store(true, Ordering::SeqCst);
+            print!("{}", DisplayLogs(&history));
+        }
+
+        let uid = HookUID::new();
+        let game_exe_name = self.game.game_file_name().into_owned();
+
+        let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
+            handle.set_prompt(game_exe_name);
+            handle.set_completion(false);
+            Ok(())
+        });
+
+        let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
+            Box::new(move |handle, event| match event {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }) => {
+                    if !handle.line.input().is_empty() {
+                        handle.ctrl_c_line()?;
+                        return Ok((EventLoop::Continue, false));
+                    }
+                    Ok(handle.close_game_console())
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(c),
+                    ..
+                }) => {
+                    handle.insert_char(c);
+                    Ok((EventLoop::Continue, false))
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Backspace,
+                    ..
+                }) => {
+                    if handle.line.input().is_empty() {
+                        return Ok(handle.close_game_console());
+                    }
+                    handle.remove_char()?;
+                    Ok((EventLoop::Continue, false))
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    ..
+                }) => {
+                    if handle.line.input().is_empty() {
+                        handle.new_line()?;
+                        return Ok((EventLoop::Continue, false));
+                    }
+                    let cmd = handle.line.take_input();
+                    handle.new_line()?;
+
+                    let send_user_cmd: Box<AsyncCallback<CommandContext>> =
+                        Box::new(move |context| {
+                            Box::pin(async move {
+                                context
+                                    .try_send_cmd_from_hook(cmd, uid)
+                                    .await?
+                                    .unwrap_or_else(|err| error!("{err}"));
+                                Ok(())
+                            })
+                        });
+
+                    Ok((EventLoop::AsyncCallback(send_user_cmd), false))
+                }
+                _ => Ok((EventLoop::Continue, false)),
+            });
+
+        CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
+    }
+
+    async fn quit(&mut self) -> CommandHandle {
+        if self.check_h2m_connection().await.is_err() || !h2m_running() {
+            return CommandHandle::Exit;
+        }
+
+        println!(
+            "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
+            env!("CARGO_PKG_NAME"),
+            self.game_name()
+        );
+
+        let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
+            handle.set_prompt(format!(
+                "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
+            ));
+            Ok(())
+        });
+
+        let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
+            Box::new(|handle, event| match event {
+                Event::Key(
+                    KeyEvent {
+                        code: KeyCode::Char('c'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    }
+                    | KeyEvent {
+                        code: KeyCode::Char('y'),
+                        ..
+                    },
+                ) => Ok((EventLoop::Break, true)),
+                _ => {
+                    handle.set_prompt(LineData::default_prompt());
+                    Ok((EventLoop::Continue, true))
+                }
+            });
+
+        CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
+    }
 }
 
 #[inline]
@@ -618,93 +752,6 @@ impl<W: Write> LineReader<CommandContext, W> {
     }
 }
 
-async fn open_game_console(context: &mut CommandContext) -> CommandHandle {
-    if context.check_h2m_connection().await.is_err() || !h2m_running() {
-        let history = context.h2m_console_history.lock().await;
-        if !history.is_empty() {
-            println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            print!("{}", DisplayLogs(&history));
-        } else {
-            println!("{YELLOW}No active connection to H2M{WHITE}");
-        }
-        return CommandHandle::Processed;
-    }
-
-    {
-        let history = context.h2m_console_history.lock().await;
-        context.forward_logs.store(true, Ordering::SeqCst);
-        print!("{}", DisplayLogs(&history));
-    }
-
-    let uid = HookUID::new();
-    let game_exe_name = context.game.game_file_name().into_owned();
-
-    let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
-        handle.set_prompt(game_exe_name);
-        handle.set_completion(false);
-        Ok(())
-    });
-
-    let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-        Box::new(move |handle, event| match event {
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }) => {
-                if !handle.line.input().is_empty() {
-                    handle.ctrl_c_line()?;
-                    return Ok((EventLoop::Continue, false));
-                }
-                Ok(handle.close_game_console())
-            }
-            Event::Key(KeyEvent {
-                code: KeyCode::Char(c),
-                ..
-            }) => {
-                handle.insert_char(c);
-                Ok((EventLoop::Continue, false))
-            }
-            Event::Key(KeyEvent {
-                code: KeyCode::Backspace,
-                ..
-            }) => {
-                if handle.line.input().is_empty() {
-                    return Ok(handle.close_game_console());
-                }
-                handle.remove_char()?;
-                Ok((EventLoop::Continue, false))
-            }
-            Event::Key(KeyEvent {
-                code: KeyCode::Enter,
-                ..
-            }) => {
-                if handle.line.input().is_empty() {
-                    handle.new_line()?;
-                    return Ok((EventLoop::Continue, false));
-                }
-                let cmd = handle.line.take_input();
-                handle.new_line()?;
-
-                let send_user_cmd: Box<AsyncCallback<CommandContext>> = Box::new(move |context| {
-                    Box::pin(async move {
-                        context
-                            .try_send_cmd_from_hook(cmd, uid)
-                            .await?
-                            .unwrap_or_else(|err| error!("{err}"));
-                        Ok(())
-                    })
-                });
-
-                Ok((EventLoop::AsyncCallback(send_user_cmd), false))
-            }
-            _ => Ok((EventLoop::Continue, false)),
-        });
-
-    CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
-}
-
 fn open_dir(path: Option<&Path>) -> CommandHandle {
     if let Some(dir) = path {
         if let Err(err) = std::process::Command::new("explorer").arg(dir).spawn() {
@@ -714,52 +761,4 @@ fn open_dir(path: Option<&Path>) -> CommandHandle {
         error!("Could not find local dir");
     }
     CommandHandle::Processed
-}
-
-fn print_version(app: &AppDetails, game: &GameDetails) -> CommandHandle {
-    println!("{app}");
-    if game.version.is_some() || game.hash_curr.is_some() {
-        println!("{game}")
-    }
-    CommandHandle::Processed
-}
-
-async fn quit(context: &mut CommandContext) -> CommandHandle {
-    if context.check_h2m_connection().await.is_err() || !h2m_running() {
-        return CommandHandle::Exit;
-    }
-
-    println!(
-        "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
-        env!("CARGO_PKG_NAME"),
-        context.game_name()
-    );
-
-    let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
-        handle.set_prompt(format!(
-            "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
-        ));
-        Ok(())
-    });
-
-    let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-        Box::new(|handle, event| match event {
-            Event::Key(
-                KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }
-                | KeyEvent {
-                    code: KeyCode::Char('y'),
-                    ..
-                },
-            ) => Ok((EventLoop::Break, true)),
-            _ => {
-                handle.set_prompt(LineData::default_prompt());
-                Ok((EventLoop::Continue, true))
-            }
-        });
-
-    CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
 }

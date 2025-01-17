@@ -67,59 +67,63 @@ fn display_history<'a>(history: &'a [HostName], host_to_connect: &'a HashMap<Str
     println!("{}", DisplayHistory(history, &ips));
 }
 
-pub async fn reconnect(args: HistoryArgs, context: &mut CommandContext) -> CommandHandle {
-    let cache_arc = context.cache();
-    let mut cache = cache_arc.lock().await;
-    if cache.connection_history.is_empty() {
-        info!("No joined servers in history, connect to a server to add it to history");
-        return CommandHandle::Processed;
-    }
-    if args.history {
-        display_history(&cache.connection_history, &cache.host_to_connect);
-        return CommandHandle::Processed;
-    }
-    let lock = match context.check_h2m_connection().await {
-        Ok(lock) => lock,
-        Err(err) => {
-            error!("{err}");
-            println!("{ConnectionHelp}");
+impl CommandContext {
+    pub async fn reconnect(&mut self, args: HistoryArgs) -> CommandHandle {
+        let cache_arc = self.cache();
+        let mut cache = cache_arc.lock().await;
+        if cache.connection_history.is_empty() {
+            info!("No joined servers in history, connect to a server to add it to history");
             return CommandHandle::Processed;
         }
-    };
-
-    let mut target = cache.connection_history.len() - 1;
-    let mut modify_cache = false;
-    if let Some(num) = args.connect.map(|n| n as usize) {
-        if num > 1 {
-            if num > cache.connection_history.len() {
-                error!("{}", DisplayHistoryErr(cache.connection_history.len()));
+        if args.history {
+            display_history(&cache.connection_history, &cache.host_to_connect);
+            return CommandHandle::Processed;
+        }
+        let lock = match self.check_h2m_connection().await {
+            Ok(lock) => lock,
+            Err(err) => {
+                error!("{err}");
+                println!("{ConnectionHelp}");
                 return CommandHandle::Processed;
             }
-            (target, modify_cache) = (cache.connection_history.len() - num, true);
+        };
+
+        let mut target = cache.connection_history.len() - 1;
+        let mut modify_cache = false;
+        if let Some(num) = args.connect.map(|n| n as usize) {
+            if num > 1 {
+                if num > cache.connection_history.len() {
+                    error!("{}", DisplayHistoryErr(cache.connection_history.len()));
+                    return CommandHandle::Processed;
+                }
+                (target, modify_cache) = (cache.connection_history.len() - num, true);
+            }
         }
-    }
-    let Some(&ip_port) = cache
-        .host_to_connect
-        .get(&cache.connection_history[target].raw)
-    else {
-        error!("Could not find server in cache");
-        println!("use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server");
-        return CommandHandle::Processed;
-    };
+        let Some(&ip_port) = cache
+            .host_to_connect
+            .get(&cache.connection_history[target].raw)
+        else {
+            error!("Could not find server in cache");
+            println!(
+                "use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server"
+            );
+            return CommandHandle::Processed;
+        };
 
-    if let Err(err) = connect_to(ip_port, &lock).await {
-        error!("{err}");
-        return CommandHandle::Processed;
-    }
+        if let Err(err) = connect_to(ip_port, &lock).await {
+            error!("{err}");
+            return CommandHandle::Processed;
+        }
 
-    info!(name: LOG_ONLY, "Connected to {ip_port}");
+        info!(name: LOG_ONLY, "Connected to {ip_port}");
 
-    if modify_cache {
-        let entry = cache.connection_history.remove(target);
-        cache.connection_history.push(entry);
-        context.cache_needs_update().store(true, Ordering::SeqCst);
+        if modify_cache {
+            let entry = cache.connection_history.remove(target);
+            cache.connection_history.push(entry);
+            self.cache_needs_update().store(true, Ordering::SeqCst);
+        }
+        CommandHandle::Processed
     }
-    CommandHandle::Processed
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
