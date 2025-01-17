@@ -13,7 +13,7 @@ use std::{
     collections::VecDeque,
     fmt::Display,
     future::Future,
-    io::{self, Write},
+    io::{self, ErrorKind, Write},
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -39,28 +39,35 @@ pub struct LineReader<Ctx, W: Write> {
     /// (columns, rows)
     term_size: (u16, u16),
     uneventful: bool,
-    custom_quit: Option<String>,
+    custom_quit: Option<Vec<String>>,
     cursor_at_start: bool,
     command_entered: bool,
     input_hooks: VecDeque<InputHook<Ctx, W>>,
 }
 
-pub struct LineReaderBuilder<W: Write> {
+pub struct LineReaderBuilder<'a, W: Write> {
     completion: Option<&'static CommandScheme>,
-    custom_quit: Option<String>,
+    custom_quit: Option<&'a str>,
     term: Option<W>,
     term_size: Option<(u16, u16)>,
     prompt: Option<String>,
     prompt_end: Option<&'static str>,
 }
 
-impl<W: Write> Default for LineReaderBuilder<W> {
+impl<W: Write> Default for LineReaderBuilder<'_, W> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<W: Write> LineReaderBuilder<W> {
+impl<'a, W: Write> LineReaderBuilder<'a, W> {
+    pub fn with_custom_quit_command(mut self, quit_cmd: &'a str) -> Self {
+        self.custom_quit = Some(quit_cmd);
+        self
+    }
+}
+
+impl<W: Write> LineReaderBuilder<'_, W> {
     pub fn new() -> Self {
         LineReaderBuilder {
             completion: None,
@@ -100,16 +107,22 @@ impl<W: Write> LineReaderBuilder<W> {
         self
     }
 
-    pub fn with_custom_quit_command(mut self, quit_cmd: &str) -> Self {
-        self.custom_quit = Some(String::from(quit_cmd));
-        self
-    }
-
     pub fn build<Ctx>(self) -> io::Result<LineReader<Ctx, W>> {
-        let mut term = self.term.ok_or(io::Error::other("terminal is required"))?;
+        let mut term = self
+            .term
+            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "terminal is required"))?;
         let term_size = self
             .term_size
-            .ok_or(io::Error::other("terminal size is required"))?;
+            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "terminal size is required"))?;
+        let custom_quit = match self.custom_quit {
+            Some(quit_cmd) => Some(shellwords::split(quit_cmd).map_err(|_| {
+                io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Custom quit command: {quit_cmd}, contains mismatched quotes"),
+                )
+            })?),
+            None => None,
+        };
         term.queue(cursor::EnableBlinking)?;
         Ok(LineReader {
             line: LineData::new(self.prompt, self.prompt_end, self.completion.is_some()),
@@ -119,7 +132,7 @@ impl<W: Write> LineReaderBuilder<W> {
             uneventful: false,
             cursor_at_start: false,
             command_entered: true,
-            custom_quit: self.custom_quit,
+            custom_quit,
             completion: self.completion.map(Completion::from).unwrap_or_default(),
             input_hooks: VecDeque::new(),
         })
@@ -288,12 +301,29 @@ pub struct History {
 // currently `CompletionState` only supports char events at line end
 // `CompletionState` will have to be carefully mannaged if cursor is moveable
 
+#[non_exhaustive]
+pub enum ParseErr {
+    MismatchedQuotes,
+}
+
+impl Display for ParseErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ParseErr::MismatchedQuotes => "Mismatched quotes",
+            }
+        )
+    }
+}
+
 pub enum EventLoop<Ctx> {
     Continue,
     AsyncCallback(Box<AsyncCallback<Ctx>>),
     Callback(Box<Callback<Ctx>>),
     Break,
-    TryProcessCommand,
+    TryProcessInput(Result<Vec<String>, ParseErr>),
 }
 
 impl<Ctx, W: Write> LineReader<Ctx, W> {
@@ -350,14 +380,6 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
             return;
         }
         self.line.comp_enabled = enabled
-    }
-
-    /// Note: will panic if called when nothing is in the history
-    pub fn last_line(&self) -> &str {
-        self.history
-            .prev_entries
-            .last()
-            .expect("only called after `self.enter_command()`")
     }
 
     pub fn set_prompt(&mut self, prompt: String) {
@@ -476,7 +498,7 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         Ok(())
     }
 
-    fn enter_command(&mut self) -> io::Result<()> {
+    fn enter_command(&mut self) -> io::Result<&str> {
         self.history
             .prev_entries
             .push(std::mem::take(&mut self.line.input));
@@ -484,7 +506,12 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         self.new_line()?;
         self.term.queue(cursor::Hide)?.flush()?;
         self.command_entered = true;
-        Ok(())
+
+        Ok(self
+            .history
+            .prev_entries
+            .last()
+            .expect("just pushed into `prev_entries`"))
     }
 
     fn reset_history_idx(&mut self) {
@@ -544,10 +571,10 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                 ..
             }) => {
                 if self.line.input.is_empty() {
-                    if let Some(quit_cmd) = self.custom_quit.as_deref() {
-                        self.line.input.push_str(quit_cmd);
-                        self.enter_command()?;
-                        return Ok(EventLoop::TryProcessCommand);
+                    if let Some(ref quit_cmd) = self.custom_quit {
+                        self.term.queue(cursor::Hide)?.flush()?;
+                        self.command_entered = true;
+                        return Ok(EventLoop::TryProcessInput(Ok(quit_cmd.clone())));
                     }
                     return Ok(EventLoop::Break);
                 }
@@ -611,8 +638,10 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                     self.new_line()?;
                     return Ok(EventLoop::Continue);
                 }
-                self.enter_command()?;
-                Ok(EventLoop::TryProcessCommand)
+                Ok(EventLoop::TryProcessInput(
+                    shellwords::split(self.enter_command()?)
+                        .map_err(|_| ParseErr::MismatchedQuotes),
+                ))
             }
             Event::Resize(x, y) => {
                 self.term_size = (x, y);

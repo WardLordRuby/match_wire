@@ -408,11 +408,12 @@ pub enum CommandHandle {
 }
 
 pub async fn try_execute_command(
-    mut user_args: Vec<String>,
+    mut user_tokens: Vec<String>,
     context: &mut CommandContext,
 ) -> CommandHandle {
-    let mut input_tokens = vec![String::new()];
-    input_tokens.append(&mut user_args);
+    let mut input_tokens = Vec::with_capacity(user_tokens.len() + 1);
+    input_tokens.push(String::new());
+    input_tokens.append(&mut user_tokens);
     match UserCommand::try_parse_from(input_tokens) {
         Ok(cli) => match cli.command {
             Command::Filter { args } => new_favorites_with(args, context).await,
@@ -598,7 +599,7 @@ impl CommandSender for RwLockReadGuard<'_, PTY> {
     }
 }
 
-impl<T: Write> LineReader<CommandContext, T> {
+impl<W: Write> LineReader<CommandContext, W> {
     pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: HookUID) {
         self.set_prompt(LineData::default_prompt());
         self.set_completion(true);

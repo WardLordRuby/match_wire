@@ -129,20 +129,14 @@ fn main() {
                                         line_handle.conditionally_remove_hook(&mut command_context, err.uid());
                                     }
                                 },
-                                Ok(EventLoop::TryProcessCommand) => {
-                                    let command_handle = match shellwords::split(line_handle.last_line()) {
-                                        Ok(user_args) => try_execute_command(user_args, &mut command_context).await,
-                                        Err(err) => {
-                                            error!("{err}");
-                                            continue;
-                                        }
-                                    };
-                                    match command_handle {
+                                Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
+                                    match try_execute_command(user_tokens, &mut command_context).await {
                                         CommandHandle::Processed => (),
                                         CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
                                         CommandHandle::Exit => break,
                                     }
                                 }
+                                Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => error!("{mismatched_quotes}"),
                                 Err(err) => {
                                     error!("{err}");
                                     break;
