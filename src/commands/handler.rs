@@ -185,6 +185,10 @@ impl From<Version> for AppDetails {
     }
 }
 
+type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
+type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
+type HmwHashResult = Result<reqwest::Result<Result<String, &'static str>>, JoinError>;
+
 pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
     cache_needs_update: Arc<AtomicBool>,
@@ -198,6 +202,103 @@ pub struct CommandContext {
 }
 
 impl CommandContext {
+    pub fn new(
+        game_launch: LaunchResult,
+        app_ver: AppVersionResult,
+        hmw_hash: HmwHashResult,
+        cache: Result<Cache, JoinError>,
+        mut game: GameDetails,
+        local_dir: Option<PathBuf>,
+    ) -> (Self, Receiver<Message>, Receiver<bool>) {
+        let handle = if let Ok(Ok(handle)) = game_launch {
+            Some(handle)
+        } else {
+            let err = match game_launch {
+                Err(join_err) => join_err.to_string(),
+                Ok(Err(launch_err)) => launch_err.to_string(),
+                Ok(Ok(_)) => unreachable!("by happy path"),
+            };
+            error!("Could not launch H2M as child process: {err}");
+            println!("{ConnectionHelp}");
+            None
+        };
+
+        let app = if let Ok(Ok(app)) = app_ver {
+            if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
+                if app.ver_curr != latest {
+                    info!("{msg}")
+                }
+            }
+            app
+        } else {
+            let err = match app_ver {
+                Err(join_err) => join_err.to_string(),
+                Ok(Err(reqwest_err)) => reqwest_err.to_string(),
+                Ok(Ok(_)) => unreachable!("by happy path"),
+            };
+            error!("Could not get latest MatchWire version: {err}");
+            AppDetails::default()
+        };
+
+        game.hash_latest = if let Ok(Ok(Ok(hash_latest))) = hmw_hash {
+            if let Some(ref hash_curr) = game.hash_curr {
+                if hash_curr != &hash_latest {
+                    info!("{HmwUpdateHelp}")
+                }
+            }
+            Some(hash_latest)
+        } else {
+            let err = match hmw_hash {
+                Ok(Ok(Err(err))) => Cow::Borrowed(err),
+                Ok(Err(err)) => Cow::Owned(err.to_string()),
+                Err(err) => Cow::Owned(err.to_string()),
+                Ok(Ok(Ok(_))) => unreachable!("by happy path"),
+            };
+            error!("Could not get latest HMW version: {err}");
+            None
+        };
+
+        let cache_needs_update = Arc::new(AtomicBool::new(false));
+        let (update_cache_tx, update_cache_rx) = channel(20);
+
+        tokio::spawn({
+            let cache_needs_update = Arc::clone(&cache_needs_update);
+            async move {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
+                    if cache_needs_update
+                        .compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst)
+                        .is_ok()
+                        && update_cache_tx.send(true).await.is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let (message_tx, message_rx) = channel(50);
+
+        (
+            CommandContext {
+                cache: Arc::new(Mutex::new(cache.unwrap_or_else(|err| {
+                    error!("Critical error building cache, could not populate cache");
+                    error!(name: LOG_ONLY, "{err:?}");
+                    Cache::default()
+                }))),
+                msg_sender: Arc::new(message_tx),
+                app,
+                game,
+                local_dir,
+                pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
+                cache_needs_update,
+                forward_logs: Arc::new(AtomicBool::new(false)),
+                h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
+            },
+            message_rx,
+            update_cache_rx,
+        )
+    }
     #[inline]
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
         Arc::clone(&self.cache)
@@ -297,155 +398,6 @@ impl CommandContext {
         let game_console = lock.read().await;
 
         Ok(game_console.send_cmd(command))
-    }
-}
-
-type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
-type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
-type HmwHashResult = Result<reqwest::Result<Result<String, &'static str>>, JoinError>;
-
-#[derive(Default)]
-pub struct CommandContextBuilder {
-    cache: Option<Result<Cache, JoinError>>,
-    launch_res: Option<LaunchResult>,
-    game: Option<GameDetails>,
-    local_dir: Option<PathBuf>,
-    app_ver_res: Option<AppVersionResult>,
-    hmw_hash_res: Option<HmwHashResult>,
-}
-
-impl CommandContextBuilder {
-    pub fn new() -> Self {
-        CommandContextBuilder::default()
-    }
-    pub fn cache(mut self, cache: Result<Cache, JoinError>) -> Self {
-        self.cache = Some(cache);
-        self
-    }
-    pub fn local_dir(mut self, local_dir: Option<PathBuf>) -> Self {
-        self.local_dir = local_dir;
-        self
-    }
-    pub fn launch_res(mut self, res: LaunchResult) -> Self {
-        self.launch_res = Some(res);
-        self
-    }
-    pub fn app_ver_res(mut self, res: AppVersionResult) -> Self {
-        self.app_ver_res = Some(res);
-        self
-    }
-    pub fn hmw_hash_res(mut self, res: HmwHashResult) -> Self {
-        self.hmw_hash_res = Some(res);
-        self
-    }
-    pub fn game_details(mut self, details: GameDetails) -> Self {
-        self.game = Some(details);
-        self
-    }
-
-    pub fn build(
-        self,
-    ) -> Result<(CommandContext, Receiver<Message>, Receiver<bool>), &'static str> {
-        let handle = if let Some(Ok(Ok(handle))) = self.launch_res {
-            Some(handle)
-        } else {
-            if let Some(join_launch_res) = self.launch_res {
-                let err = match join_launch_res {
-                    Err(join_err) => join_err.to_string(),
-                    Ok(Err(launch_err)) => launch_err.to_string(),
-                    Ok(Ok(_)) => unreachable!("by happy path"),
-                };
-                error!("Could not launch H2M as child process: {err}");
-                println!("{ConnectionHelp}");
-            }
-            None
-        };
-
-        let app = if let Some(Ok(Ok(app))) = self.app_ver_res {
-            if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
-                if app.ver_curr != latest {
-                    info!("{msg}")
-                }
-            }
-            app
-        } else {
-            if let Some(join_app_ver_res) = self.app_ver_res {
-                let err = match join_app_ver_res {
-                    Err(join_err) => join_err.to_string(),
-                    Ok(Err(reqwest_err)) => reqwest_err.to_string(),
-                    Ok(Ok(_)) => unreachable!("by happy path"),
-                };
-                error!("Could not get latest MatchWire version: {err}");
-            }
-            AppDetails::default()
-        };
-
-        let mut game = self.game.ok_or("game details is required")?;
-        if let Some(join_hmw_hash_res) = self.hmw_hash_res {
-            game.hash_latest = if let Ok(Ok(Ok(hash_latest))) = join_hmw_hash_res {
-                if let Some(ref hash_curr) = game.hash_curr {
-                    if hash_curr != &hash_latest {
-                        info!("{HmwUpdateHelp}")
-                    }
-                }
-                Some(hash_latest)
-            } else {
-                let err = match join_hmw_hash_res {
-                    Ok(Ok(Err(err))) => Cow::Borrowed(err),
-                    Ok(Err(err)) => Cow::Owned(err.to_string()),
-                    Err(err) => Cow::Owned(err.to_string()),
-                    Ok(Ok(Ok(_))) => unreachable!("by happy path"),
-                };
-                error!("Could not get latest HMW version: {err}");
-                None
-            };
-        }
-
-        let cache_needs_update = Arc::new(AtomicBool::new(false));
-        let (update_cache_tx, update_cache_rx) = channel(20);
-
-        tokio::spawn({
-            let cache_needs_update = Arc::clone(&cache_needs_update);
-            async move {
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
-                    if cache_needs_update
-                        .compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst)
-                        .is_ok()
-                        && update_cache_tx.send(true).await.is_err()
-                    {
-                        break;
-                    }
-                }
-            }
-        });
-
-        let (message_tx, message_rx) = channel(50);
-
-        Ok((
-            CommandContext {
-                cache: self
-                    .cache
-                    .map(|cache| {
-                        Arc::new(Mutex::new(cache.unwrap_or_else(|err| {
-                            error!("Critical error building cache, could not populate cache");
-                            error!(name: LOG_ONLY, "{err:?}");
-                            Cache::default()
-                        })))
-                    })
-                    .ok_or("cache is required")?,
-                msg_sender: Arc::new(message_tx),
-                app,
-                game,
-                local_dir: self.local_dir,
-                pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
-                cache_needs_update,
-                forward_logs: Arc::new(AtomicBool::new(false)),
-                h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
-            },
-            message_rx,
-            update_cache_rx,
-        ))
     }
 }
 

@@ -3,8 +3,8 @@ use match_wire::{
     await_user_for_end, break_if, check_app_dir_exists,
     commands::{
         handler::{
-            listener_routine, try_execute_command, AppDetails, CommandContextBuilder,
-            CommandHandle, GameDetails, Message,
+            listener_routine, try_execute_command, AppDetails, CommandContext, CommandHandle,
+            GameDetails, Message,
         },
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
@@ -75,15 +75,8 @@ fn main() {
 
         let try_start_listener = matches!(launch_res, Ok(Ok(_)));
 
-        let (mut command_context, mut message_rx, mut update_cache_rx) = CommandContextBuilder::new()
-            .cache(cache_res)
-            .launch_res(launch_res)
-            .app_ver_res(app_ver_res)
-            .hmw_hash_res(hmw_hash_res)
-            .game_details(startup_data.game)
-            .local_dir(startup_data.local_dir)
-            .build()
-            .expect("all required inputs are provided");
+        let (mut command_context, mut message_rx, mut update_cache_rx) =
+            CommandContext::new(launch_res, app_ver_res, hmw_hash_res, cache_res, startup_data.game, startup_data.local_dir);
 
         if try_start_listener {
             listener_routine(&mut command_context).await.unwrap_or_else(|err| warn!("{err}"));
