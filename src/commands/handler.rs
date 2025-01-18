@@ -11,7 +11,7 @@ use crate::{
         input::{
             line::{
                 AsyncCallback, EventLoop, HookUID, InitLineCallback, InputEventHook, InputHook,
-                InputHookErr, LineData, LineReader, Print,
+                InputHookErr, LineData, Print,
             },
             style::{RED, WHITE, YELLOW},
         },
@@ -28,7 +28,7 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Display,
-    io::{Stdout, Write},
+    io::Stdout,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -600,7 +600,7 @@ impl CommandContext {
 
         let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
             handle.set_prompt(game_exe_name);
-            handle.set_completion(false);
+            handle.disable_completion();
             Ok(())
         });
 
@@ -615,7 +615,7 @@ impl CommandContext {
                         handle.ctrl_c_line()?;
                         return Ok((EventLoop::Continue, false));
                     }
-                    Ok(handle.close_game_console())
+                    Ok((EventLoop::Callback(Box::new(end_forward_logs)), true))
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(c),
@@ -629,7 +629,7 @@ impl CommandContext {
                     ..
                 }) => {
                     if handle.line.input().is_empty() {
-                        return Ok(handle.close_game_console());
+                        return Ok((EventLoop::Callback(Box::new(end_forward_logs)), true));
                     }
                     handle.remove_char()?;
                     Ok((EventLoop::Continue, false))
@@ -661,7 +661,12 @@ impl CommandContext {
                 _ => Ok((EventLoop::Continue, false)),
             });
 
-        CommandHandle::InsertHook(InputHook::from(uid, Some(init), input_hook))
+        CommandHandle::InsertHook(InputHook::new(
+            uid,
+            Some(init),
+            Some(Box::new(end_forward_logs)),
+            input_hook,
+        ))
     }
 
     async fn quit(&mut self) -> CommandHandle {
@@ -701,7 +706,7 @@ impl CommandContext {
                 }
             });
 
-        CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), input_hook))
+        CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), None, input_hook))
     }
 }
 
@@ -730,25 +735,6 @@ impl CommandSender for RwLockReadGuard<'_, PTY> {
             }
             Err(err) => Err(Cow::Owned(err.to_string_lossy().to_string())),
         }
-    }
-}
-
-impl<W: Write> LineReader<CommandContext, W> {
-    pub fn conditionally_remove_hook(&mut self, ctx: &mut CommandContext, uid: HookUID) {
-        self.set_prompt(LineData::default_prompt());
-        self.set_completion(true);
-        if let Some(callback) = self.next_input_hook() {
-            if callback.uid() == uid {
-                self.pop_input_hook();
-            }
-        }
-        end_forward_logs(ctx);
-    }
-
-    fn close_game_console(&mut self) -> (EventLoop<CommandContext>, bool) {
-        self.set_prompt(LineData::default_prompt());
-        self.set_completion(true);
-        (EventLoop::Callback(Box::new(end_forward_logs)), true)
     }
 }
 

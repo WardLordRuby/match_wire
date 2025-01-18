@@ -142,6 +142,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
 pub struct InputHook<Ctx, W: Write> {
     uid: HookUID,
     init: Option<Box<InitLineCallback<Ctx, W>>>,
+    on_async_callback_err: Option<Box<Callback<Ctx>>>,
     event_hook: Box<InputEventHook<Ctx, W>>,
 }
 
@@ -185,26 +186,30 @@ impl Display for InputHookErr {
 }
 
 impl<Ctx, W: Write> InputHook<Ctx, W> {
-    pub fn from(
+    pub fn new(
         uid: HookUID,
         init: Option<Box<InitLineCallback<Ctx, W>>>,
+        on_async_callback_err: Option<Box<Callback<Ctx>>>,
         event_hook: Box<InputEventHook<Ctx, W>>,
     ) -> Self {
-        assert_ne!(uid.0, CALLBACK_UID.load(Ordering::SeqCst));
+        assert!(uid.0 < CALLBACK_UID.load(Ordering::SeqCst));
         InputHook {
             uid,
             init,
+            on_async_callback_err,
             event_hook,
         }
     }
 
     pub fn with_new_uid(
         init: Option<Box<InitLineCallback<Ctx, W>>>,
+        on_async_callback_err: Option<Box<Callback<Ctx>>>,
         event_hook: Box<InputEventHook<Ctx, W>>,
     ) -> Self {
         InputHook {
             uid: HookUID::new(),
             init,
+            on_async_callback_err,
             event_hook,
         }
     }
@@ -217,6 +222,7 @@ impl<Ctx, W: Write> InputHook<Ctx, W> {
 
 #[derive(Default)]
 pub struct LineData {
+    inital_prompt: String,
     prompt: String,
     prompt_end: &'static str,
     prompt_len: u16,
@@ -236,6 +242,7 @@ impl LineData {
         LineData {
             prompt_len: LineData::prompt_len(&prompt),
             prompt_end: prompt_separator.unwrap_or(PROMPT_END),
+            inital_prompt: prompt.clone(),
             prompt,
             comp_enabled: completion_enabled,
             ..Default::default()
@@ -331,6 +338,10 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         &mut self,
         stream: &mut crossterm::event::EventStream,
     ) -> io::Result<()> {
+        if !std::mem::take(&mut self.command_entered) {
+            return Ok(());
+        }
+
         let _ = tokio::time::timeout(tokio::time::Duration::from_millis(10), async {
             while stream.fuse().next().await.is_some() {}
         })
@@ -339,8 +350,15 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         Ok(())
     }
 
+    fn return_to_initial_state(&mut self) {
+        if self.line.prompt != self.line.inital_prompt {
+            self.set_prompt(self.line.inital_prompt.clone());
+        }
+        self.enable_completion();
+    }
+
     /// makes sure the current `input_hook`'s initializer has been executed
-    pub fn try_init_input_hook(&mut self) -> Option<io::Result<()>> {
+    fn try_init_input_hook(&mut self) -> Option<io::Result<()>> {
         let callback = self.input_hooks.front_mut()?;
         let init = callback.init.take()?;
         Some(init(self))
@@ -349,6 +367,19 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
     #[inline]
     pub fn register_input_hook(&mut self, input_hook: InputHook<Ctx, W>) {
         self.input_hooks.push_back(input_hook);
+    }
+
+    pub fn conditionally_remove_hook(&mut self, ctx: &mut Ctx, uid: HookUID) {
+        if self.next_input_hook().is_some_and(|hook| hook.uid() == uid) {
+            self.return_to_initial_state();
+            if let Some(err_callback) = self
+                .pop_input_hook()
+                .expect("`next_input_hook` & `pop_input_hook` both look at first queued hook")
+                .on_async_callback_err
+            {
+                err_callback(ctx);
+            };
+        }
     }
 
     #[inline]
@@ -375,26 +406,21 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
     }
 
     #[inline]
-    pub fn set_completion(&mut self, enabled: bool) {
+    pub fn enable_completion(&mut self) {
         if self.completion.is_empty() {
             return;
         }
-        self.line.comp_enabled = enabled
+        self.line.comp_enabled = true
+    }
+
+    #[inline]
+    pub fn disable_completion(&mut self) {
+        self.line.comp_enabled = false
     }
 
     pub fn set_prompt(&mut self, prompt: String) {
         self.line.prompt_len = LineData::prompt_len(&prompt);
         self.line.prompt = prompt;
-    }
-
-    #[inline]
-    pub fn uneventful(&mut self) -> bool {
-        std::mem::take(&mut self.uneventful)
-    }
-
-    #[inline]
-    pub fn command_entered(&mut self) -> bool {
-        std::mem::take(&mut self.command_entered)
     }
 
     #[inline]
@@ -438,6 +464,13 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
     }
 
     pub fn render(&mut self) -> io::Result<()> {
+        if std::mem::take(&mut self.uneventful) {
+            return Ok(());
+        }
+        if let Some(res) = self.try_init_input_hook() {
+            res?
+        };
+
         let line_len = self.line_len();
         if !self.cursor_at_start {
             self.move_to_beginning(line_len.saturating_sub(1))?;
@@ -557,7 +590,9 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                 let hook = self.pop_input_hook().expect("outer if");
                 debug_assert!(hook.init.is_none());
                 let (event_loop, finished) = (hook.event_hook)(self, event)?;
-                if !finished {
+                if finished {
+                    self.return_to_initial_state();
+                } else {
                     self.input_hooks.push_front(hook);
                 }
                 return Ok(event_loop);

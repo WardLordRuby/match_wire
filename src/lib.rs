@@ -82,15 +82,8 @@ macro_rules! new_io_error {
 }
 
 #[macro_export]
-macro_rules! break_if {
-    ($expr:expr, is_some_err) => {
-        if let Some(Err(err)) = $expr {
-            error!("{err}");
-            break;
-        }
-    };
-
-    ($expr:expr, is_err) => {
+macro_rules! break_if_err {
+    ($expr:expr) => {
         if let Err(err) = $expr {
             error!("{err}");
             break;

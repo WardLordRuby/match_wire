@@ -1,6 +1,6 @@
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
-    await_user_for_end, break_if, check_app_dir_exists,
+    await_user_for_end, break_if_err, check_app_dir_exists,
     commands::{
         handler::{AppDetails, CommandContext, CommandHandle, GameDetails, Message},
         launch_h2m::{launch_h2m_pseudo, LaunchError},
@@ -95,13 +95,9 @@ fn main() {
         terminal::enable_raw_mode().unwrap();
 
         loop {
-            if line_handle.command_entered() {
-                break_if!(line_handle.clear_unwanted_inputs(&mut reader).await, is_err);
-            }
-            if !line_handle.uneventful() {
-                break_if!(line_handle.try_init_input_hook(), is_some_err);
-                break_if!(line_handle.render(), is_err);
-            }
+            break_if_err!(line_handle.clear_unwanted_inputs(&mut reader).await);
+            break_if_err!(line_handle.render());
+            
             tokio::select! {
                 biased;
 
@@ -146,7 +142,7 @@ fn main() {
                 }
 
                 Some(msg) = message_rx.recv() => {
-                    break_if!(line_handle.print_background_msg(msg), is_err)
+                    break_if_err!(line_handle.print_background_msg(msg))
                 }
 
                 Some(_) = update_cache_rx.recv() => {
