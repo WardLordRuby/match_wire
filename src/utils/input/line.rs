@@ -21,7 +21,7 @@ use strip_ansi::strip_ansi;
 use tokio_stream::StreamExt;
 
 pub type InputEventHook<Ctx, W> =
-    dyn Fn(&mut LineReader<Ctx, W>, Event) -> io::Result<(EventLoop<Ctx>, bool)>;
+    dyn Fn(&mut LineReader<Ctx, W>, Event) -> io::Result<HookedEvent<Ctx>>;
 pub type InitLineCallback<Ctx, W> = dyn FnOnce(&mut LineReader<Ctx, W>) -> io::Result<()>;
 pub type Callback<Ctx> = dyn Fn(&mut Ctx);
 pub type AsyncCallback<Ctx> =
@@ -325,6 +325,39 @@ impl Display for ParseErr {
     }
 }
 
+pub enum HookControl {
+    Continue,
+    Release,
+}
+
+pub struct HookedEvent<Ctx> {
+    event: EventLoop<Ctx>,
+    new_state: HookControl,
+}
+
+impl<Ctx> HookedEvent<Ctx> {
+    #[inline]
+    pub fn new(event: EventLoop<Ctx>, new_state: HookControl) -> io::Result<Self> {
+        Ok(Self { event, new_state })
+    }
+
+    #[inline]
+    pub fn continue_hook() -> io::Result<Self> {
+        Ok(Self {
+            event: EventLoop::Continue,
+            new_state: HookControl::Continue,
+        })
+    }
+
+    #[inline]
+    pub fn release_hook() -> io::Result<Self> {
+        Ok(Self {
+            event: EventLoop::Continue,
+            new_state: HookControl::Release,
+        })
+    }
+}
+
 pub enum EventLoop<Ctx> {
     Continue,
     AsyncCallback(Box<AsyncCallback<Ctx>>),
@@ -589,13 +622,12 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
             {
                 let hook = self.pop_input_hook().expect("outer if");
                 debug_assert!(hook.init.is_none());
-                let (event_loop, finished) = (hook.event_hook)(self, event)?;
-                if finished {
-                    self.return_to_initial_state();
-                } else {
-                    self.input_hooks.push_front(hook);
+                let hook_output = (hook.event_hook)(self, event)?;
+                match hook_output.new_state {
+                    HookControl::Continue => self.input_hooks.push_front(hook),
+                    HookControl::Release => self.return_to_initial_state(),
                 }
-                return Ok(event_loop);
+                return Ok(hook_output.event);
             }
         }
         match event {

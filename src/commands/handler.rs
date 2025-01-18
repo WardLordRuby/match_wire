@@ -10,8 +10,8 @@ use crate::{
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         input::{
             line::{
-                AsyncCallback, EventLoop, HookUID, InitLineCallback, InputEventHook, InputHook,
-                InputHookErr, LineData, Print,
+                AsyncCallback, EventLoop, HookControl, HookUID, HookedEvent, InitLineCallback,
+                InputEventHook, InputHook, InputHookErr, Print,
             },
             style::{RED, WHITE, YELLOW},
         },
@@ -613,26 +613,32 @@ impl CommandContext {
                 }) => {
                     if !handle.line.input().is_empty() {
                         handle.ctrl_c_line()?;
-                        return Ok((EventLoop::Continue, false));
+                        return HookedEvent::continue_hook();
                     }
-                    Ok((EventLoop::Callback(Box::new(end_forward_logs)), true))
+                    HookedEvent::new(
+                        EventLoop::Callback(Box::new(end_forward_logs)),
+                        HookControl::Release,
+                    )
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char(c),
                     ..
                 }) => {
                     handle.insert_char(c);
-                    Ok((EventLoop::Continue, false))
+                    HookedEvent::continue_hook()
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Backspace,
                     ..
                 }) => {
                     if handle.line.input().is_empty() {
-                        return Ok((EventLoop::Callback(Box::new(end_forward_logs)), true));
+                        return HookedEvent::new(
+                            EventLoop::Callback(Box::new(end_forward_logs)),
+                            HookControl::Release,
+                        );
                     }
                     handle.remove_char()?;
-                    Ok((EventLoop::Continue, false))
+                    HookedEvent::continue_hook()
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Enter,
@@ -640,7 +646,7 @@ impl CommandContext {
                 }) => {
                     if handle.line.input().is_empty() {
                         handle.new_line()?;
-                        return Ok((EventLoop::Continue, false));
+                        return HookedEvent::continue_hook();
                     }
                     let cmd = handle.line.take_input();
                     handle.new_line()?;
@@ -656,9 +662,12 @@ impl CommandContext {
                             })
                         });
 
-                    Ok((EventLoop::AsyncCallback(send_user_cmd), false))
+                    HookedEvent::new(
+                        EventLoop::AsyncCallback(send_user_cmd),
+                        HookControl::Continue,
+                    )
                 }
-                _ => Ok((EventLoop::Continue, false)),
+                _ => HookedEvent::continue_hook(),
             });
 
         CommandHandle::InsertHook(InputHook::new(
@@ -688,7 +697,7 @@ impl CommandContext {
         });
 
         let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-            Box::new(|handle, event| match event {
+            Box::new(|_handle, event| match event {
                 Event::Key(
                     KeyEvent {
                         code: KeyCode::Char('c'),
@@ -699,11 +708,8 @@ impl CommandContext {
                         code: KeyCode::Char('y'),
                         ..
                     },
-                ) => Ok((EventLoop::Break, true)),
-                _ => {
-                    handle.set_prompt(LineData::default_prompt());
-                    Ok((EventLoop::Continue, true))
-                }
+                ) => HookedEvent::new(EventLoop::Break, HookControl::Release),
+                _ => HookedEvent::release_hook(),
             });
 
         CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), None, input_hook))
