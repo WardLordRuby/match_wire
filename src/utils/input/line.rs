@@ -637,15 +637,16 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             }) => {
-                if self.line.input.is_empty() {
-                    if let Some(ref quit_cmd) = self.custom_quit {
+                let line_was_empty = self.line.input.is_empty();
+                self.ctrl_c_line()?;
+                if line_was_empty {
+                    if let Some(quit_cmd) = self.custom_quit.clone() {
                         self.term.queue(cursor::Hide)?.flush()?;
                         self.command_entered = true;
-                        return Ok(EventLoop::TryProcessInput(Ok(quit_cmd.clone())));
+                        return Ok(EventLoop::TryProcessInput(Ok(quit_cmd)));
                     }
                     return Ok(EventLoop::Break);
                 }
-                self.ctrl_c_line()?;
                 Ok(EventLoop::Continue)
             }
             Event::Key(KeyEvent {
