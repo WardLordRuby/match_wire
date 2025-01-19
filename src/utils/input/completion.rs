@@ -1,4 +1,4 @@
-use crate::utils::input::line::LineReader;
+use crate::utils::input::line::{Executor, LineReader};
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Write},
@@ -798,7 +798,7 @@ impl Completion {
     }
 }
 
-impl<Ctx, W: Write> LineReader<Ctx, W> {
+impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
     #[inline]
     fn curr_token(&self) -> &str {
         &self.completion.input.ending.token

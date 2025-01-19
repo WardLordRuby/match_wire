@@ -29,11 +29,24 @@ pub type Callback<Ctx> = dyn Fn(&mut Ctx);
 pub type AsyncCallback<Ctx> =
     dyn for<'a> FnOnce(&'a mut Ctx) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
 
+pub enum CommandHandle<Ctx: Executor<W>, W: Write> {
+    Processed,
+    InsertHook(InputHook<Ctx, W>),
+    Exit,
+}
+
 pub trait Print {
     fn print(&self);
 }
 
-pub struct LineReader<Ctx, W: Write> {
+pub trait Executor<W: Write>: std::marker::Sized {
+    fn try_execute_command(
+        &mut self,
+        user_tokens: Vec<String>,
+    ) -> impl Future<Output = CommandHandle<Self, W>>;
+}
+
+pub struct LineReader<Ctx: Executor<W>, W: Write> {
     pub completion: Completion,
     pub line: LineData,
     history: History,
@@ -109,7 +122,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
         self
     }
 
-    pub fn build<Ctx>(self) -> io::Result<LineReader<Ctx, W>> {
+    pub fn build<Ctx: Executor<W>>(self) -> io::Result<LineReader<Ctx, W>> {
         let mut term = self
             .term
             .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "terminal is required"))?;
@@ -141,7 +154,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
     }
 }
 
-pub struct InputHook<Ctx, W: Write> {
+pub struct InputHook<Ctx: Executor<W>, W: Write> {
     uid: HookUID,
     init: Option<Box<InitLineCallback<Ctx, W>>>,
     on_async_callback_err: Option<Box<Callback<Ctx>>>,
@@ -187,7 +200,7 @@ impl Display for InputHookErr {
     }
 }
 
-impl<Ctx, W: Write> InputHook<Ctx, W> {
+impl<Ctx: Executor<W>, W: Write> InputHook<Ctx, W> {
     pub fn new(
         uid: HookUID,
         init: Option<Box<InitLineCallback<Ctx, W>>>,
@@ -368,7 +381,7 @@ pub enum EventLoop<Ctx> {
     TryProcessInput(Result<Vec<String>, ParseErr>),
 }
 
-impl<Ctx, W: Write> LineReader<Ctx, W> {
+impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
     pub async fn clear_unwanted_inputs(
         &mut self,
         stream: &mut crossterm::event::EventStream,
@@ -719,5 +732,19 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                 Ok(EventLoop::Continue)
             }
         }
+    }
+
+    /// Will only ever return `EventLoop::Continue` or `EventLoop::Break`
+    pub async fn process_input_tokens(
+        &mut self,
+        ctx: &mut Ctx,
+        tokens: Vec<String>,
+    ) -> EventLoop<Ctx> {
+        match ctx.try_execute_command(tokens).await {
+            CommandHandle::Processed => (),
+            CommandHandle::InsertHook(input_hook) => self.register_input_hook(input_hook),
+            CommandHandle::Exit => return EventLoop::Break,
+        }
+        EventLoop::Continue
     }
 }

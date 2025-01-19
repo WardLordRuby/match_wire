@@ -2,7 +2,7 @@ use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
     await_user_for_end, break_if_err, check_app_dir_exists,
     commands::{
-        handler::{AppDetails, CommandContext, CommandHandle, GameDetails, Message},
+        handler::{AppDetails, CommandContext, GameDetails, Message},
         launch_h2m::{launch_h2m_pseudo, LaunchError},
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
@@ -121,10 +121,8 @@ fn main() {
                                     }
                                 },
                                 Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
-                                    match command_context.try_execute_command(user_tokens).await {
-                                        CommandHandle::Processed => (),
-                                        CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
-                                        CommandHandle::Exit => break,
+                                    if let EventLoop::Break = line_handle.process_input_tokens(&mut command_context, user_tokens).await {
+                                        break;
                                     }
                                 }
                                 Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => {

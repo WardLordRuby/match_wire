@@ -10,8 +10,9 @@ use crate::{
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         input::{
             line::{
-                AsyncCallback, EventLoop, HookControl, HookUID, HookedEvent, InitLineCallback,
-                InputEventHook, InputHook, InputHookErr, Print,
+                AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl,
+                HookUID, HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr,
+                Print,
             },
             style::{RED, WHITE, YELLOW},
         },
@@ -188,11 +189,7 @@ type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
 type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
 type HmwHashResult = Result<reqwest::Result<Result<String, &'static str>>, JoinError>;
 
-pub enum CommandHandle {
-    Processed,
-    InsertHook(InputHook<CommandContext, Stdout>),
-    Exit,
-}
+pub type CommandHandle = CmdHandle<CommandContext, Stdout>;
 
 pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
@@ -204,6 +201,33 @@ pub struct CommandContext {
     msg_sender: Arc<Sender<Message>>,
     game: GameDetails,
     app: AppDetails,
+}
+
+impl Executor<Stdout> for CommandContext {
+    async fn try_execute_command(&mut self, mut user_tokens: Vec<String>) -> CommandHandle {
+        let mut input_tokens = Vec::with_capacity(user_tokens.len() + 1);
+        input_tokens.push(String::new());
+        input_tokens.append(&mut user_tokens);
+        match UserCommand::try_parse_from(input_tokens) {
+            Ok(cli) => match cli.command {
+                Command::Filter { args } => self.new_favorites_with(args).await,
+                Command::Reconnect { args } => self.reconnect(args).await,
+                Command::Launch => self.launch_handler().await,
+                Command::Cache { option } => self.modify_cache(option).await,
+                Command::Console => self.open_game_console().await,
+                Command::GameDir => open_dir(self.game.path.parent()),
+                Command::LocalEnv => open_dir(self.local_dir.as_deref()),
+                Command::Version => self.print_version(),
+                Command::Quit => self.quit().await,
+            },
+            Err(err) => {
+                if let Err(prt_err) = err.print() {
+                    error!("{err} {prt_err}");
+                }
+                CommandHandle::Processed
+            }
+        }
+    }
 }
 
 impl CommandContext {
@@ -403,31 +427,6 @@ impl CommandContext {
         let game_console = lock.read().await;
 
         Ok(game_console.send_cmd(command))
-    }
-
-    pub async fn try_execute_command(&mut self, mut user_tokens: Vec<String>) -> CommandHandle {
-        let mut input_tokens = Vec::with_capacity(user_tokens.len() + 1);
-        input_tokens.push(String::new());
-        input_tokens.append(&mut user_tokens);
-        match UserCommand::try_parse_from(input_tokens) {
-            Ok(cli) => match cli.command {
-                Command::Filter { args } => self.new_favorites_with(args).await,
-                Command::Reconnect { args } => self.reconnect(args).await,
-                Command::Launch => self.launch_handler().await,
-                Command::Cache { option } => self.modify_cache(option).await,
-                Command::Console => self.open_game_console().await,
-                Command::GameDir => open_dir(self.game.path.parent()),
-                Command::LocalEnv => open_dir(self.local_dir.as_deref()),
-                Command::Version => self.print_version(),
-                Command::Quit => self.quit().await,
-            },
-            Err(err) => {
-                if let Err(prt_err) = err.print() {
-                    error!("{err} {prt_err}");
-                }
-                CommandHandle::Processed
-            }
-        }
     }
 
     pub async fn launch_handler(&mut self) -> CommandHandle {
