@@ -713,7 +713,7 @@ impl Completion {
         while let Some(token) = self.try_parse_token_from_end(&slice[..end_i], count_till, None) {
             if token.hash_i != INVALID {
                 return (Some(token), nvals);
-            } else if last_valid_token.is_some_and(|known_valid| token == *known_valid) {
+            } else if last_valid_token.is_some_and(|&known_valid| token == known_valid) {
                 // here we copy the last valid_token in the case that `last_valid_token`'s `RecKind` != the `count_till` `RecKind`
                 // and the incorrect hasher was used on the curr `token`
                 return (last_valid_token.copied(), nvals);

@@ -9,6 +9,7 @@ use crossterm::{
     terminal::{Clear, ClearType::FromCursorDown},
     QueueableCommand,
 };
+use shellwords::split as shellwords_split;
 use std::{
     collections::VecDeque,
     fmt::Display,
@@ -18,6 +19,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use strip_ansi::strip_ansi;
+use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
 
 pub type InputEventHook<Ctx, W> =
@@ -115,7 +117,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
             .term_size
             .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "terminal size is required"))?;
         let custom_quit = match self.custom_quit {
-            Some(quit_cmd) => Some(shellwords::split(quit_cmd).map_err(|_| {
+            Some(quit_cmd) => Some(shellwords_split(quit_cmd).map_err(|_| {
                 io::Error::new(
                     ErrorKind::InvalidInput,
                     format!("Custom quit command: {quit_cmd}, contains mismatched quotes"),
@@ -375,7 +377,7 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
             return Ok(());
         }
 
-        let _ = tokio::time::timeout(tokio::time::Duration::from_millis(10), async {
+        let _ = timeout(Duration::from_millis(10), async {
             while stream.fuse().next().await.is_some() {}
         })
         .await;
@@ -585,12 +587,11 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
     }
 
     fn history_back(&mut self) -> io::Result<()> {
-        let prev_entries_len = self.history.prev_entries.len();
-        if self.history.curr_index == 0 || prev_entries_len == 0 {
+        if self.history.curr_index == 0 || self.history.prev_entries.is_empty() {
             return Ok(());
         }
         if !self.history.prev_entries.contains(&self.line.input)
-            && self.history.curr_index == prev_entries_len
+            && self.history.curr_index == self.history.prev_entries.len()
         {
             self.history.temp_top = std::mem::take(&mut self.line.input);
         }
@@ -599,12 +600,11 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
     }
 
     fn history_forward(&mut self) -> io::Result<()> {
-        let prev_entries_len = self.history.prev_entries.len();
-        if self.history.curr_index == prev_entries_len {
+        if self.history.curr_index == self.history.prev_entries.len() {
             return Ok(());
         }
-        let new_line = if self.history.curr_index == prev_entries_len - 1 {
-            self.history.curr_index = prev_entries_len;
+        let new_line = if self.history.curr_index == self.history.prev_entries.len() - 1 {
+            self.history.curr_index = self.history.prev_entries.len();
             std::mem::take(&mut self.history.temp_top)
         } else {
             self.history.curr_index += 1;
@@ -707,8 +707,7 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                     return Ok(EventLoop::Continue);
                 }
                 Ok(EventLoop::TryProcessInput(
-                    shellwords::split(self.enter_command()?)
-                        .map_err(|_| ParseErr::MismatchedQuotes),
+                    shellwords_split(self.enter_command()?).map_err(|_| ParseErr::MismatchedQuotes),
                 ))
             }
             Event::Resize(x, y) => {

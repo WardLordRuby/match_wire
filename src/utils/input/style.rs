@@ -66,7 +66,7 @@ impl FormatState {
 
     #[inline]
     fn open_quote(&mut self, str: &str, quote: Option<char>) {
-        assert!(quote.is_some());
+        debug_assert!(quote.is_some());
         self.set_color(TextColor::Blue);
         self.push(str);
         self.open_quote = quote;

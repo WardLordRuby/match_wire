@@ -97,7 +97,7 @@ fn main() {
         loop {
             break_if_err!(line_handle.clear_unwanted_inputs(&mut reader).await);
             break_if_err!(line_handle.render());
-            
+
             tokio::select! {
                 biased;
 
@@ -127,7 +127,9 @@ fn main() {
                                         CommandHandle::Exit => break,
                                     }
                                 }
-                                Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => error!("{mismatched_quotes}"),
+                                Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => {
+                                    eprintln!("{RED}{mismatched_quotes}{WHITE}")
+                                },
                                 Err(err) => {
                                     error!("{err}");
                                     break;
