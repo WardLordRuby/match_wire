@@ -138,9 +138,12 @@ impl<W: Write> LineReaderBuilder<'_, W> {
             })?),
             None => None,
         };
+        let completion = self.completion.map(Completion::from).unwrap_or_default();
+
         term.queue(cursor::EnableBlinking)?;
+
         Ok(LineReader {
-            line: LineData::new(self.prompt, self.prompt_end, self.completion.is_some()),
+            line: LineData::new(self.prompt, self.prompt_end, !completion.is_empty()),
             history: History::default(),
             term,
             term_size,
@@ -148,7 +151,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
             cursor_at_start: false,
             command_entered: true,
             custom_quit,
-            completion: self.completion.map(Completion::from).unwrap_or_default(),
+            completion,
             input_hooks: VecDeque::new(),
         })
     }
