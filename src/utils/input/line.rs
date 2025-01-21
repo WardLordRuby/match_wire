@@ -29,7 +29,7 @@ pub type Callback<Ctx> = dyn Fn(&mut Ctx);
 pub type AsyncCallback<Ctx> =
     dyn for<'a> FnOnce(&'a mut Ctx) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
 
-pub enum CommandHandle<Ctx: Executor<W>, W: Write> {
+pub enum CommandHandle<Ctx, W: Write> {
     Processed,
     InsertHook(InputHook<Ctx, W>),
     Exit,
@@ -39,6 +39,43 @@ pub trait Print {
     fn print(&self);
 }
 
+/// The `Executor` trait provides a optional way to structure how commands are handled through your
+/// generic `Ctx` struct.
+///
+/// Example using `Stdout` writer and `clap_builder::derive::Parser::try_parse_from`
+/// ```
+/// impl Executor<Stdout> for CommandContext {
+///     async fn try_execute_command(&mut self, user_tokens: Vec<String>) -> CommandHandle<Self, Stdout> {
+///         match UserCommand::try_parse_from(user_tokens) {
+///             Ok(cli) => match cli.command {
+///                 /*
+///                     Route to async/non-async command functions
+///                     that return `CommandHandle`
+///                 */
+///                 Command::Version => self.print_version(),
+///                 Command::Quit => self.quit().await,
+///             },
+///             Err(err) => {
+///                 if let Err(prt_err) = err.print() {
+///                     error!("{err} {prt_err}");
+///                 }
+///                 CommandHandle::Processed
+///             }
+///         }
+///     }
+/// }
+/// ```
+///
+/// Then within your main loop requires some boilerplate to match against the returned `CommandHandle`
+/// ```
+/// Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
+///     match command_context.try_execute_command(user_tokens).await {
+///         CommandHandle::Processed => (),
+///         CommandHandle::InsertHook(input_hook) => line_reader.register_input_hook(input_hook),
+///         CommandHandle::Exit => break,
+///     }
+/// }
+/// ```
 pub trait Executor<W: Write>: std::marker::Sized {
     fn try_execute_command(
         &mut self,
@@ -46,7 +83,7 @@ pub trait Executor<W: Write>: std::marker::Sized {
     ) -> impl Future<Output = CommandHandle<Self, W>>;
 }
 
-pub struct LineReader<Ctx: Executor<W>, W: Write> {
+pub struct LineReader<Ctx, W: Write> {
     pub completion: Completion,
     pub line: LineData,
     history: History,
@@ -122,7 +159,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
         self
     }
 
-    pub fn build<Ctx: Executor<W>>(self) -> io::Result<LineReader<Ctx, W>> {
+    pub fn build<Ctx>(self) -> io::Result<LineReader<Ctx, W>> {
         let mut term = self
             .term
             .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "terminal is required"))?;
@@ -157,7 +194,7 @@ impl<W: Write> LineReaderBuilder<'_, W> {
     }
 }
 
-pub struct InputHook<Ctx: Executor<W>, W: Write> {
+pub struct InputHook<Ctx, W: Write> {
     uid: HookUID,
     init: Option<Box<InitLineCallback<Ctx, W>>>,
     on_async_callback_err: Option<Box<Callback<Ctx>>>,
@@ -192,9 +229,6 @@ impl InputHookErr {
     pub fn new(uid: HookUID, err: String) -> Self {
         InputHookErr { uid, err }
     }
-    pub fn uid(&self) -> HookUID {
-        self.uid
-    }
 }
 
 impl Display for InputHookErr {
@@ -203,7 +237,7 @@ impl Display for InputHookErr {
     }
 }
 
-impl<Ctx: Executor<W>, W: Write> InputHook<Ctx, W> {
+impl<Ctx, W: Write> InputHook<Ctx, W> {
     pub fn new(
         uid: HookUID,
         init: Option<Box<InitLineCallback<Ctx, W>>>,
@@ -376,15 +410,24 @@ impl<Ctx> HookedEvent<Ctx> {
     }
 }
 
+/// The `EventLoop` enum acts as a control router for how your main loops code should react to input events.
+/// It provides mutable access back to your `Ctx` both synchronously and asynchronously. If your callback
+/// can error the [`conditionally_remove_hook`](LineReader::conditionally_remove_hook) method can restore
+/// the intial state of the `LineReader` as well as removed any queued input hook that was responsible for
+/// spawning the callback that resulted in an error.  
+///
+/// `TryProcessInput` uses `shellwords::split` to parse user input into common shell tokens.
 pub enum EventLoop<Ctx> {
     Continue,
+    Break,
     AsyncCallback(Box<AsyncCallback<Ctx>>),
     Callback(Box<Callback<Ctx>>),
-    Break,
     TryProcessInput(Result<Vec<String>, ParseErr>),
 }
 
-impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
+impl<Ctx, W: Write> LineReader<Ctx, W> {
+    /// It is recommended to call this method at the top of your main loop see: [`render`](Self::render)  
+    /// This method will insure all user input events are disregarded when the line handle is busy
     pub async fn clear_unwanted_inputs(
         &mut self,
         stream: &mut crossterm::event::EventStream,
@@ -408,7 +451,7 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
         self.enable_completion();
     }
 
-    /// makes sure the current `input_hook`'s initializer has been executed
+    /// Makes sure the current `input_hook`'s initializer has been executed
     fn try_init_input_hook(&mut self) -> Option<io::Result<()>> {
         let callback = self.input_hooks.front_mut()?;
         let init = callback.init.take()?;
@@ -420,8 +463,22 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
         self.input_hooks.push_back(input_hook);
     }
 
-    pub fn conditionally_remove_hook(&mut self, ctx: &mut Ctx, uid: HookUID) {
-        if self.next_input_hook().is_some_and(|hook| hook.uid() == uid) {
+    /// Removes the currently active input hook if its UID matches the UID of the provided error
+    ///
+    /// Eg:
+    /// ```
+    /// Ok(EventLoop::AsyncCallback(callback)) => {
+    ///     if let Err(err) = callback(&mut command_context).await {
+    ///         error!("{err}");
+    ///         line_handle.conditionally_remove_hook(&mut command_context, &err);
+    ///     }
+    /// },
+    /// ```
+    pub fn conditionally_remove_hook(&mut self, ctx: &mut Ctx, err: &InputHookErr) {
+        if self
+            .next_input_hook()
+            .is_some_and(|hook| hook.uid == err.uid)
+        {
             self.return_to_initial_state();
             if let Some(err_callback) = self
                 .pop_input_hook()
@@ -434,13 +491,13 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
     }
 
     #[inline]
-    /// pops the first queued `input_hook`
+    /// Pops the first queued `input_hook`
     pub fn pop_input_hook(&mut self) -> Option<InputHook<Ctx, W>> {
         self.input_hooks.pop_front()
     }
 
     #[inline]
-    /// references the first queued `input_hook`
+    /// References the first queued `input_hook`
     pub fn next_input_hook(&mut self) -> Option<&InputHook<Ctx, W>> {
         self.input_hooks.front()
     }
@@ -475,13 +532,13 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
     }
 
     #[inline]
-    /// gets the number of lines wrapped
+    /// Gets the number of lines wrapped
     pub fn line_height(&self, line_len: u16) -> u16 {
         line_len / self.term_size.0
     }
 
     #[inline]
-    /// gets the total length of the line (prompt + user input)
+    /// Gets the total length of the line (prompt + user input)
     pub fn line_len(&self) -> u16 {
         self.line.prompt_len.saturating_add(self.line.len)
     }
@@ -514,6 +571,23 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
         Ok(())
     }
 
+    /// Render is designed to be called at the top of your main loop  
+    /// Eg:
+    /// ```
+    /// break_if_err!(line_handle.clear_unwanted_inputs(&mut reader).await);
+    /// break_if_err!(line_handle.render());
+    /// ```
+    /// Where:
+    /// ```
+    /// macro_rules! break_if_err {
+    ///     ($expr:expr) => {
+    ///         if let Err(err) = $expr {
+    ///             error!("{err}");
+    ///             break;
+    ///         }
+    ///     };
+    /// }
+    /// ```
     pub fn render(&mut self) -> io::Result<()> {
         if std::mem::take(&mut self.uneventful) {
             return Ok(());
@@ -531,6 +605,11 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
 
         self.move_to_line_end(line_len)?;
         self.term.flush()
+    }
+
+    /// Setting uneventul will skip the next call to `render`
+    pub fn set_unventful(&mut self) {
+        self.uneventful = true
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -629,6 +708,54 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
         self.change_line(new_line)
     }
 
+    /// The main control flow for awaited events from a `crossterm::event::EventStream`. Works well as its
+    /// own branch in a `tokio::select!`.
+    ///
+    /// Example main loop assuming we have a `Ctx`, `command_context`,  that impls `Executor`
+    ///
+    /// ```
+    /// let mut reader = crossterm::event::EventStream::new();
+    /// let mut line_handle = LineReaderBuilder::new()
+    ///     .terminal(std::io::stdout())
+    ///     .terminal_size(crossterm::terminal::size()?)
+    ///     .build()
+    ///     .expect("all required inputs are provided & input terminal accepts crossterm commands");
+    ///
+    /// crossterm::terminal::enable_raw_mode()?;
+    ///
+    /// loop {
+    ///     line_handle.clear_unwanted_inputs(&mut reader).await?;
+    ///     line_handle.render()?;
+    ///
+    ///     if let Some(event_result) = reader.next().await {
+    ///         match line_handle.process_input_event(event_result?) {
+    ///             Ok(EventLoop::Continue) => (),
+    ///             Ok(EventLoop::Break) => break,
+    ///             Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
+    ///             Ok(EventLoop::AsyncCallback(callback)) => {
+    ///                 if let Err(err) = callback(&mut command_context).await {
+    ///                     error!("{err}");
+    ///                     line_handle.conditionally_remove_hook(&mut command_context, &err);
+    ///                 }
+    ///             },
+    ///             Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
+    ///                 match command_context.try_execute_command(user_tokens).await {
+    ///                     CommandHandle::Processed => (),
+    ///                     CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
+    ///                     CommandHandle::Exit => break,
+    ///                 }
+    ///             }
+    ///             Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => {
+    ///                 eprintln!("{mismatched_quotes}")
+    ///             },
+    ///             Err(err) => {
+    ///                 error!("{err}");
+    ///                 break;
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub fn process_input_event(&mut self, event: Event) -> io::Result<EventLoop<Ctx>> {
         if !self.input_hooks.is_empty() {
             if let Event::Key(KeyEvent {
@@ -735,19 +862,5 @@ impl<Ctx: Executor<W>, W: Write> LineReader<Ctx, W> {
                 Ok(EventLoop::Continue)
             }
         }
-    }
-
-    /// Will only ever return `EventLoop::Continue` or `EventLoop::Break`
-    pub async fn process_input_tokens(
-        &mut self,
-        ctx: &mut Ctx,
-        tokens: Vec<String>,
-    ) -> EventLoop<Ctx> {
-        match ctx.try_execute_command(tokens).await {
-            CommandHandle::Processed => (),
-            CommandHandle::InsertHook(input_hook) => self.register_input_hook(input_hook),
-            CommandHandle::Exit => return EventLoop::Break,
-        }
-        EventLoop::Continue
     }
 }

@@ -64,6 +64,12 @@ impl Print for Message {
     }
 }
 
+impl From<std::io::Error> for Message {
+    fn from(value: std::io::Error) -> Self {
+        Self::Err(Cow::Owned(value.to_string()))
+    }
+}
+
 impl Message {
     #[inline]
     pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
@@ -204,11 +210,10 @@ pub struct CommandContext {
 }
 
 impl Executor<Stdout> for CommandContext {
-    async fn try_execute_command(&mut self, mut user_tokens: Vec<String>) -> CommandHandle {
-        let mut input_tokens = Vec::with_capacity(user_tokens.len() + 1);
-        input_tokens.push(String::new());
-        input_tokens.append(&mut user_tokens);
-        match UserCommand::try_parse_from(input_tokens) {
+    async fn try_execute_command(&mut self, user_tokens: Vec<String>) -> CommandHandle {
+        match UserCommand::try_parse_from(
+            std::iter::once(String::new()).chain(user_tokens.into_iter()),
+        ) {
             Ok(cli) => match cli.command {
                 Command::Filter { args } => self.new_favorites_with(args).await,
                 Command::Reconnect { args } => self.reconnect(args).await,
@@ -387,6 +392,13 @@ impl CommandContext {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
 
+    pub async fn send_message<M: Into<Message>>(&self, msg: M) {
+        self.msg_sender
+            .send(msg.into())
+            .await
+            .unwrap_or_else(|err| err.0.print())
+    }
+
     pub async fn graceful_shutdown(&mut self) {
         if self.cache_needs_update().load(Ordering::SeqCst) {
             write_cache(self)
@@ -490,7 +502,7 @@ impl CommandContext {
                 msg_sender
                     .send(msg)
                     .await
-                    .unwrap_or_else(|err| error!("{err}"));
+                    .unwrap_or_else(|err| err.0.print());
             }
         });
         Ok(())

@@ -11,7 +11,7 @@ use match_wire::{
         display::DisplayPanic,
         input::{
             completion::CommandScheme,
-            line::{EventLoop, LineReaderBuilder},
+            line::{CommandHandle, EventLoop, Executor, LineReaderBuilder},
             style::{RED, WHITE},
         },
         subscriber::init_subscriber,
@@ -117,12 +117,14 @@ fn main() {
                                 Ok(EventLoop::AsyncCallback(callback)) => {
                                     if let Err(err) = callback(&mut command_context).await {
                                         error!("{err}");
-                                        line_handle.conditionally_remove_hook(&mut command_context, err.uid());
+                                        line_handle.conditionally_remove_hook(&mut command_context, &err);
                                     }
                                 },
                                 Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
-                                    if let EventLoop::Break = line_handle.process_input_tokens(&mut command_context, user_tokens).await {
-                                        break;
+                                    match command_context.try_execute_command(user_tokens).await {
+                                        CommandHandle::Processed => (),
+                                        CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
+                                        CommandHandle::Exit => break,
                                     }
                                 }
                                 Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => {
@@ -146,8 +148,10 @@ fn main() {
                 }
 
                 Some(_) = update_cache_rx.recv() => {
-                    write_cache(&command_context).await
-                        .unwrap_or_else(|err| error!("{err}"));
+                    if let Err(err) = write_cache(&command_context).await {
+                        command_context.send_message(err).await
+                    };
+                    line_handle.set_unventful();
                 }
             }
         }
