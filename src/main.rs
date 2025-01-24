@@ -90,7 +90,7 @@ fn main() {
             .with_completion(&COMPLETION)
             .with_custom_quit_command("quit")
             .build()
-            .expect("all required inputs are provided & input terminal accepts crossterm commands");
+            .expect("all required inputs are provided & terminal accepts crossterm commands");
 
         terminal::enable_raw_mode().unwrap();
 
@@ -113,11 +113,15 @@ fn main() {
                             match line_handle.process_input_event(event) {
                                 Ok(EventLoop::Continue) => (),
                                 Ok(EventLoop::Break) => break,
-                                Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
+                                Ok(EventLoop::Callback(callback)) => {
+                                    callback(&mut command_context).expect("`end_forward_logs` does not error")
+                                },
                                 Ok(EventLoop::AsyncCallback(callback)) => {
                                     if let Err(err) = callback(&mut command_context).await {
                                         error!("{err}");
-                                        line_handle.conditionally_remove_hook(&mut command_context, &err);
+                                        if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+                                            on_err_callback(&mut command_context).expect("`end_forward_logs` does not error");
+                                        }
                                     }
                                 },
                                 Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {

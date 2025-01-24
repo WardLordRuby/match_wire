@@ -25,16 +25,15 @@ use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
 
 // MARK: TODOS
-// 1. Add ctrl + D quit
-// 2. Add a .run() method to LineReader that is a awaitable for users who just need a basic REPL
-// 3. Add a .background_run::<T: Print>() method that is spawnable and gives the user access to a Sender<T> to print background messages
-// 4. Make the basic use cases as easy to set up as possible
-// 5. Finish docs + create README.md + add examples for all use cases
+// 1. Add a .run() method to LineReader that is a awaitable for users who just need a basic REPL
+// 2. Add a .background_run::<T: Print>() method that is spawnable and gives the user access to a Sender<T> to print background messages
+// 3. Make the basic use cases as easy to set up as possible
+// 4. Finish docs + create README.md + add examples for all use cases
 
 pub type InputEventHook<Ctx, W> =
     dyn Fn(&mut LineReader<Ctx, W>, Event) -> io::Result<HookedEvent<Ctx>>;
 pub type InitLineCallback<Ctx, W> = dyn FnOnce(&mut LineReader<Ctx, W>) -> io::Result<()>;
-pub type Callback<Ctx> = dyn Fn(&mut Ctx);
+pub type Callback<Ctx> = dyn Fn(&mut Ctx) -> Result<(), InputHookErr>;
 pub type AsyncCallback<Ctx> =
     dyn for<'a> FnOnce(&'a mut Ctx) -> Pin<Box<dyn Future<Output = Result<(), InputHookErr>> + 'a>>;
 
@@ -237,6 +236,7 @@ impl Default for HookUID {
     }
 }
 
+#[derive(Debug)]
 pub struct InputHookErr {
     uid: HookUID,
     err: Cow<'static, str>,
@@ -259,7 +259,7 @@ impl Display for InputHookErr {
 }
 
 impl<Ctx, W: Write> InputHook<Ctx, W> {
-    /// For use when creating an `InputHook` that contains an [`AsyncCallback`] that can error, else use
+    /// For use when creating an `InputHook` that contains a callback that can error, else use
     /// [`with_new_uid`](Self::with_new_uid). Ensure that the `InputHook` and [`InputHookErr`] share the
     /// same [`HookUID`] obtained through [`HookUID::new`].
     pub fn new(
@@ -493,32 +493,32 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         self.input_hooks.push_back(input_hook);
     }
 
-    /// Removes the currently active input hook if its UID matches the UID of the provided error, then runs
-    /// the provided `on_callback_err` if one was supplied.
+    /// Removes the currently active input hook if its UID matches the UID of the provided error, then returns
+    /// the [`InputHook`]'s `on_callback_err` if one was set.
     ///
     /// Eg:
     /// ```ignore
     /// Ok(EventLoop::AsyncCallback(callback)) => {
     ///     if let Err(err) = callback(&mut command_context).await {
     ///         eprintln!("{err}");
-    ///         line_handle.conditionally_remove_hook(&mut command_context, &err);
+    ///         if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+    ///             on_err_callback(&mut command_context).unwrap_or_else(|err| eprintln!("{err}"))
+    ///         };
     ///     }
     /// },
     /// ```
-    pub fn conditionally_remove_hook(&mut self, ctx: &mut Ctx, err: &InputHookErr) {
+    pub fn conditionally_remove_hook(&mut self, err: &InputHookErr) -> Option<Box<Callback<Ctx>>> {
         if self
             .next_input_hook()
             .is_some_and(|hook| hook.uid == err.uid)
         {
             self.return_to_initial_state();
-            if let Some(err_callback) = self
+            return self
                 .pop_input_hook()
                 .expect("`next_input_hook` & `pop_input_hook` both look at first queued hook")
-                .on_callback_err
-            {
-                err_callback(ctx);
-            };
+                .on_callback_err;
         }
+        None
     }
 
     #[inline]
@@ -672,7 +672,7 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         self.clear_line()
     }
 
-    fn clear_line(&mut self) -> io::Result<()> {
+    pub fn clear_line(&mut self) -> io::Result<()> {
         self.reset_line_data();
         self.move_to_beginning(self.line_len())?;
         self.reset_completion();
@@ -740,6 +740,17 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
         self.change_line(new_line)
     }
 
+    /// If a [custom quit command](LineReaderBuilder::with_custom_quit_command) is set this will tell the
+    /// main loop to process the set command otherwise will return `EventLoop::Break`  
+    pub fn process_close_signal(&mut self) -> io::Result<EventLoop<Ctx>> {
+        if let Some(quit_cmd) = self.custom_quit.clone() {
+            execute!(self.term, cursor::Hide)?;
+            self.command_entered = true;
+            return Ok(EventLoop::TryProcessInput(Ok(quit_cmd)));
+        }
+        Ok(EventLoop::Break)
+    }
+
     /// The main control flow for awaited events from a `crossterm::event::EventStream`. Works well as its
     /// own branch in a `tokio::select!`.
     ///
@@ -763,11 +774,20 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
     ///         match line_handle.process_input_event(event_result?) {
     ///             Ok(EventLoop::Continue) => (),
     ///             Ok(EventLoop::Break) => break,
-    ///             Ok(EventLoop::Callback(callback)) => callback(&mut command_context),
+    ///             Ok(EventLoop::Callback(callback)) => {
+    ///                 if let Err(err) = callback(&mut command_context) {
+    ///                     eprintln!("{err}");
+    ///                     if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+    ///                         on_err_callback(&mut command_context).unwrap_or_else(|err| eprintln!("{err}"))
+    ///                     };
+    ///                 }
+    ///             },
     ///             Ok(EventLoop::AsyncCallback(callback)) => {
     ///                 if let Err(err) = callback(&mut command_context).await {
     ///                     eprintln!("{err}");
-    ///                     line_handle.conditionally_remove_hook(&mut command_context, &err);
+    ///                     if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+    ///                         on_err_callback(&mut command_context).unwrap_or_else(|err| eprintln!("{err}"))
+    ///                     };
     ///                 }
     ///             },
     ///             Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
@@ -815,14 +835,18 @@ impl<Ctx, W: Write> LineReader<Ctx, W> {
                 let line_was_empty = self.line.input.is_empty();
                 self.ctrl_c_line()?;
                 if line_was_empty {
-                    if let Some(quit_cmd) = self.custom_quit.clone() {
-                        execute!(self.term, cursor::Hide)?;
-                        self.command_entered = true;
-                        return Ok(EventLoop::TryProcessInput(Ok(quit_cmd)));
-                    }
-                    return Ok(EventLoop::Break);
+                    return self.process_close_signal();
                 }
                 Ok(EventLoop::Continue)
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('d'),
+                kind: KeyEventKind::Press,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => {
+                self.clear_line()?;
+                self.process_close_signal()
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Tab,

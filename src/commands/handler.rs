@@ -618,6 +618,14 @@ impl CommandContext {
         let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
             Box::new(move |handle, event| match event {
                 Event::Key(KeyEvent {
+                    code: KeyCode::Char('d'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }) => {
+                    handle.clear_line()?;
+                    HookedEvent::new(handle.process_close_signal()?, HookControl::Release)
+                }
+                Event::Key(KeyEvent {
                     code: KeyCode::Char('c'),
                     modifiers: KeyModifiers::CONTROL,
                     ..
@@ -728,8 +736,9 @@ impl CommandContext {
 }
 
 #[inline]
-fn end_forward_logs(context: &mut CommandContext) {
+fn end_forward_logs(context: &mut CommandContext) -> Result<(), InputHookErr> {
     context.forward_logs().store(false, Ordering::SeqCst);
+    Ok(())
 }
 
 pub trait CommandSender {
