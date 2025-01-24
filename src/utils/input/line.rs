@@ -24,6 +24,13 @@ use strip_ansi::strip_ansi;
 use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
 
+// MARK: TODOS
+// 1. Add ctrl + D quit
+// 2. Add a .run() method to LineReader that is a awaitable for users who just need a basic REPL
+// 3. Add a .background_run::<T: Print>() method that is spawnable and gives the user access to a Sender<T> to print background messages
+// 4. Make the basic use cases as easy to set up as possible
+// 5. Finish docs + create README.md + add examples for all use cases
+
 pub type InputEventHook<Ctx, W> =
     dyn Fn(&mut LineReader<Ctx, W>, Event) -> io::Result<HookedEvent<Ctx>>;
 pub type InitLineCallback<Ctx, W> = dyn FnOnce(&mut LineReader<Ctx, W>) -> io::Result<()>;
@@ -116,6 +123,8 @@ impl<W: Write> Default for LineReaderBuilder<'_, W> {
 }
 
 impl<'a, W: Write> LineReaderBuilder<'a, W> {
+    /// Supply a custom command to be executed when the user tries to quit with 'ctrl + c' when the current
+    /// line is empty. If none is supplied `EventLoop::Break` will be returned.
     pub fn with_custom_quit_command(mut self, quit_cmd: &'a str) -> Self {
         self.custom_quit = Some(quit_cmd);
         self
@@ -153,11 +162,13 @@ impl<W: Write> LineReaderBuilder<'_, W> {
         self
     }
 
+    /// Supply a default prompt the line should display, if none is supplied "CARGO_PKG_NAME.exe" is used.
     pub fn with_prompt(mut self, prompt: &str) -> Self {
         self.prompt = Some(String::from(prompt));
         self
     }
 
+    /// Supply a custom prompt separator to override the default prompt separator "> ".
     pub fn with_custom_prompt_separator(mut self, separator: &'static str) -> Self {
         self.prompt_end = Some(separator);
         self
@@ -232,6 +243,7 @@ pub struct InputHookErr {
 }
 
 impl InputHookErr {
+    #[inline]
     pub fn new<T: Into<Cow<'static, str>>>(uid: HookUID, err: T) -> Self {
         InputHookErr {
             uid,

@@ -48,17 +48,24 @@ pub struct CommandScheme {
     inner: &'static [InnerScheme],
 }
 
+// MARK: TODO
+// Add support for recursive commands
+// currently we only support commands that only take one command as a clap value enum
+// we should be able to have interior commands still have args/flags ect..
+
 /// Notes:  
-/// - Recomendations within `data` set as `Kind::Value` will be flattened into a HashSet.  
+/// - Recomendations within `data` set as `RecKind::Value` will be flattened into a HashSet.  
 ///   Access to the set is provided through a seprate map `value_sets` where the lookup key  
 ///   is the index you get back from `rec_map` when hashing the parent node  
 /// - `RecKinds`: `Value` and `UserInput` must provide a `Range<usize>` of inputs that are expected to follow  
 ///
 /// field `data` must adhere to the following  
-///  - kind can not be `Kind::Command` commands are only supported at the top level  
+///  - kind can not be `RecKind::Command` commands are only supported at the top level. If a command has
+///    sub-commands use `RecKind::Value` Note: since the 'command' is seen as a 'value' currently it can not have
+///    it's own arguments/flags ect...
 ///
 /// field `inner` must adhere to the following
-///  - if `data.kind` is `Kind::Argument` `inner` must contain the same number of elements as `data.starting_alias`  
+///  - if `data.kind` is `RecKind::Argument` `inner` must contain the same number of elements as `data.starting_alias`  
 ///  - for all other kinds `inner` must be `None`
 pub struct InnerScheme {
     /// data that describes recomendations context
