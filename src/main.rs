@@ -9,22 +9,19 @@ use match_wire::{
     utils::{
         caching::{build_cache, read_cache, write_cache, Cache},
         display::DisplayPanic,
-        input::{
-            completion::CommandScheme,
-            line::{CommandHandle, EventLoop, Executor, LineReaderBuilder},
-            style::{RED, WHITE},
-        },
         subscriber::init_subscriber,
     },
     CACHED_DATA, LOCAL_DATA, LOG_ONLY,
+};
+use repl_oxide::{
+    ansi_code::{RED, WHITE},
+    {repl_builder, CommandHandle, EventLoop, Executor},
 };
 use std::{borrow::Cow, io, path::PathBuf};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 use winptyrs::PTY;
-
-const COMPLETION: CommandScheme = CommandScheme::init();
 
 fn main() {
     let prev = std::panic::take_hook();
@@ -84,15 +81,14 @@ fn main() {
         execute!(term, cursor::Show).unwrap();
 
         let mut reader = EventStream::new();
-        let mut line_handle = LineReaderBuilder::new()
+        let mut line_handle = repl_builder()
             .terminal(term)
             .terminal_size(terminal::size().unwrap())
-            .with_completion(&COMPLETION)
+            .with_prompt(format!("{}.exe", env!("CARGO_PKG_NAME")))
+            .with_completion(&match_wire::command_scheme::COMPLETION)
             .with_custom_quit_command("quit")
             .build()
             .expect("all required inputs are provided & terminal accepts crossterm commands");
-
-        terminal::enable_raw_mode().unwrap();
 
         loop {
             break_if_err!(line_handle.clear_unwanted_inputs(&mut reader).await);
@@ -103,7 +99,6 @@ fn main() {
 
                 _ = close_listener.recv() => {
                     info!(name: LOG_ONLY, "forceful app shutdown");
-                    terminal::disable_raw_mode().unwrap();
                     return;
                 }
 

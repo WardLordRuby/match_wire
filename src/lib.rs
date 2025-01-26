@@ -8,11 +8,6 @@ pub mod commands {
     pub mod reconnect;
 }
 pub mod utils {
-    pub mod input {
-        pub mod completion;
-        pub mod line;
-        pub mod style;
-    }
     pub mod caching;
     pub mod display;
     pub mod json_data;
@@ -27,6 +22,7 @@ use commands::{
 };
 use constcat::concat;
 use crossterm::cursor;
+use repl_oxide::ansi_code::{GREEN, RED, WHITE};
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -36,10 +32,7 @@ use std::{
     sync::{atomic::AtomicBool, LazyLock, Mutex},
     time::Duration,
 };
-use utils::{
-    input::style::{GREEN, RED, WHITE},
-    json_data::{HmwManifest, Version},
-};
+use utils::json_data::{HmwManifest, Version};
 
 #[cfg(not(debug_assertions))]
 use crossterm::{execute, terminal};
@@ -380,7 +373,7 @@ pub async fn leave_splash_screen() {
 
 #[cfg(debug_assertions)]
 pub fn print_during_splash(message: Message) {
-    use utils::input::line::Print;
+    use repl_oxide::Print;
 
     debug_assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
     message.print();

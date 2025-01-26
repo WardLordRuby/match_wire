@@ -8,12 +8,12 @@ use crate::{
             DisplayCachedServerUse, DisplayCountOf, DisplayGetInfoCount, DisplayServerCount,
             SingularPlural,
         },
-        input::style::{GREEN, RED, WHITE, YELLOW},
         json_data::*,
     },
     LOG_ONLY,
 };
 
+use repl_oxide::ansi_code::{GREEN, RED, WHITE, YELLOW};
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info, instrument, trace, warn};

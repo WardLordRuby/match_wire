@@ -3,7 +3,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use match_wire::{commands::launch_h2m::HostName, strip_ansi_private_modes};
-    use strip_ansi::strip_ansi;
+    use repl_oxide::strip_ansi;
 
     #[test]
     fn parse_hostnames_h2m() {

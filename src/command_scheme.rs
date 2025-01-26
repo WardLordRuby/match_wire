@@ -1,24 +1,22 @@
-use crate::{
-    cli::{REGION_LEN, SOURCE_LEN},
-    utils::input::completion::{CommandScheme, InnerScheme, RecData, RecKind, ROOT},
-};
+use crate::cli::{REGION_LEN, SOURCE_LEN};
+use repl_oxide::completion::{CommandScheme, InnerScheme, RecData, RecKind, ROOT};
+
+pub const COMPLETION: CommandScheme = init_command_scheme();
 
 // MARK: IMPROVE
 // HARD: this ideally would be done by a proc-macro
-impl CommandScheme {
-    pub const fn init() -> Self {
-        CommandScheme::new(
-            RecData::new(
-                None,
-                Some(&COMMANDS_ALIAS),
-                None,
-                Some(&COMMAND_RECS),
-                RecKind::Command,
-                false,
-            ),
-            &COMMAND_INNER,
-        )
-    }
+pub const fn init_command_scheme() -> CommandScheme {
+    CommandScheme::new(
+        RecData::new(
+            None,
+            Some(&COMMANDS_ALIAS),
+            None,
+            Some(&COMMAND_RECS),
+            RecKind::Command,
+            false,
+        ),
+        &COMMAND_INNER,
+    )
 }
 
 const COMMAND_RECS: [&str; 12] = [

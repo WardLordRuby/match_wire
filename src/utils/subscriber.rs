@@ -86,7 +86,7 @@ where
         writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        use crate::utils::input::style::{BLUE, GREEN, MAGENTA, RED, WHITE, YELLOW};
+        use repl_oxide::ansi_code::{BLUE, GREEN, MAGENTA, RED, WHITE, YELLOW};
 
         let line_color = match *event.metadata().level() {
             Level::ERROR => RED,

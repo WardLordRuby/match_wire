@@ -4,12 +4,10 @@ use crate::{
         handler::{AppDetails, GameDetails},
         launch_h2m::{h2m_running, LaunchError},
     },
-    utils::{
-        caching::ReadCacheErr,
-        input::style::{GREEN, RED, WHITE, YELLOW},
-    },
+    utils::caching::ReadCacheErr,
 };
 use constcat::concat;
+use repl_oxide::ansi_code::{GREEN, RED, WHITE, YELLOW};
 use std::{borrow::Cow, fmt::Display};
 
 const SOURCE_HMW: &str = "HMW master server";

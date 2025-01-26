@@ -8,22 +8,16 @@ use crate::{
     utils::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
-        input::{
-            line::{
-                AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl,
-                HookUID, HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr,
-                Print,
-            },
-            style::{RED, WHITE, YELLOW},
-        },
         json_data::Version,
     },
     CACHED_DATA, LOG_ONLY, REQUIRED_FILES,
 };
 use clap::Parser;
-use crossterm::{
-    event::{Event, KeyCode, KeyEvent, KeyModifiers},
-    terminal,
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use repl_oxide::{
+    ansi_code::{GREEN, RED, WHITE, YELLOW},
+    AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl, HookUID,
+    HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr, Print,
 };
 use std::{
     borrow::Cow,
@@ -91,8 +85,6 @@ impl Message {
 
 impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use crate::utils::input::style::{GREEN, RED, WHITE, YELLOW};
-
         let (line_color, msg, reset_color): (&str, &str, &str) = match self {
             Self::Str(msg) => ("", msg, ""),
             Self::Info(msg) => (GREEN, msg, WHITE),
@@ -406,7 +398,6 @@ impl CommandContext {
                 .unwrap_or_else(|err| error!(name: LOG_ONLY, "{err}"))
         }
         self.try_send_quit_cmd().await;
-        terminal::disable_raw_mode().unwrap();
         info!(name: LOG_ONLY, "graceful app shutdown");
     }
 
@@ -630,7 +621,7 @@ impl CommandContext {
                     modifiers: KeyModifiers::CONTROL,
                     ..
                 }) => {
-                    if !handle.line.input().is_empty() {
+                    if !handle.input().is_empty() {
                         handle.ctrl_c_line()?;
                         return HookedEvent::continue_hook();
                     }
@@ -650,7 +641,7 @@ impl CommandContext {
                     code: KeyCode::Backspace,
                     ..
                 }) => {
-                    if handle.line.input().is_empty() {
+                    if handle.input().is_empty() {
                         return HookedEvent::new(
                             EventLoop::Callback(Box::new(end_forward_logs)),
                             HookControl::Release,
@@ -663,11 +654,11 @@ impl CommandContext {
                     code: KeyCode::Enter,
                     ..
                 }) => {
-                    if handle.line.input().is_empty() {
+                    if handle.input().is_empty() {
                         handle.new_line()?;
                         return HookedEvent::continue_hook();
                     }
-                    let cmd = handle.line.take_input();
+                    let cmd = handle.take_input();
                     handle.new_line()?;
 
                     let send_user_cmd: Box<AsyncCallback<CommandContext>> =

@@ -278,8 +278,7 @@ pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
 
 #[instrument(level = "trace", skip_all)]
 pub async fn write_cache(context: &CommandContext) -> io::Result<()> {
-    let local_env_dir = context.local_dir();
-    let Some(local_path) = local_env_dir else {
+    let Some(local_path) = context.local_dir() else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;

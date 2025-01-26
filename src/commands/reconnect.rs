@@ -4,12 +4,10 @@ use crate::{
         handler::{CommandContext, CommandHandle, CommandSender},
         launch_h2m::HostName,
     },
-    utils::{
-        display::{ConnectionHelp, DisplayHistoryErr},
-        input::style::{WHITE, YELLOW},
-    },
+    utils::display::{ConnectionHelp, DisplayHistoryErr},
     LOG_ONLY,
 };
+use repl_oxide::ansi_code::{WHITE, YELLOW};
 use std::{
     borrow::Cow, collections::HashMap, fmt::Display, net::SocketAddr, sync::atomic::Ordering,
 };

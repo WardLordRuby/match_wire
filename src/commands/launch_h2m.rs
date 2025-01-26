@@ -4,8 +4,9 @@ use crate::{
         handler::{CommandContext, Message},
     },
     parse_hostname, strip_ansi_private_modes,
-    utils::{caching::Cache, input::line::Print},
+    utils::caching::Cache,
 };
+use repl_oxide::{strip_ansi, Print};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
@@ -17,7 +18,6 @@ use std::{
         Arc,
     },
 };
-use strip_ansi::strip_ansi;
 use tokio::sync::{mpsc::Sender, Mutex};
 use tracing::trace;
 use winapi::{
