@@ -1,14 +1,8 @@
 use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
-use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{value_parser, ArgAction, Args, Parser, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(about, long_about = None)]
-pub struct UserCommand {
-    #[command(subcommand)]
-    pub command: Command,
-}
-
-#[derive(Subcommand, Debug)]
 pub enum Command {
     /// Create a new favorites.json using various filter options
     #[command(alias = "Filter")]

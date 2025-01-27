@@ -15,7 +15,7 @@ pub mod utils {
 }
 
 use clap::CommandFactory;
-use cli::UserCommand;
+use cli::Command;
 use commands::{
     handler::{AppDetails, Message},
     launch_h2m::get_exe_version,
@@ -311,7 +311,7 @@ pub fn print_help() {
     if cursor::position().unwrap() != (0, 0) {
         println!()
     }
-    UserCommand::command()
+    Command::command()
         .print_help()
         .expect("Failed to print help");
     println!();

@@ -1,5 +1,5 @@
 use crate::{
-    cli::{CacheCmd, Command, Filters, UserCommand},
+    cli::{CacheCmd, Command, Filters},
     commands::{
         filter::build_favorites,
         launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
@@ -203,10 +203,9 @@ pub struct CommandContext {
 
 impl Executor<Stdout> for CommandContext {
     async fn try_execute_command(&mut self, user_tokens: Vec<String>) -> CommandHandle {
-        match UserCommand::try_parse_from(
-            std::iter::once(String::new()).chain(user_tokens.into_iter()),
-        ) {
-            Ok(cli) => match cli.command {
+        match Command::try_parse_from(std::iter::once(String::new()).chain(user_tokens.into_iter()))
+        {
+            Ok(command) => match command {
                 Command::Filter { args } => self.new_favorites_with(args).await,
                 Command::Reconnect { args } => self.reconnect(args).await,
                 Command::Launch => self.launch_handler().await,
