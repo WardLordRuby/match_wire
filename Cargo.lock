@@ -1130,13 +1130,14 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "repl-oxide"
 version = "0.1.0"
-source = "git+https://github.com/WardLordRuby/repl-oxide#9d32554fd9d7ca78b5c89f73acb3b5d5bd48ef0a"
+source = "git+https://github.com/WardLordRuby/repl-oxide#970e61c1c71617cf57caa25b1cf1810315bf2c77"
 dependencies = [
  "crossterm",
  "shellwords",
  "strip-ansi",
  "tokio",
  "tokio-stream",
+ "tracing",
 ]
 
 [[package]]

@@ -16,14 +16,14 @@ use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, WHITE, YELLOW},
-    AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl, HookUID,
-    HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr, Print,
+    format_for_clap, AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl,
+    HookUID, HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr, Print,
 };
 use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Display,
-    io::Stdout,
+    io::{self, Stdout},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -202,9 +202,8 @@ pub struct CommandContext {
 }
 
 impl Executor<Stdout> for CommandContext {
-    async fn try_execute_command(&mut self, user_tokens: Vec<String>) -> CommandHandle {
-        match Command::try_parse_from(std::iter::once(String::new()).chain(user_tokens.into_iter()))
-        {
+    async fn try_execute_command(&mut self, user_tokens: Vec<String>) -> io::Result<CommandHandle> {
+        match Command::try_parse_from(format_for_clap(user_tokens)) {
             Ok(command) => match command {
                 Command::Filter { args } => self.new_favorites_with(args).await,
                 Command::Reconnect { args } => self.reconnect(args).await,
@@ -220,7 +219,7 @@ impl Executor<Stdout> for CommandContext {
                 if let Err(prt_err) = err.print() {
                     error!("{err} {prt_err}");
                 }
-                CommandHandle::Processed
+                Ok(CommandHandle::Processed)
             }
         }
     }
@@ -431,7 +430,7 @@ impl CommandContext {
         Ok(game_console.send_cmd(command))
     }
 
-    pub async fn launch_handler(&mut self) -> CommandHandle {
+    pub async fn launch_handler(&mut self) -> io::Result<CommandHandle> {
         match launch_h2m_pseudo(&self.game.path) {
             Ok(conpty) => {
                 info!("Launching {}...", self.game_name());
@@ -453,7 +452,7 @@ impl CommandContext {
                 LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),
             },
         };
-        CommandHandle::Processed
+        Ok(CommandHandle::Processed)
     }
 
     /// if calling manually you are responsible for setting pty inside of context
@@ -465,7 +464,7 @@ impl CommandContext {
         let msg_sender = self.msg_sender();
         let game_name = self.game_name();
         tokio::spawn(async move {
-            const SLEEP: tokio::time::Duration = tokio::time::Duration::from_secs(4);
+            const SLEEP: tokio::time::Duration = tokio::time::Duration::from_millis(4500);
             let mut attempt = 1;
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
@@ -498,7 +497,7 @@ impl CommandContext {
         Ok(())
     }
 
-    async fn new_favorites_with(&self, args: Option<Filters>) -> CommandHandle {
+    async fn new_favorites_with(&self, args: Option<Filters>) -> io::Result<CommandHandle> {
         let cache = self.cache();
         let exe_dir = self.game.path.parent().expect("has parent");
 
@@ -517,21 +516,21 @@ impl CommandContext {
             self.cache_needs_update().store(true, Ordering::Release);
         }
 
-        CommandHandle::Processed
+        Ok(CommandHandle::Processed)
     }
 
-    fn print_version(&self) -> CommandHandle {
+    fn print_version(&self) -> io::Result<CommandHandle> {
         println!("{}", self.app);
         if self.game.version.is_some() || self.game.hash_curr.is_some() {
             println!("{}", self.game)
         }
-        CommandHandle::Processed
+        Ok(CommandHandle::Processed)
     }
 
-    async fn modify_cache(&self, arg: CacheCmd) -> CommandHandle {
+    async fn modify_cache(&self, arg: CacheCmd) -> io::Result<CommandHandle> {
         let Some(ref local_dir) = self.local_dir else {
             error!("Can not create cache with out a valid save directory");
-            return CommandHandle::Processed;
+            return Ok(CommandHandle::Processed);
         };
 
         let cache_file = match arg {
@@ -550,7 +549,7 @@ impl CommandContext {
                         cache.connection_history = backup.connection_history;
                         cache.ip_to_region = backup.cache.regions;
                         error!("{err}, cache remains unchanged");
-                        return CommandHandle::Processed;
+                        return Ok(CommandHandle::Processed);
                     }
                 }
             }
@@ -558,7 +557,7 @@ impl CommandContext {
                 Ok(data) => data,
                 Err((err, _)) => {
                     error!("{err}, cache remains unchanged");
-                    return CommandHandle::Processed;
+                    return Ok(CommandHandle::Processed);
                 }
             },
         };
@@ -574,10 +573,10 @@ impl CommandContext {
         let cache = self.cache();
         let mut cache = cache.lock().await;
         *cache = Cache::from(cache_file);
-        CommandHandle::Processed
+        Ok(CommandHandle::Processed)
     }
 
-    async fn open_game_console(&mut self) -> CommandHandle {
+    async fn open_game_console(&mut self) -> io::Result<CommandHandle> {
         if self.check_h2m_connection().await.is_err() || !h2m_running() {
             let history = self.h2m_console_history.lock().await;
             if !history.is_empty() {
@@ -587,7 +586,7 @@ impl CommandContext {
             } else {
                 println!("{YELLOW}No active connection to H2M{WHITE}");
             }
-            return CommandHandle::Processed;
+            return Ok(CommandHandle::Processed);
         }
 
         {
@@ -657,8 +656,7 @@ impl CommandContext {
                         handle.new_line()?;
                         return HookedEvent::continue_hook();
                     }
-                    let cmd = handle.take_input();
-                    handle.new_line()?;
+                    let cmd = handle.new_line()?;
 
                     let send_user_cmd: Box<AsyncCallback<CommandContext>> =
                         Box::new(move |context| {
@@ -679,17 +677,17 @@ impl CommandContext {
                 _ => HookedEvent::continue_hook(),
             });
 
-        CommandHandle::InsertHook(InputHook::new(
+        Ok(CommandHandle::InsertHook(InputHook::new(
             uid,
             Some(init),
             Some(Box::new(end_forward_logs)),
             input_hook,
-        ))
+        )))
     }
 
-    async fn quit(&mut self) -> CommandHandle {
+    async fn quit(&mut self) -> io::Result<CommandHandle> {
         if self.check_h2m_connection().await.is_err() || !h2m_running() {
-            return CommandHandle::Exit;
+            return Ok(CommandHandle::Exit);
         }
 
         println!(
@@ -721,7 +719,11 @@ impl CommandContext {
                 _ => HookedEvent::release_hook(),
             });
 
-        CommandHandle::InsertHook(InputHook::with_new_uid(Some(init), None, input_hook))
+        Ok(CommandHandle::InsertHook(InputHook::with_new_uid(
+            Some(init),
+            None,
+            input_hook,
+        )))
     }
 }
 
@@ -754,7 +756,7 @@ impl CommandSender for RwLockReadGuard<'_, PTY> {
     }
 }
 
-fn open_dir(path: Option<&Path>) -> CommandHandle {
+fn open_dir(path: Option<&Path>) -> io::Result<CommandHandle> {
     if let Some(dir) = path {
         if let Err(err) = std::process::Command::new("explorer").arg(dir).spawn() {
             error!("{err}")
@@ -762,5 +764,5 @@ fn open_dir(path: Option<&Path>) -> CommandHandle {
     } else {
         error!("Could not find local dir");
     }
-    CommandHandle::Processed
+    Ok(CommandHandle::Processed)
 }

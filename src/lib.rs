@@ -74,16 +74,6 @@ macro_rules! new_io_error {
     };
 }
 
-#[macro_export]
-macro_rules! break_if_err {
-    ($expr:expr) => {
-        if let Err(err) = $expr {
-            error!("{err}");
-            break;
-        }
-    };
-}
-
 pub async fn get_latest_version() -> reqwest::Result<AppDetails> {
     let client = reqwest::Client::new();
     client

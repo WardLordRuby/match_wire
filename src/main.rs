@@ -1,6 +1,6 @@
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
-    await_user_for_end, break_if_err, check_app_dir_exists,
+    await_user_for_end, check_app_dir_exists,
     commands::{
         handler::{AppDetails, CommandContext, GameDetails, Message},
         launch_h2m::{launch_h2m_pseudo, LaunchError},
@@ -15,7 +15,7 @@ use match_wire::{
 };
 use repl_oxide::{
     ansi_code::{RED, WHITE},
-    {repl_builder, CommandHandle, EventLoop, Executor},
+    break_if_err, repl_builder, unwrap_or_break, CommandHandle, EventLoop, Executor,
 };
 use std::{borrow::Cow, io, path::PathBuf};
 use tokio::task::JoinHandle;
@@ -103,41 +103,29 @@ fn main() {
                 }
 
                 Some(event_result) = reader.next() => {
-                    match event_result {
-                        Ok(event) => {
-                            match line_handle.process_input_event(event) {
-                                Ok(EventLoop::Continue) => (),
-                                Ok(EventLoop::Break) => break,
-                                Ok(EventLoop::Callback(callback)) => {
-                                    callback(&mut command_context).expect("`end_forward_logs` does not error")
-                                },
-                                Ok(EventLoop::AsyncCallback(callback)) => {
-                                    if let Err(err) = callback(&mut command_context).await {
-                                        error!("{err}");
-                                        if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
-                                            on_err_callback(&mut command_context).expect("`end_forward_logs` does not error");
-                                        }
-                                    }
-                                },
-                                Ok(EventLoop::TryProcessInput(Ok(user_tokens))) => {
-                                    match command_context.try_execute_command(user_tokens).await {
-                                        CommandHandle::Processed => (),
-                                        CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
-                                        CommandHandle::Exit => break,
-                                    }
-                                }
-                                Ok(EventLoop::TryProcessInput(Err(mismatched_quotes))) => {
-                                    eprintln!("{RED}{mismatched_quotes}{WHITE}")
-                                },
-                                Err(err) => {
-                                    error!("{err}");
-                                    break;
+                    match unwrap_or_break!(line_handle.process_input_event(unwrap_or_break!(event_result))) {
+                        EventLoop::Continue => (),
+                        EventLoop::Break => break,
+                        EventLoop::Callback(callback) => {
+                            callback(&mut command_context).expect("`end_forward_logs` does not error")
+                        },
+                        EventLoop::AsyncCallback(callback) => {
+                            if let Err(err) = callback(&mut command_context).await {
+                                error!("{err}");
+                                if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+                                    on_err_callback(&mut command_context).expect("`end_forward_logs` does not error");
                                 }
                             }
+                        },
+                        EventLoop::TryProcessInput(Ok(user_tokens)) => {
+                            match unwrap_or_break!(command_context.try_execute_command(user_tokens).await) {
+                                CommandHandle::Processed => (),
+                                CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
+                                CommandHandle::Exit => break,
+                            }
                         }
-                        Err(err) => {
-                            error!("{err}");
-                            break;
+                        EventLoop::TryProcessInput(Err(mismatched_quotes)) => {
+                            eprintln!("{RED}{mismatched_quotes}{WHITE}")
                         },
                     }
                 }

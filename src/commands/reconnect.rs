@@ -66,23 +66,23 @@ fn display_history<'a>(history: &'a [HostName], host_to_connect: &'a HashMap<Str
 }
 
 impl CommandContext {
-    pub async fn reconnect(&mut self, args: HistoryArgs) -> CommandHandle {
+    pub async fn reconnect(&mut self, args: HistoryArgs) -> std::io::Result<CommandHandle> {
         let cache_arc = self.cache();
         let mut cache = cache_arc.lock().await;
         if cache.connection_history.is_empty() {
             info!("No joined servers in history, connect to a server to add it to history");
-            return CommandHandle::Processed;
+            return Ok(CommandHandle::Processed);
         }
         if args.history {
             display_history(&cache.connection_history, &cache.host_to_connect);
-            return CommandHandle::Processed;
+            return Ok(CommandHandle::Processed);
         }
         let lock = match self.check_h2m_connection().await {
             Ok(lock) => lock,
             Err(err) => {
                 error!("{err}");
                 println!("{ConnectionHelp}");
-                return CommandHandle::Processed;
+                return Ok(CommandHandle::Processed);
             }
         };
 
@@ -92,7 +92,7 @@ impl CommandContext {
             if num > 1 {
                 if num > cache.connection_history.len() {
                     error!("{}", DisplayHistoryErr(cache.connection_history.len()));
-                    return CommandHandle::Processed;
+                    return Ok(CommandHandle::Processed);
                 }
                 (target, modify_cache) = (cache.connection_history.len() - num, true);
             }
@@ -105,12 +105,12 @@ impl CommandContext {
             println!(
                 "use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server"
             );
-            return CommandHandle::Processed;
+            return Ok(CommandHandle::Processed);
         };
 
         if let Err(err) = connect_to(ip_port, &lock).await {
             error!("{err}");
-            return CommandHandle::Processed;
+            return Ok(CommandHandle::Processed);
         }
 
         info!(name: LOG_ONLY, "Connected to {ip_port}");
@@ -120,7 +120,7 @@ impl CommandContext {
             cache.connection_history.push(entry);
             self.cache_needs_update().store(true, Ordering::SeqCst);
         }
-        CommandHandle::Processed
+        Ok(CommandHandle::Processed)
     }
 }
 
