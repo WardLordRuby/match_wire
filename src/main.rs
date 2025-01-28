@@ -15,15 +15,16 @@ use match_wire::{
 };
 use repl_oxide::{
     ansi_code::{RED, WHITE},
-    break_if_err, repl_builder, unwrap_or_break, CommandHandle, EventLoop, Executor,
+    repl_builder, CommandHandle, EventLoop, Executor,
 };
 use std::{borrow::Cow, io, path::PathBuf};
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc::Receiver, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 use winptyrs::PTY;
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         error!(name: "PANIC", "{}", DisplayPanic(info));
@@ -39,111 +40,126 @@ fn main() {
     )
     .unwrap();
 
-    let main_runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create single-threaded runtime");
+    let startup_data = match app_startup() {
+        Ok(data) => data,
+        Err(err) => {
+            eprintln!("{RED}{err}{WHITE}");
+            await_user_for_end();
+            return;
+        }
+    };
 
-    main_runtime.block_on(async {
-        let startup_data = match app_startup() {
-            Ok(data) => data,
-            Err(err) => {
-                eprintln!("{RED}{err}{WHITE}");
-                await_user_for_end();
-                return;
-            }
-        };
+    let (splash_res, launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
+        startup_data.splash_task,
+        startup_data.launch_task,
+        startup_data.version_task,
+        startup_data.hmw_hash_task,
+        startup_data.cache_task
+    );
 
-        let (splash_res, launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
-            startup_data.splash_task,
-            startup_data.launch_task,
-            startup_data.version_task,
-            startup_data.hmw_hash_task,
-            startup_data.cache_task
+    splash_res.unwrap().unwrap();
+
+    #[cfg(not(debug_assertions))]
+    match_wire::leave_splash_screen().await;
+
+    let (mut command_context, message_rx, update_cache_rx, try_start_listener) =
+        CommandContext::new(
+            launch_res,
+            app_ver_res,
+            hmw_hash_res,
+            cache_res,
+            startup_data.game,
+            startup_data.local_dir,
         );
 
-        splash_res.unwrap().unwrap();
+    if try_start_listener {
+        command_context
+            .listener_routine()
+            .await
+            .unwrap_or_else(|err| warn!("{err}"));
+    }
 
-        #[cfg(not(debug_assertions))]
-        match_wire::leave_splash_screen().await;
+    print_help();
 
-        let (mut command_context, mut message_rx, mut update_cache_rx, try_start_listener) =
-            CommandContext::new(launch_res, app_ver_res, hmw_hash_res, cache_res, startup_data.game, startup_data.local_dir);
+    repl_loop(&mut command_context, message_rx, update_cache_rx, term)
+        .await
+        .unwrap_or_else(|err| error!("{err}"));
 
-        if try_start_listener {
-            command_context.listener_routine().await.unwrap_or_else(|err| warn!("{err}"));
-        }
+    command_context.graceful_shutdown().await;
+}
 
-        let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
+async fn repl_loop(
+    command_context: &mut CommandContext,
+    mut message_rx: Receiver<Message>,
+    mut update_cache_rx: Receiver<()>,
+    term: io::Stdout,
+) -> io::Result<()> {
+    let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
-        print_help();
+    let mut reader = EventStream::new();
+    let mut line_handle = repl_builder(term)
+        .with_prompt(format!("{}.exe", env!("CARGO_PKG_NAME")))
+        .with_completion(&match_wire::command_scheme::COMPLETION)
+        .with_custom_quit_command("quit")
+        .build()
+        .expect("input writer accepts crossterm commands");
 
-        execute!(term, cursor::Show).unwrap();
+    loop {
+        line_handle.clear_unwanted_inputs(&mut reader).await?;
+        line_handle.render()?;
 
-        let mut reader = EventStream::new();
-        let mut line_handle = repl_builder()
-            .terminal(term)
-            .terminal_size(terminal::size().unwrap())
-            .with_prompt(format!("{}.exe", env!("CARGO_PKG_NAME")))
-            .with_completion(&match_wire::command_scheme::COMPLETION)
-            .with_custom_quit_command("quit")
-            .build()
-            .expect("all required inputs are provided & terminal accepts crossterm commands");
+        tokio::select! {
+            biased;
 
-        loop {
-            break_if_err!(line_handle.clear_unwanted_inputs(&mut reader).await);
-            break_if_err!(line_handle.render());
+            _ = close_listener.recv() => {
+                info!(name: LOG_ONLY, "forceful app shutdown");
+                // Appon a forceful close the app does not have enough time to aquire the cache lock and properly
+                // save the cache to file in the case that the `update_cache` flag is set so we force the process
+                // to exit avoiding the possibility of an ill formed cache to be saved locally
+                std::process::exit(0)
+            }
 
-            tokio::select! {
-                biased;
-
-                _ = close_listener.recv() => {
-                    info!(name: LOG_ONLY, "forceful app shutdown");
-                    return;
-                }
-
-                Some(event_result) = reader.next() => {
-                    match unwrap_or_break!(line_handle.process_input_event(unwrap_or_break!(event_result))) {
-                        EventLoop::Continue => (),
-                        EventLoop::Break => break,
-                        EventLoop::Callback(callback) => {
-                            callback(&mut command_context).expect("`end_forward_logs` does not error")
-                        },
-                        EventLoop::AsyncCallback(callback) => {
-                            if let Err(err) = callback(&mut command_context).await {
-                                error!("{err}");
-                                if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
-                                    on_err_callback(&mut command_context).expect("`end_forward_logs` does not error");
-                                }
-                            }
-                        },
-                        EventLoop::TryProcessInput(Ok(user_tokens)) => {
-                            match unwrap_or_break!(command_context.try_execute_command(user_tokens).await) {
-                                CommandHandle::Processed => (),
-                                CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
-                                CommandHandle::Exit => break,
+            Some(event_result) = reader.next() => {
+                match line_handle.process_input_event(event_result?)? {
+                    EventLoop::Continue => (),
+                    EventLoop::Break => break,
+                    EventLoop::Callback(callback) => {
+                        callback(command_context).expect("`end_forward_logs` does not error")
+                    },
+                    EventLoop::AsyncCallback(callback) => {
+                        if let Err(err) = callback(command_context).await {
+                            error!("{err}");
+                            if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+                                on_err_callback(command_context).expect("`end_forward_logs` does not error");
                             }
                         }
-                        EventLoop::TryProcessInput(Err(mismatched_quotes)) => {
-                            eprintln!("{RED}{mismatched_quotes}{WHITE}")
-                        },
+                    },
+                    EventLoop::TryProcessInput(Ok(user_tokens)) => {
+                        match command_context.try_execute_command(user_tokens).await? {
+                            CommandHandle::Processed => (),
+                            CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
+                            CommandHandle::Exit => break,
+                        }
                     }
-                }
-
-                Some(msg) = message_rx.recv() => {
-                    break_if_err!(line_handle.print_background_msg(msg))
-                }
-
-                Some(_) = update_cache_rx.recv() => {
-                    if let Err(err) = write_cache(&command_context).await {
-                        command_context.send_message(err).await
-                    };
-                    line_handle.set_unventful();
+                    EventLoop::TryProcessInput(Err(mismatched_quotes)) => {
+                        eprintln!("{RED}{mismatched_quotes}{WHITE}")
+                    },
                 }
             }
+
+            Some(msg) = message_rx.recv() => {
+                line_handle.print_background_msg(msg)?
+            }
+
+            Some(_) = update_cache_rx.recv() => {
+                if let Err(err) = write_cache(command_context).await {
+                    command_context.send_message(err).await
+                };
+                line_handle.set_unventful();
+            }
         }
-        command_context.graceful_shutdown().await;
-    });
+    }
+    Ok(())
 }
 
 struct StartupData {

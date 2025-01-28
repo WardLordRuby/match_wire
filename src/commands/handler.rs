@@ -231,7 +231,7 @@ impl CommandContext {
         cache: Result<Cache, JoinError>,
         mut game: GameDetails,
         local_dir: Option<PathBuf>,
-    ) -> (Self, Receiver<Message>, Receiver<bool>, bool) {
+    ) -> (Self, Receiver<Message>, Receiver<()>, bool) {
         let (handle, try_start_listener) = if let Ok(Ok(handle)) = game_launch {
             (Some(handle), true)
         } else {
@@ -290,7 +290,7 @@ impl CommandContext {
                     if cache_needs_update
                         .compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst)
                         .is_ok()
-                        && update_cache_tx.send(true).await.is_err()
+                        && update_cache_tx.send(()).await.is_err()
                     {
                         break;
                     }
