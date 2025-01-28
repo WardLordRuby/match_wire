@@ -17,7 +17,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, WHITE, YELLOW},
     format_for_clap, AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl,
-    HookUID, HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr, Print,
+    HookUID, HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr,
 };
 use std::{
     borrow::Cow,
@@ -47,17 +47,6 @@ pub enum Message {
     Warn(Cow<'static, str>),
 }
 
-impl Print for Message {
-    fn print(&self) {
-        match self {
-            Self::Str(msg) => println!("{msg}"),
-            Self::Info(msg) => info!("{msg}"),
-            Self::Warn(msg) => warn!("{msg}"),
-            Self::Err(msg) => error!("{msg}"),
-        }
-    }
-}
-
 impl From<std::io::Error> for Message {
     fn from(value: std::io::Error) -> Self {
         Self::Err(Cow::Owned(value.to_string()))
@@ -65,6 +54,15 @@ impl From<std::io::Error> for Message {
 }
 
 impl Message {
+    pub fn log(&self) {
+        match self {
+            Self::Str(_) => (),
+            Self::Info(msg) => info!(name: LOG_ONLY, "{msg}"),
+            Self::Warn(msg) => warn!(name: LOG_ONLY, "{msg}"),
+            Self::Err(msg) => error!(name: LOG_ONLY, "{msg}"),
+        }
+    }
+
     #[inline]
     pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
         Self::Str(value.into())
@@ -92,7 +90,7 @@ impl Display for Message {
             Self::Warn(msg) => (YELLOW, msg, WHITE),
         };
 
-        writeln!(f, "{line_color}{msg}{reset_color}")
+        write!(f, "{line_color}{msg}{reset_color}")
     }
 }
 
@@ -386,7 +384,7 @@ impl CommandContext {
         self.msg_sender
             .send(msg.into())
             .await
-            .unwrap_or_else(|err| err.0.print())
+            .unwrap_or_else(|err| err.0.log())
     }
 
     pub async fn graceful_shutdown(&mut self) {
@@ -488,10 +486,7 @@ impl CommandContext {
             };
 
             for msg in messages {
-                msg_sender
-                    .send(msg)
-                    .await
-                    .unwrap_or_else(|err| err.0.print());
+                msg_sender.send(msg).await.unwrap_or_else(|err| err.0.log());
             }
         });
         Ok(())

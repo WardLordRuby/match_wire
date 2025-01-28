@@ -363,15 +363,17 @@ pub async fn leave_splash_screen() {
 
 #[cfg(debug_assertions)]
 pub fn print_during_splash(message: Message) {
-    use repl_oxide::Print;
-
     debug_assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
-    message.print();
+
+    message.log();
+    println!("{message}");
 }
 
 #[cfg(not(debug_assertions))]
 /// **Only** use for errors encountered before tracing subscriber has been initalized
 pub fn print_during_splash(message: Message) {
+    message.log();
+
     let mut msg_queue = SPLASH_SCREEN_MSG_BUFFER.lock().expect("lock uncontested");
-    msg_queue.push_str(&format!("{message}"));
+    msg_queue.push_str(&format!("{message}\n"));
 }

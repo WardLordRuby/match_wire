@@ -6,7 +6,7 @@ use crate::{
     parse_hostname, strip_ansi_private_modes,
     utils::caching::Cache,
 };
-use repl_oxide::{strip_ansi, Print};
+use repl_oxide::strip_ansi;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, OsStr, OsString},
@@ -84,7 +84,7 @@ async fn send_msg_over(sender: &Arc<Sender<Message>>, message: Message) {
     sender
         .send(message)
         .await
-        .unwrap_or_else(|returned| returned.0.print());
+        .unwrap_or_else(|returned| returned.0.log());
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
