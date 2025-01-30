@@ -57,8 +57,17 @@ const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 // const CONNECTING_STR: &str = "Connecti";
 const CONNECTING_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
 const CONNECT_STR: &str = "connect "; // | "CONNECT "
-const CONNECT_BYTES_LOWER: [u16; 8] = [99, 111, 110, 110, 101, 99, 116, 32];
-const CONNECT_BYTES_UPPER: [u16; 8] = [67, 79, 78, 78, 69, 67, 84, 32];
+const CONNECT_BYTES: [(u16, u16); 8] = [
+    // (lower, upper)
+    (99, 67),
+    (111, 79),
+    (110, 78),
+    (110, 78),
+    (101, 69),
+    (99, 67),
+    (116, 84),
+    (32, 32),
+];
 const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
@@ -70,11 +79,13 @@ const NEW_LINE: u16 = 10;
 
 #[inline]
 fn case_insensitve_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
-    debug_assert_eq!(window.len(), CONNECT_BYTES_LOWER.len());
-    for (i, &byte) in window.iter().enumerate() {
-        if byte != CONNECT_BYTES_LOWER[i] && byte != CONNECT_BYTES_UPPER[i] {
-            return false;
-        }
+    debug_assert_eq!(window.len(), CONNECT_BYTES.len());
+    if window
+        .iter()
+        .zip(CONNECT_BYTES)
+        .any(|(&byte, (lower, upper))| byte != lower && byte != upper)
+    {
+        return false;
     }
     *kind = Connection::Direct;
     true
