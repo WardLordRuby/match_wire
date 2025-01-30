@@ -219,7 +219,7 @@ pub struct StartupData {
     pub game: GameDetails,
     pub cache_task: JoinHandle<Cache>,
     pub splash_task: JoinHandle<io::Result<()>>,
-    pub launch_task: JoinHandle<Result<PTY, LaunchError>>,
+    pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
     pub version_task: JoinHandle<reqwest::Result<AppDetails>>,
     pub hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
 }
@@ -233,17 +233,19 @@ impl CommandContext {
             startup_data.cache_task
         );
 
-        let (handle, try_start_listener) = if let Ok(Ok(handle)) = launch_res {
-            (Some(handle), true)
-        } else {
-            let err = match launch_res {
-                Err(join_err) => join_err.to_string(),
-                Ok(Err(launch_err)) => launch_err.to_string(),
-                Ok(Ok(_)) => unreachable!("by happy path"),
-            };
-            error!("Could not launch H2M as child process: {err}");
-            println!("{ConnectionHelp}");
-            (None, false)
+        let (handle, try_start_listener) = match launch_res {
+            Ok(Some(Ok(handle))) => (Some(handle), true),
+            Ok(None) => (None, false),
+            rest => {
+                let err = match rest {
+                    Err(join_err) => join_err.to_string(),
+                    Ok(Some(Err(launch_err))) => launch_err.to_string(),
+                    Ok(Some(Ok(_))) | Ok(None) => unreachable!("by covered paths"),
+                };
+                error!("Could not launch H2M as child process: {err}");
+                println!("{ConnectionHelp}");
+                (None, false)
+            }
         };
 
         let app = if let Ok(Ok(app)) = app_ver_res {

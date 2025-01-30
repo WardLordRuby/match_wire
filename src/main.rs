@@ -136,15 +136,28 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
     let exe_dir =
         std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
 
-    #[cfg(not(debug_assertions))]
-    let game = {
-        let game_exe_path = match_wire::contains_required_files(&exe_dir)?;
-        let (version, hash) = match_wire::exe_details(&game_exe_path);
-        GameDetails::new(game_exe_path, version, hash)
+    let no_launch = {
+        #[cfg(not(debug_assertions))]
+        {
+            use clap::Parser;
+            match_wire::cli::Cli::parse().no_launch
+        }
+
+        #[cfg(debug_assertions)]
+        true
     };
 
-    #[cfg(debug_assertions)]
-    let game = GameDetails::default(&exe_dir);
+    let game = {
+        #[cfg(not(debug_assertions))]
+        {
+            let game_exe_path = match_wire::contains_required_files(&exe_dir)?;
+            let (version, hash) = match_wire::exe_details(&game_exe_path);
+            GameDetails::new(game_exe_path, version, hash)
+        }
+
+        #[cfg(debug_assertions)]
+        GameDetails::default(&exe_dir)
+    };
 
     let version_task = tokio::spawn(get_latest_version());
     let hmw_hash_task = tokio::spawn(get_latest_hmw_hash());
@@ -154,9 +167,12 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
     let launch_task = tokio::spawn({
         let game_exe_path = game.path.clone();
         async move {
+            if no_launch {
+                return None;
+            }
             // delay h2m doesn't block splash screen
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            launch_h2m_pseudo(&game_exe_path)
+            Some(launch_h2m_pseudo(&game_exe_path))
         }
     });
 
