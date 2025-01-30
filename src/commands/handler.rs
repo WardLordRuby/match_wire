@@ -4,20 +4,20 @@ use crate::{
         filter::build_favorites,
         launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
     },
-    exe_details,
+    exe_details, leave_splash_screen,
     utils::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         json_data::Version,
     },
-    CACHED_DATA, LOG_ONLY, REQUIRED_FILES,
+    CACHED_DATA, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, WHITE, YELLOW},
     format_for_clap, AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl,
-    HookUID, HookedEvent, InitLineCallback, InputEventHook, InputHook, InputHookErr,
+    HookUID, HookedEvent, InputEventHook, InputHook, InputHookErr, ModLineState,
 };
 use std::{
     borrow::Cow,
@@ -35,7 +35,7 @@ use tokio::{
         mpsc::{channel, Receiver, Sender},
         Mutex, RwLock, RwLockReadGuard,
     },
-    task::JoinError,
+    task::JoinHandle,
 };
 use tracing::{error, info, warn};
 use winptyrs::PTY;
@@ -181,10 +181,6 @@ impl From<Version> for AppDetails {
     }
 }
 
-type LaunchResult = Result<Result<PTY, LaunchError>, JoinError>;
-type AppVersionResult = Result<reqwest::Result<AppDetails>, JoinError>;
-type HmwHashResult = Result<reqwest::Result<Result<String, &'static str>>, JoinError>;
-
 pub type CommandHandle = CmdHandle<CommandContext, Stdout>;
 
 pub struct CommandContext {
@@ -194,7 +190,7 @@ pub struct CommandContext {
     h2m_console_history: Arc<Mutex<Vec<String>>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<PathBuf>,
-    msg_sender: Arc<Sender<Message>>,
+    msg_sender: Sender<Message>,
     game: GameDetails,
     app: AppDetails,
 }
@@ -213,29 +209,34 @@ impl Executor<Stdout> for CommandContext {
                 Command::Version => self.print_version(),
                 Command::Quit => self.quit().await,
             },
-            Err(err) => {
-                if let Err(prt_err) = err.print() {
-                    error!("{err} {prt_err}");
-                }
-                Ok(CommandHandle::Processed)
-            }
+            Err(err) => err.print().map(|_| CommandHandle::Processed),
         }
     }
 }
 
+pub struct StartupData {
+    pub local_dir: Option<PathBuf>,
+    pub game: GameDetails,
+    pub cache_task: JoinHandle<Cache>,
+    pub splash_task: JoinHandle<io::Result<()>>,
+    pub launch_task: JoinHandle<Result<PTY, LaunchError>>,
+    pub version_task: JoinHandle<reqwest::Result<AppDetails>>,
+    pub hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
+}
+
 impl CommandContext {
-    pub fn new(
-        game_launch: LaunchResult,
-        app_ver: AppVersionResult,
-        hmw_hash: HmwHashResult,
-        cache: Result<Cache, JoinError>,
-        mut game: GameDetails,
-        local_dir: Option<PathBuf>,
-    ) -> (Self, Receiver<Message>, Receiver<()>, bool) {
-        let (handle, try_start_listener) = if let Ok(Ok(handle)) = game_launch {
+    pub async fn from(mut startup_data: StartupData) -> (Self, (Receiver<Message>, Receiver<()>)) {
+        let (launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
+            startup_data.launch_task,
+            startup_data.version_task,
+            startup_data.hmw_hash_task,
+            startup_data.cache_task
+        );
+
+        let (handle, try_start_listener) = if let Ok(Ok(handle)) = launch_res {
             (Some(handle), true)
         } else {
-            let err = match game_launch {
+            let err = match launch_res {
                 Err(join_err) => join_err.to_string(),
                 Ok(Err(launch_err)) => launch_err.to_string(),
                 Ok(Ok(_)) => unreachable!("by happy path"),
@@ -245,7 +246,7 @@ impl CommandContext {
             (None, false)
         };
 
-        let app = if let Ok(Ok(app)) = app_ver {
+        let app = if let Ok(Ok(app)) = app_ver_res {
             if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
                 if app.ver_curr != latest {
                     info!("{msg}")
@@ -253,7 +254,7 @@ impl CommandContext {
             }
             app
         } else {
-            let err = match app_ver {
+            let err = match app_ver_res {
                 Err(join_err) => join_err.to_string(),
                 Ok(Err(reqwest_err)) => reqwest_err.to_string(),
                 Ok(Ok(_)) => unreachable!("by happy path"),
@@ -262,15 +263,15 @@ impl CommandContext {
             AppDetails::default()
         };
 
-        if let Ok(Ok(Ok(hash_latest))) = hmw_hash {
-            if let Some(ref hash_curr) = game.hash_curr {
+        if let Ok(Ok(Ok(hash_latest))) = hmw_hash_res {
+            if let Some(ref hash_curr) = startup_data.game.hash_curr {
                 if hash_curr != &hash_latest {
                     info!("{HmwUpdateHelp}")
                 }
             }
-            game.hash_latest = Some(hash_latest);
+            startup_data.game.hash_latest = Some(hash_latest);
         } else {
-            let err = match hmw_hash {
+            let err = match hmw_hash_res {
                 Ok(Ok(Err(err))) => Cow::Borrowed(err),
                 Ok(Err(err)) => Cow::Owned(err.to_string()),
                 Err(err) => Cow::Owned(err.to_string()),
@@ -300,26 +301,31 @@ impl CommandContext {
 
         let (message_tx, message_rx) = channel(50);
 
-        (
-            CommandContext {
-                cache: Arc::new(Mutex::new(cache.unwrap_or_else(|err| {
-                    error!("Critical error building cache, could not populate cache");
-                    error!(name: LOG_ONLY, "{err:?}");
-                    Cache::default()
-                }))),
-                msg_sender: Arc::new(message_tx),
-                app,
-                game,
-                local_dir,
-                pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
-                cache_needs_update,
-                forward_logs: Arc::new(AtomicBool::new(false)),
-                h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
-            },
-            message_rx,
-            update_cache_rx,
-            try_start_listener,
-        )
+        let mut ctx = CommandContext {
+            cache: Arc::new(Mutex::new(cache_res.unwrap_or_else(|err| {
+                error!("Critical error building cache, could not populate cache");
+                error!(name: LOG_ONLY, "{err:?}");
+                Cache::default()
+            }))),
+            msg_sender: message_tx,
+            app,
+            game: startup_data.game,
+            local_dir: startup_data.local_dir,
+            pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
+            cache_needs_update,
+            forward_logs: Arc::new(AtomicBool::new(false)),
+            h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
+        };
+
+        if try_start_listener {
+            ctx.listener_routine()
+                .await
+                .unwrap_or_else(|err| warn!("{err}"));
+        }
+
+        leave_splash_screen(startup_data.splash_task).await;
+
+        (ctx, (message_rx, update_cache_rx))
     }
     #[inline]
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
@@ -365,8 +371,8 @@ impl CommandContext {
         self.pty_handle.as_ref().map(Arc::clone)
     }
     #[inline]
-    pub fn msg_sender(&self) -> Arc<Sender<Message>> {
-        Arc::clone(&self.msg_sender)
+    pub fn msg_sender(&self) -> Sender<Message> {
+        self.msg_sender.clone()
     }
     #[inline]
     pub fn game_version(&self) -> Option<f64> {
@@ -593,9 +599,15 @@ impl CommandContext {
         let uid = HookUID::new();
         let game_exe_name = self.game.game_file_name().into_owned();
 
-        let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
+        let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
             handle.set_prompt(game_exe_name);
             handle.disable_completion();
+            Ok(())
+        });
+
+        let revert: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
+            handle.set_prompt(MAIN_PROMPT.into());
+            handle.enable_completion();
             Ok(())
         });
 
@@ -674,7 +686,7 @@ impl CommandContext {
 
         Ok(CommandHandle::InsertHook(InputHook::new(
             uid,
-            Some(init),
+            InputHook::new_hook_states(init, revert),
             Some(Box::new(end_forward_logs)),
             input_hook,
         )))
@@ -691,10 +703,15 @@ impl CommandContext {
             self.game_name()
         );
 
-        let init: Box<InitLineCallback<CommandContext, Stdout>> = Box::new(|handle| {
+        let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
             handle.set_prompt(format!(
                 "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
             ));
+            Ok(())
+        });
+
+        let revert: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
+            handle.set_prompt(MAIN_PROMPT.into());
             Ok(())
         });
 
@@ -715,7 +732,7 @@ impl CommandContext {
             });
 
         Ok(CommandHandle::InsertHook(InputHook::with_new_uid(
-            Some(init),
+            InputHook::new_hook_states(init, revert),
             None,
             input_hook,
         )))

@@ -2,8 +2,8 @@ use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
     await_user_for_end, check_app_dir_exists,
     commands::{
-        handler::{AppDetails, CommandContext, GameDetails, Message},
-        launch_h2m::{launch_h2m_pseudo, LaunchError},
+        handler::{CommandContext, GameDetails, Message, StartupData},
+        launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
     utils::{
@@ -11,17 +11,16 @@ use match_wire::{
         display::DisplayPanic,
         subscriber::init_subscriber,
     },
-    CACHED_DATA, LOCAL_DATA, LOG_ONLY,
+    CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT,
 };
 use repl_oxide::{
     ansi_code::{RED, WHITE},
     repl_builder, CommandHandle, EventLoop, Executor,
 };
 use std::{borrow::Cow, io, path::PathBuf};
-use tokio::{sync::mpsc::Receiver, task::JoinHandle};
+use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
-use winptyrs::PTY;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -40,8 +39,8 @@ async fn main() {
     )
     .unwrap();
 
-    let startup_data = match app_startup() {
-        Ok(data) => data,
+    let (mut command_context, receivers) = match app_startup() {
+        Ok(startup_data) => CommandContext::from(startup_data).await,
         Err(err) => {
             eprintln!("{RED}{err}{WHITE}");
             await_user_for_end();
@@ -49,56 +48,26 @@ async fn main() {
         }
     };
 
-    let (splash_res, launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
-        startup_data.splash_task,
-        startup_data.launch_task,
-        startup_data.version_task,
-        startup_data.hmw_hash_task,
-        startup_data.cache_task
-    );
-
-    splash_res.unwrap().unwrap();
-
-    #[cfg(not(debug_assertions))]
-    match_wire::leave_splash_screen().await;
-
-    let (mut command_context, message_rx, update_cache_rx, try_start_listener) =
-        CommandContext::new(
-            launch_res,
-            app_ver_res,
-            hmw_hash_res,
-            cache_res,
-            startup_data.game,
-            startup_data.local_dir,
-        );
-
-    if try_start_listener {
-        command_context
-            .listener_routine()
-            .await
-            .unwrap_or_else(|err| warn!("{err}"));
-    }
-
     print_help();
 
-    repl_loop(&mut command_context, message_rx, update_cache_rx, term)
+    run_eval_print_loop(&mut command_context, receivers, term)
         .await
         .unwrap_or_else(|err| error!("{err}"));
 
     command_context.graceful_shutdown().await;
 }
 
-async fn repl_loop(
+async fn run_eval_print_loop(
     command_context: &mut CommandContext,
-    mut message_rx: Receiver<Message>,
-    mut update_cache_rx: Receiver<()>,
+    receivers: (Receiver<Message>, Receiver<()>),
     term: io::Stdout,
 ) -> io::Result<()> {
+    let (mut message_rx, mut update_cache_rx) = receivers;
     let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
     let mut reader = EventStream::new();
     let mut line_handle = repl_builder(term)
-        .with_prompt(format!("{}.exe", env!("CARGO_PKG_NAME")))
+        .with_prompt(MAIN_PROMPT.into())
         .with_completion(&match_wire::command_scheme::COMPLETION)
         .with_custom_quit_command("quit")
         .build()
@@ -129,7 +98,7 @@ async fn repl_loop(
                     EventLoop::AsyncCallback(callback) => {
                         if let Err(err) = callback(command_context).await {
                             error!("{err}");
-                            if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err) {
+                            if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err)? {
                                 on_err_callback(command_context).expect("`end_forward_logs` does not error");
                             }
                         }
@@ -160,16 +129,6 @@ async fn repl_loop(
         }
     }
     Ok(())
-}
-
-struct StartupData {
-    local_dir: Option<PathBuf>,
-    game: GameDetails,
-    cache_task: JoinHandle<Cache>,
-    splash_task: JoinHandle<io::Result<()>>,
-    launch_task: JoinHandle<Result<PTY, LaunchError>>,
-    version_task: JoinHandle<reqwest::Result<AppDetails>>,
-    hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
 }
 
 #[instrument(level = "trace", skip_all)]

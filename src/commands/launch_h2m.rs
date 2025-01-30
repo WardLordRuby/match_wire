@@ -80,7 +80,7 @@ fn case_insensitve_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
     true
 }
 
-async fn send_msg_over(sender: &Arc<Sender<Message>>, message: Message) {
+async fn send_msg_over(sender: &Sender<Message>, message: Message) {
     sender
         .send(message)
         .await
@@ -190,7 +190,7 @@ enum Connection {
 async fn add_to_history(
     cache_arc: &Arc<Mutex<Cache>>,
     update_cache: &Arc<AtomicBool>,
-    background_msg: &Arc<Sender<Message>>,
+    background_msg: &Sender<Message>,
     wide_encode: &[u16],
     kind: Connection,
     version: f64,
@@ -254,7 +254,7 @@ async fn add_to_history(
         Connection::Direct => {
             let cache_arc = Arc::clone(cache_arc);
             let update_cache = Arc::clone(update_cache);
-            let background_msg = Arc::clone(background_msg);
+            let background_msg = background_msg.clone();
             let wide_encode = wide_encode.to_vec();
             tokio::spawn(async move {
                 let meta = match HostName::from_request(&wide_encode).await {

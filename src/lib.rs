@@ -32,11 +32,13 @@ use std::{
     sync::{atomic::AtomicBool, LazyLock, Mutex},
     time::Duration,
 };
+use tokio::task::JoinHandle;
 use utils::json_data::{HmwManifest, Version};
 
 #[cfg(not(debug_assertions))]
 use crossterm::{execute, terminal};
 
+pub const MAIN_PROMPT: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
 pub const VERSION_URL: &str =
@@ -347,18 +349,21 @@ pub async fn splash_screen() -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(debug_assertions))]
-pub async fn leave_splash_screen() {
-    let mut stdout = std::io::stdout();
-    execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
-    SPLASH_SCREEN_VIS.store(false, std::sync::atomic::Ordering::Relaxed);
-    let mut buffer = loop {
-        match SPLASH_SCREEN_MSG_BUFFER.try_lock() {
-            Ok(buffer) => break buffer,
-            Err(_) => tokio::time::sleep(tokio::time::Duration::from_millis(20)).await,
-        }
-    };
-    print!("{}", std::mem::take(&mut *buffer))
+pub async fn leave_splash_screen(task: JoinHandle<io::Result<()>>) {
+    task.await.unwrap().unwrap();
+
+    #[cfg(not(debug_assertions))]
+    {
+        execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
+        SPLASH_SCREEN_VIS.store(false, std::sync::atomic::Ordering::Relaxed);
+        let mut buffer = loop {
+            match SPLASH_SCREEN_MSG_BUFFER.try_lock() {
+                Ok(buffer) => break buffer,
+                Err(_) => tokio::time::sleep(tokio::time::Duration::from_millis(20)).await,
+            }
+        };
+        print!("{}", std::mem::take(&mut *buffer))
+    }
 }
 
 #[cfg(debug_assertions)]
