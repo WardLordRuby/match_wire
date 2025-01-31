@@ -15,7 +15,8 @@ use match_wire::{
 };
 use repl_oxide::{
     ansi_code::{RED, WHITE},
-    repl_builder, CommandHandle, EventLoop, Executor,
+    executor::{CommandHandle, Executor},
+    repl_builder, EventLoop,
 };
 use std::{borrow::Cow, io, path::PathBuf};
 use tokio::sync::mpsc::Receiver;

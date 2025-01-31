@@ -16,8 +16,9 @@ use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, WHITE, YELLOW},
-    format_for_clap, AsyncCallback, CommandHandle as CmdHandle, EventLoop, Executor, HookControl,
-    HookUID, HookedEvent, InputEventHook, InputHook, InputHookErr, ModLineState,
+    executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
+    AsyncCallback, EventLoop, HookControl, HookUID, HookedEvent, InputEventHook, InputHook,
+    InputHookErr, ModLineState,
 };
 use std::{
     borrow::Cow,
