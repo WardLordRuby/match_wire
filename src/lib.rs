@@ -22,7 +22,7 @@ use commands::{
 };
 use constcat::concat;
 use crossterm::cursor;
-use repl_oxide::ansi_code::{GREEN, RED, WHITE};
+use repl_oxide::ansi_code::{GREEN, RED, RESET};
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -192,7 +192,7 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
             if !files.contains(REQUIRED_FILES[2]) {
                 std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
                     .expect("Failed to create players2 folder");
-                println!("{GREEN}\"players2\" folder is missing, a new one was created{WHITE}");
+                println!("{GREEN}\"players2\" folder is missing, a new one was created{RESET}");
             }
             Ok(exe_dir.join(found_game))
         }
@@ -220,7 +220,7 @@ fn hash_file_hex(path: &Path) -> io::Result<String> {
 pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
     let version = get_exe_version(game_exe_path).map(Some).unwrap_or_else(|| {
         eprintln!(
-            "{RED}Failed to get version of {}{WHITE}",
+            "{RED}Failed to get version of {}{RESET}",
             game_exe_path
                 .file_name()
                 .expect("input was not modified")
@@ -232,7 +232,7 @@ pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
         .map(Some)
         .unwrap_or_else(|err| {
             eprintln!(
-                "{RED}{err}, input file_name: {}{WHITE}",
+                "{RED}{err}, input file_name: {}{RESET}",
                 game_exe_path
                     .file_name()
                     .expect("input was not modified")

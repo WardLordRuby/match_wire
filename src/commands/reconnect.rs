@@ -7,7 +7,7 @@ use crate::{
     utils::display::{ConnectionHelp, DisplayHistoryErr},
     LOG_ONLY,
 };
-use repl_oxide::ansi_code::{WHITE, YELLOW};
+use repl_oxide::ansi_code::{RESET, YELLOW};
 use std::{
     borrow::Cow, collections::HashMap, fmt::Display, net::SocketAddr, sync::atomic::Ordering,
 };
@@ -103,7 +103,7 @@ impl CommandContext {
         else {
             error!("Could not find server in cache");
             println!(
-                "use command '{YELLOW}cache{WHITE} update' to attempt to locate missing server"
+                "use command '{YELLOW}cache{RESET} update' to attempt to locate missing server"
             );
             return Ok(CommandHandle::Processed);
         };

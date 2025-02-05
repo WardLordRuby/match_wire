@@ -14,7 +14,7 @@ use match_wire::{
     CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT,
 };
 use repl_oxide::{
-    ansi_code::{RED, WHITE},
+    ansi_code::{RED, RESET},
     executor::{CommandHandle, Executor},
     repl_builder, EventLoop,
 };
@@ -43,7 +43,7 @@ async fn main() {
     let (mut command_context, receivers) = match app_startup() {
         Ok(startup_data) => CommandContext::from(startup_data).await,
         Err(err) => {
-            eprintln!("{RED}{err}{WHITE}");
+            eprintln!("{RED}{err}{RESET}");
             await_user_for_end();
             return;
         }
@@ -68,7 +68,7 @@ async fn run_eval_print_loop(
 
     let mut reader = EventStream::new();
     let mut line_handle = repl_builder(term)
-        .with_prompt(MAIN_PROMPT.into())
+        .with_prompt(MAIN_PROMPT)
         .with_completion(&match_wire::command_scheme::COMPLETION)
         .with_custom_quit_command("quit")
         .build()
@@ -112,7 +112,7 @@ async fn run_eval_print_loop(
                         }
                     }
                     EventLoop::TryProcessInput(Err(mismatched_quotes)) => {
-                        eprintln!("{RED}{mismatched_quotes}{WHITE}")
+                        eprintln!("{RED}{mismatched_quotes}{RESET}")
                     },
                 }
             }

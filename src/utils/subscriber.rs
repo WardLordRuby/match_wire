@@ -86,7 +86,7 @@ where
         writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        use repl_oxide::ansi_code::{BLUE, GREEN, MAGENTA, RED, WHITE, YELLOW};
+        use repl_oxide::ansi_code::{BLUE, GREEN, MAGENTA, RED, RESET, YELLOW};
 
         let line_color = match *event.metadata().level() {
             Level::ERROR => RED,
@@ -99,7 +99,7 @@ where
         let print = |mut writer: Writer<'_>| {
             write!(writer, "{line_color}")?;
             self.inner.format_event(ctx, writer.by_ref(), event)?;
-            write!(writer, "{WHITE}")
+            write!(writer, "{RESET}")
         };
 
         if crate::SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::Acquire) {

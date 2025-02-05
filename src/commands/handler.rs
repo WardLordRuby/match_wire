@@ -15,7 +15,7 @@ use crate::{
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
-    ansi_code::{GREEN, RED, WHITE, YELLOW},
+    ansi_code::{GREEN, RED, RESET, YELLOW},
     callback::{AsyncCallback, InputEventHook, ModLineState},
     executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
     EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
@@ -86,9 +86,9 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (line_color, msg, reset_color): (&str, &str, &str) = match self {
             Self::Str(msg) => ("", msg, ""),
-            Self::Info(msg) => (GREEN, msg, WHITE),
-            Self::Err(msg) => (RED, msg, WHITE),
-            Self::Warn(msg) => (YELLOW, msg, WHITE),
+            Self::Info(msg) => (GREEN, msg, RESET),
+            Self::Err(msg) => (RED, msg, RESET),
+            Self::Warn(msg) => (YELLOW, msg, RESET),
         };
 
         write!(f, "{line_color}{msg}{reset_color}")
@@ -584,11 +584,11 @@ impl CommandContext {
         if self.check_h2m_connection().await.is_err() || !h2m_running() {
             let history = self.h2m_console_history.lock().await;
             if !history.is_empty() {
-                println!("{YELLOW}No active connection to H2M, displaying old logs{WHITE}");
+                println!("{YELLOW}No active connection to H2M, displaying old logs{RESET}");
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 print!("{}", DisplayLogs(&history));
             } else {
-                println!("{YELLOW}No active connection to H2M{WHITE}");
+                println!("{YELLOW}No active connection to H2M{RESET}");
             }
             return Ok(CommandHandle::Processed);
         }
@@ -602,15 +602,17 @@ impl CommandContext {
         let uid = HookUID::new();
         let game_exe_name = self.game.game_file_name().into_owned();
 
-        let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
-            handle.set_prompt(game_exe_name);
+        let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(move |handle| {
+            handle.set_prompt(&game_exe_name);
             handle.disable_completion();
+            handle.disable_line_stylization();
             Ok(())
         });
 
         let revert: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
-            handle.set_prompt(MAIN_PROMPT.into());
+            handle.set_prompt(MAIN_PROMPT);
             handle.enable_completion();
+            handle.enable_line_stylization();
             Ok(())
         });
 
@@ -701,20 +703,20 @@ impl CommandContext {
         }
 
         println!(
-            "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{WHITE}",
+            "{RED}Quitting {} will also close {}\n{YELLOW}Are you sure you want to quit?{RESET}",
             env!("CARGO_PKG_NAME"),
             self.game_name()
         );
 
         let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
-            handle.set_prompt(format!(
-                "Press ({YELLOW}y{WHITE}) or ({YELLOW}ctrl_c{WHITE}) to close"
+            handle.set_prompt(&format!(
+                "Press ({YELLOW}y{RESET}) or ({YELLOW}ctrl_c{RESET}) to close"
             ));
             Ok(())
         });
 
         let revert: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
-            handle.set_prompt(MAIN_PROMPT.into());
+            handle.set_prompt(MAIN_PROMPT);
             Ok(())
         });
 
@@ -730,7 +732,7 @@ impl CommandContext {
                         code: KeyCode::Char('y'),
                         ..
                     },
-                ) => HookedEvent::new(EventLoop::Break, HookControl::Release),
+                ) => HookedEvent::break_repl(),
                 _ => HookedEvent::release_hook(),
             });
 

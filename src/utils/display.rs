@@ -7,7 +7,7 @@ use crate::{
     utils::caching::ReadCacheErr,
 };
 use constcat::concat;
-use repl_oxide::ansi_code::{GREEN, RED, WHITE, YELLOW};
+use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use std::{borrow::Cow, fmt::Display};
 
 const SOURCE_HMW: &str = "HMW master server";
@@ -23,7 +23,7 @@ fn connection_help() -> &'static str {
             "Close MW2 Remastered and use command `",
             YELLOW,
             "launch",
-            WHITE,
+            RESET,
             "` to establish valid connection"
         )
     } else {
@@ -31,7 +31,7 @@ fn connection_help() -> &'static str {
             "Use command `",
             YELLOW,
             "launch",
-            WHITE,
+            RESET,
             "` to re-launch game"
         )
     }
@@ -67,7 +67,7 @@ impl Display for DisplayServerCount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}{}{WHITE} {}",
+            "{}{}{RESET} {}",
             self.1,
             self.0,
             SingularPlural(self.0, "server", "servers")
@@ -250,22 +250,22 @@ impl Display for GameDetails {
                     YELLOW
                 }
             }
-            _ => WHITE,
+            _ => RESET,
         };
         let mut wrote_details = false;
         if let Some(version) = self.version {
-            write!(f, "{color}v{version}{WHITE}")?;
+            write!(f, "{color}v{version}{RESET}")?;
             wrote_details = true;
         }
         if let Some(ref hash) = self.hash_curr {
             write!(
                 f,
-                "{}hash: {color}{hash}{WHITE}",
+                "{}hash: {color}{hash}{RESET}",
                 if wrote_details { ", " } else { "" }
             )?;
         }
         if color == YELLOW {
-            write!(f, "\n{GREEN}{HmwUpdateHelp}{WHITE}")?;
+            write!(f, "\n{GREEN}{HmwUpdateHelp}{RESET}")?;
         }
         Ok(())
     }
@@ -280,11 +280,11 @@ impl Display for AppDetails {
                 YELLOW
             }
         } else {
-            WHITE
+            RESET
         };
         write!(
             f,
-            "{}.exe {color}v{}{WHITE}",
+            "{}.exe {color}v{}{RESET}",
             env!("CARGO_PKG_NAME"),
             self.ver_curr
         )?;

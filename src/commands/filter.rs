@@ -13,7 +13,7 @@ use crate::{
     LOG_ONLY,
 };
 
-use repl_oxide::ansi_code::{GREEN, RED, WHITE, YELLOW};
+use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info, instrument, trace, warn};
@@ -95,7 +95,7 @@ pub async fn build_favorites(
     });
 
     if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
-        println!("{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{WHITE}")
+        println!("{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}")
     }
 
     let (mut servers, update_cache) = filter_server_list(args, cache, limit)
@@ -122,7 +122,7 @@ pub async fn build_favorites(
     serialize_json(&mut favorites_json, ips)?;
 
     println!(
-        "{GREEN}{FAVORITES} updated with {}{WHITE}",
+        "{GREEN}{FAVORITES} updated with {}{RESET}",
         DisplayCountOf(ip_collected, "entry", "entries")
     );
     Ok(update_cache)
@@ -618,7 +618,7 @@ async fn filter_server_list(
 
         if failure_count > 0 {
             eprintln!(
-                "{RED}Failed to resolve location for {failure_count} server {}{WHITE}",
+                "{RED}Failed to resolve location for {failure_count} server {}{RESET}",
                 SingularPlural(failure_count, "hoster", "hosters")
             )
         }
@@ -690,7 +690,7 @@ async fn filter_server_list(
         if did_not_respond.total() > 0 {
             if use_backup_server_info {
                 println!(
-                    "Included outdated server data for {YELLOW}{used_backup_data}{WHITE} \
+                    "Included outdated server data for {YELLOW}{used_backup_data}{RESET} \
                     of {} that did not respond to 'getInfo' request",
                     DisplayServerCount(did_not_respond.total(), RED)
                 )
