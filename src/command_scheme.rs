@@ -7,14 +7,7 @@ pub const COMPLETION: CommandScheme = init_command_scheme();
 // HARD: this ideally would be done by a proc-macro
 pub const fn init_command_scheme() -> CommandScheme {
     CommandScheme::new(
-        RecData::new(
-            None,
-            Some(&COMMANDS_ALIAS),
-            None,
-            Some(&COMMAND_RECS),
-            RecKind::Command,
-            false,
-        ),
+        RecData::command_set(Some(&COMMANDS_ALIAS), Some(&COMMAND_RECS), false),
         &COMMAND_INNER,
     )
 }
@@ -87,7 +80,7 @@ const COMMAND_INNER: [InnerScheme; 9] = [
             None,
             Some(&FILTER_SHORT),
             Some(&FILTER_RECS),
-            RecKind::Argument,
+            RecKind::argument_with_no_required_inputs(),
             false,
         ),
         Some(&FILTER_INNER),
@@ -99,7 +92,7 @@ const COMMAND_INNER: [InnerScheme; 9] = [
             None,
             Some(&RECONNECT_SHORT),
             Some(&RECONNECT_RECS),
-            RecKind::Argument,
+            RecKind::argument_with_no_required_inputs(),
             false,
         ),
         Some(&RECONNECT_INNTER),
