@@ -125,7 +125,7 @@ async fn run_eval_print_loop(
                 if let Err(err) = write_cache(command_context).await {
                     command_context.send_message(err).await
                 };
-                line_handle.set_unventful();
+                line_handle.set_uneventful();
             }
         }
     }
