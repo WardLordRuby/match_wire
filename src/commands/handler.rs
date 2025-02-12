@@ -617,76 +617,76 @@ impl CommandContext {
         });
 
         let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-            Box::new(move |handle, event| match event {
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('d'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }) => {
-                    handle.clear_line()?;
-                    HookedEvent::new(handle.process_close_signal()?, HookControl::Release)
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }) => {
-                    if !handle.input().is_empty() {
-                        handle.ctrl_c_line()?;
-                        return HookedEvent::continue_hook();
-                    }
-                    HookedEvent::new(
-                        EventLoop::Callback(Box::new(end_forward_logs)),
-                        HookControl::Release,
-                    )
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char(c),
-                    ..
-                }) => {
-                    handle.insert_char(c);
-                    HookedEvent::continue_hook()
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Backspace,
-                    ..
-                }) => {
-                    if handle.input().is_empty() {
+            Box::new(move |handle, event| {
+                match event {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('d'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    }) => {
+                        handle.clear_line()?;
                         return HookedEvent::new(
-                            EventLoop::Callback(Box::new(end_forward_logs)),
+                            handle.process_close_signal()?,
                             HookControl::Release,
                         );
                     }
-                    handle.remove_char()?;
-                    HookedEvent::continue_hook()
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Enter,
-                    ..
-                }) => {
-                    if handle.input().is_empty() {
-                        handle.new_line()?;
-                        return HookedEvent::continue_hook();
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('c'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    }) => {
+                        if handle.input().is_empty() {
+                            return HookedEvent::new(
+                                EventLoop::Callback(Box::new(end_forward_logs)),
+                                HookControl::Release,
+                            );
+                        }
+                        handle.ctrl_c_line()?;
                     }
-                    let cmd = handle.new_line()?;
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char(c),
+                        ..
+                    }) => handle.insert_char(c),
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        if handle.input().is_empty() {
+                            return HookedEvent::new(
+                                EventLoop::Callback(Box::new(end_forward_logs)),
+                                HookControl::Release,
+                            );
+                        }
+                        handle.remove_char()?;
+                    }
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Enter,
+                        ..
+                    }) => {
+                        if !handle.input().is_empty() {
+                            let cmd = handle.new_line()?;
 
-                    let send_user_cmd: Box<AsyncCallback<CommandContext>> =
-                        Box::new(move |context| {
-                            Box::pin(async move {
-                                context
-                                    .try_send_cmd_from_hook(cmd, uid)
-                                    .await?
-                                    .unwrap_or_else(|err| error!("{err}"));
-                                Ok(())
-                            })
-                        });
+                            let send_user_cmd: Box<AsyncCallback<CommandContext>> =
+                                Box::new(move |context| {
+                                    Box::pin(async move {
+                                        context
+                                            .try_send_cmd_from_hook(cmd, uid)
+                                            .await?
+                                            .unwrap_or_else(|err| error!("{err}"));
+                                        Ok(())
+                                    })
+                                });
 
-                    HookedEvent::new(
-                        EventLoop::AsyncCallback(send_user_cmd),
-                        HookControl::Continue,
-                    )
+                            return HookedEvent::new(
+                                EventLoop::AsyncCallback(send_user_cmd),
+                                HookControl::Continue,
+                            );
+                        }
+                        handle.new_line()?;
+                    }
+                    _ => (),
                 }
-                _ => HookedEvent::continue_hook(),
+                HookedEvent::continue_hook()
             });
 
         Ok(CommandHandle::InsertHook(InputHook::new(
