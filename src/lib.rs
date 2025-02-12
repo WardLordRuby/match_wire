@@ -22,7 +22,7 @@ use commands::{
 };
 use constcat::concat;
 use crossterm::cursor;
-use repl_oxide::ansi_code::{GREEN, RED, RESET};
+use repl_oxide::ansi_code::{RED, RESET};
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -189,11 +189,6 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
             } else {
                 return Err(concat!("Mod exe not found, ", HMW_DOWNLOAD_HINT));
             };
-            if !files.contains(REQUIRED_FILES[2]) {
-                std::fs::create_dir(exe_dir.join(REQUIRED_FILES[2]))
-                    .expect("Failed to create players2 folder");
-                println!("{GREEN}\"players2\" folder is missing, a new one was created{RESET}");
-            }
             Ok(exe_dir.join(found_game))
         }
         _ => unreachable!(),
@@ -312,7 +307,11 @@ pub fn print_help() {
 pub async fn splash_screen() -> io::Result<()> {
     #[cfg(not(debug_assertions))]
     {
-        use std::{io::Write, sync::atomic::Ordering};
+        use crossterm::{
+            execute, queue,
+            terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
+        };
+        use std::sync::atomic::Ordering;
 
         // font: 4Max - patorjk.com
         const SPLASH_TEXT: [&str; 4] = [
@@ -333,15 +332,17 @@ pub async fn splash_screen() -> io::Result<()> {
 
         for (i, &line) in SPLASH_TEXT.iter().enumerate() {
             let start_x = width.saturating_sub(line.chars().count() as u16) / 2;
-            execute!(
+            execute!(stdout, BeginSynchronizedUpdate)?;
+
+            queue!(
                 stdout,
                 cursor::MoveTo(start_x, start_y + i as u16),
                 crossterm::style::Print(line)
             )?;
-            tokio::time::sleep(tokio::time::Duration::from_millis(160)).await;
-        }
 
-        stdout.flush()?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(160)).await;
+            execute!(stdout, EndSynchronizedUpdate)?;
+        }
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }

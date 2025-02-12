@@ -150,10 +150,16 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
 
     let game = {
         #[cfg(not(debug_assertions))]
-        {
-            let game_exe_path = match_wire::contains_required_files(&exe_dir)?;
-            let (version, hash) = match_wire::exe_details(&game_exe_path);
-            GameDetails::new(game_exe_path, version, hash)
+        match match_wire::contains_required_files(&exe_dir) {
+            Ok(game_exe_path) => {
+                let (version, hash) = match_wire::exe_details(&game_exe_path);
+                GameDetails::new(game_exe_path, version, hash)
+            }
+            Err(err) if no_launch => {
+                print_during_splash(Message::error(err));
+                GameDetails::default(&exe_dir)
+            }
+            Err(err) => return Err(err.into()),
         }
 
         #[cfg(debug_assertions)]

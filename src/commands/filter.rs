@@ -23,7 +23,7 @@ use std::{
     collections::HashSet,
     fmt::Display,
     fs::File,
-    io::{self, Write},
+    io::{self, ErrorKind, Write},
     net::{AddrParseError, IpAddr, SocketAddr, ToSocketAddrs},
     path::Path,
     sync::Arc,
@@ -85,7 +85,18 @@ pub async fn build_favorites(
 ) -> io::Result<bool> {
     let mut ip_collected = 0;
     let mut ips = String::new();
-    let mut favorites_json = File::create(curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}")))?;
+
+    let favorites_path = curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}"));
+    let mut favorites_json = match File::create(&favorites_path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            std::fs::create_dir(curr_dir.join(FAVORITES_LOC))?;
+            info!("\"players2\" folder is missing, a new one was created");
+            File::create(favorites_path)?
+        }
+        Err(err) => return Err(err),
+    };
+
     let limit = args.limit.unwrap_or({
         if version < 1.0 {
             DEFAULT_H2M_SERVER_CAP

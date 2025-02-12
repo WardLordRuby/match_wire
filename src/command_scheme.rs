@@ -5,7 +5,7 @@ pub const COMPLETION: CommandScheme = init_command_scheme();
 
 // MARK: IMPROVE
 // HARD: this ideally would be done by a proc-macro
-pub const fn init_command_scheme() -> CommandScheme {
+const fn init_command_scheme() -> CommandScheme {
     CommandScheme::new(
         RecData::command_set(Some(&COMMANDS_ALIAS), Some(&COMMAND_RECS), false),
         &COMMAND_INNER,
