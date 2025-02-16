@@ -170,29 +170,24 @@ impl Serialize for ContCodeMap<'_> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct HmwManifest {
-    #[serde(rename = "Modules")]
     pub modules: Vec<Module>,
-    // #[serde(rename = "IgnorePaths")]
     // pub ignore_paths: Vec<String>,
-    // #[serde(rename = "ManifestGuid")]
     // pub manifest_guid: String,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Module {
-    #[serde(rename = "Name")]
     pub name: String,
-    // #[serde(rename = "Version")]
     // pub version: String,
-    #[serde(rename = "FilesWithHashes")]
     pub files_with_hashes: HashMap<String, String>,
-    // #[serde(rename = "DownloadInfo")]
     // pub download_info: DownloadInfo,
 }
 
 // #[derive(Deserialize)]
+// #[serde(rename_all = "PascalCase")]
 // pub struct DownloadInfo {
-//     #[serde(rename = "DownloadPath")]
 //     pub download_path: String,
 // }

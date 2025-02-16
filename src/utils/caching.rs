@@ -69,7 +69,7 @@ impl Default for Cache {
 }
 
 impl Cache {
-    pub fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
+    fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
         let map = match source {
             Source::HmwMaster => &mut self.hmw,
             Source::Iw4Master => &mut self.iw4m,
@@ -85,18 +85,27 @@ impl Cache {
             .or_insert(ports.to_vec());
     }
 
+    fn try_insert_region_and_ports(
+        &mut self,
+        addr: SocketAddr,
+        region: Option<[char; 2]>,
+        valid_source: Option<Source>,
+    ) {
+        if let Some(region) = region {
+            self.ip_to_region.insert(addr.ip(), region);
+        }
+        if let Some(source) = valid_source {
+            self.insert_ports(addr.ip(), &[addr.port()], source);
+        }
+    }
+
     pub fn update_cache_with(&mut self, server: &Server, region: Option<[char; 2]>) {
         let socket_addr = server.source.socket_addr();
         if let Some(ref info) = server.info {
             self.host_to_connect
                 .insert(info.host_name.clone(), socket_addr);
         }
-        if let Some(region) = region {
-            self.ip_to_region.insert(socket_addr.ip(), region);
-        }
-        if let Some(source) = server.source.to_valid_source() {
-            self.insert_ports(socket_addr.ip(), &[socket_addr.port()], source);
-        }
+        self.try_insert_region_and_ports(socket_addr, region, server.source.to_valid_source());
     }
 
     pub fn push(&mut self, server: Server, region: Option<[char; 2]>) {
@@ -104,12 +113,7 @@ impl Cache {
         if let Some(info) = server.info {
             self.host_to_connect.insert(info.host_name, socket_addr);
         }
-        if let Some(region) = region {
-            self.ip_to_region.insert(socket_addr.ip(), region);
-        }
-        if let Some(source) = server.source.to_valid_source() {
-            self.insert_ports(socket_addr.ip(), &[socket_addr.port()], source);
-        }
+        self.try_insert_region_and_ports(socket_addr, region, server.source.to_valid_source());
     }
 }
 
@@ -142,7 +146,7 @@ impl CacheFile {
 #[instrument(level = "trace", skip_all)]
 pub async fn build_cache(
     connection_history: Option<Vec<HostName>>,
-    mut regions: Option<HashMap<IpAddr, [char; 2]>>,
+    regions: Option<HashMap<IpAddr, [char; 2]>>,
 ) -> Result<CacheFile, (&'static str, CacheFile)> {
     info!("Updating cache...");
 
@@ -165,24 +169,25 @@ pub async fn build_cache(
             Ok(result) => match result {
                 Ok(server) => {
                     let region = regions
-                        .as_mut()
-                        .and_then(|cache| cache.remove(&server.source.socket_addr().ip()));
+                        .as_ref()
+                        .and_then(|cache| cache.get(&server.source.socket_addr().ip()).copied());
                     cache.push(server, region)
                 }
                 Err(mut err) => {
                     error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
                     let source = err.meta.to_valid_source();
-                    if let Sourced::Iw4(data) = err.meta {
-                        if let Ok(ip) = data.server.ip.parse() {
-                            if let Some(source) = source {
-                                cache.insert_ports(ip, &[data.server.port], source);
-                            }
-                            cache.host_to_connect.insert(
-                                data.server.host_name,
-                                SocketAddr::new(ip, data.server.port),
-                            );
-                        }
+                    let Sourced::Iw4(data) = err.meta else {
+                        continue;
+                    };
+                    let Ok(ip) = data.server.ip.parse() else {
+                        continue;
+                    };
+                    if let Some(source) = source {
+                        cache.insert_ports(ip, &[data.server.port], source);
                     }
+                    cache
+                        .host_to_connect
+                        .insert(data.server.host_name, SocketAddr::new(ip, data.server.port));
                 }
             },
             Err(err) => error!(name: LOG_ONLY, "{err:?}"),
@@ -250,23 +255,18 @@ pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
             trace!("Cache read from file");
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(data.created) {
-                Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
-                    return Err(ReadCacheErr::with_old(
-                        "cache is too old",
-                        data.connection_history,
-                        data.cache.regions,
-                    ))
-                }
-                Err(err) => {
-                    return Err(ReadCacheErr::with_old(
-                        err.to_string(),
-                        data.connection_history,
-                        data.cache.regions,
-                    ))
-                }
-                _ => (),
+                Ok(time) if time > Duration::new(60 * 60 * 24, 0) => Err(ReadCacheErr::with_old(
+                    "cache is too old",
+                    data.connection_history,
+                    data.cache.regions,
+                )),
+                Err(err) => Err(ReadCacheErr::with_old(
+                    err.to_string(),
+                    data.connection_history,
+                    data.cache.regions,
+                )),
+                _ => Ok(Cache::from(data)),
             }
-            Ok(Cache::from(data))
         }
         Ok(OperationResult::Bool(false)) => {
             Err(ReadCacheErr::new(concat!(CACHED_DATA, " not found")))

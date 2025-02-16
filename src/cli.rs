@@ -8,7 +8,7 @@ pub struct Cli {
 }
 
 #[derive(Parser, Debug)]
-#[command(about, long_about = None)]
+#[command(name = "", about, long_about = None)]
 pub enum Command {
     /// Create a new favorites.json using various filter options
     #[command(alias = "Filter")]
