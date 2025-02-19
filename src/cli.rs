@@ -37,7 +37,11 @@ pub enum Command {
 
     /// Opens H2M/HMW game console
     #[command(aliases(["Logs", "logs", "Console"]))]
-    Console,
+    Console {
+        /// Re-print all logs captured from MW2 Remastered
+        #[arg(long)]
+        all: bool,
+    },
 
     /// Open MWR(2017) directory
     #[command(aliases(["Gamedir", "gamedir", "GameDir"]))]

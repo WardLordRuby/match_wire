@@ -72,6 +72,8 @@ const RECONNECT_SHORT: [(usize, &str); 2] = [(0, "H"), (1, "c")];
 const CACHE_RECS: [&str; 3] = ["reset", "update", "clear"];
 const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
 
+const CONSOLE_RECS: [&str; 1] = ["all"];
+
 const COMMAND_INNER: [InnerScheme; 9] = [
     // filter
     InnerScheme::new(
@@ -111,9 +113,18 @@ const COMMAND_INNER: [InnerScheme; 9] = [
         ),
         None,
     ),
-    // game-console
-    InnerScheme::end(ROOT),
-    // game-dir
+    // console
+    InnerScheme::new(
+        RecData::new(
+            Some(ROOT),
+            None,
+            None,
+            Some(&CONSOLE_RECS),
+            RecKind::argument_with_no_required_inputs(),
+            false,
+        ),
+        Some(&CONSOLE_INNER),
+    ), // game-dir
     InnerScheme::end(ROOT),
     // local-env
     InnerScheme::end(ROOT),
@@ -201,4 +212,9 @@ const RECONNECT_INNTER: [InnerScheme; 2] = [
         RecKind::user_defined_with_num_args(1),
         true,
     ),
+];
+
+const CONSOLE_INNER: [InnerScheme; 1] = [
+    // all
+    InnerScheme::end(COMMAND_RECS[4]),
 ];

@@ -27,7 +27,7 @@ use std::{
     io::{self, Stdout},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -184,11 +184,17 @@ impl From<Version> for AppDetails {
 
 pub type CommandHandle = CmdHandle<CommandContext, Stdout>;
 
+#[derive(Default)]
+pub struct ConsoleHistory {
+    pub history: Vec<String>,
+    pub last: AtomicUsize,
+}
+
 pub struct CommandContext {
     cache: Arc<Mutex<Cache>>,
     cache_needs_update: Arc<AtomicBool>,
     forward_logs: Arc<AtomicBool>,
-    h2m_console_history: Arc<Mutex<Vec<String>>>,
+    h2m_console_history: Arc<Mutex<ConsoleHistory>>,
     pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<PathBuf>,
     msg_sender: Sender<Message>,
@@ -204,7 +210,7 @@ impl Executor<Stdout> for CommandContext {
                 Command::Reconnect { args } => self.reconnect(args).await,
                 Command::Launch => self.launch_handler().await,
                 Command::Cache { option } => self.modify_cache(option).await,
-                Command::Console => self.open_game_console().await,
+                Command::Console { all } => self.open_game_console(all).await,
                 Command::GameDir => open_dir(self.game.path.parent()),
                 Command::LocalEnv => open_dir(self.local_dir.as_deref()),
                 Command::Version => self.print_version(),
@@ -317,7 +323,7 @@ impl CommandContext {
             pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
             cache_needs_update,
             forward_logs: Arc::new(AtomicBool::new(false)),
-            h2m_console_history: Arc::new(Mutex::new(Vec::<String>::new())),
+            h2m_console_history: Arc::new(Mutex::new(ConsoleHistory::default())),
         };
 
         if try_start_listener {
@@ -366,7 +372,7 @@ impl CommandContext {
         self.local_dir = Some(local_dir)
     }
     #[inline]
-    pub fn h2m_console_history(&self) -> Arc<Mutex<Vec<String>>> {
+    pub fn h2m_console_history(&self) -> Arc<Mutex<ConsoleHistory>> {
         Arc::clone(&self.h2m_console_history)
     }
     #[inline]
@@ -580,24 +586,28 @@ impl CommandContext {
         Ok(CommandHandle::Processed)
     }
 
-    async fn open_game_console(&mut self) -> io::Result<CommandHandle> {
-        if self.check_h2m_connection().await.is_err() || !h2m_running() {
-            let history = self.h2m_console_history.lock().await;
-            if !history.is_empty() {
+    async fn open_game_console(&mut self, all: bool) -> io::Result<CommandHandle> {
+        let h2m_connection_err = self.check_h2m_connection().await.is_err();
+        let console = self.h2m_console_history.lock().await;
+
+        if all {
+            console.last.store(0, Ordering::SeqCst);
+        }
+
+        if h2m_connection_err || !h2m_running() {
+            if !console.history.is_empty() {
                 println!("{YELLOW}No active connection to H2M, displaying old logs{RESET}");
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                print!("{}", DisplayLogs(&history));
+                print!("{}", DisplayLogs(&console));
             } else {
                 println!("{YELLOW}No active connection to H2M{RESET}");
             }
             return Ok(CommandHandle::Processed);
         }
 
-        {
-            let history = self.h2m_console_history.lock().await;
-            self.forward_logs.store(true, Ordering::SeqCst);
-            print!("{}", DisplayLogs(&history));
-        }
+        self.forward_logs.store(true, Ordering::SeqCst);
+        print!("{}", DisplayLogs(&console));
+        drop(console);
 
         let uid = HookUID::new();
         let game_exe_name = self.game.game_file_name().into_owned();

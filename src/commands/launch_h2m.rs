@@ -346,8 +346,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
             }
 
             let mut wide_encode_buf = Vec::new();
-            let mut console_history = console_history_arc.lock().await;
-            let start = console_history.len();
+            let mut console = console_history_arc.lock().await;
 
             'byte_iter: for byte in buffer.encode_wide() {
                 if byte != CARRIAGE_RETURN && byte != NEW_LINE {
@@ -403,16 +402,19 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                             continue 'byte_iter;
                         }
                     }
-                    console_history.push(line.into_owned());
+                    console.history.push(line.into_owned());
                 }
 
                 wide_encode_buf.clear();
             }
 
-            if forward_logs_arc.load(Ordering::Acquire) && start < console_history.len() {
-                let msg = console_history[start..].join("\n");
+            let last = console.last.load(Ordering::Relaxed);
+            if forward_logs_arc.load(Ordering::Acquire) && last < console.history.len() {
+                let msg = console.history[last..].join("\n");
                 if msg_sender_arc.send(Message::str(msg)).await.is_err() {
                     forward_logs_arc.store(false, Ordering::SeqCst);
+                } else {
+                    console.last.store(console.history.len(), Ordering::SeqCst);
                 }
             }
 

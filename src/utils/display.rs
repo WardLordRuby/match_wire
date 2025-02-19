@@ -1,14 +1,14 @@
 use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
-        handler::{AppDetails, GameDetails},
+        handler::{AppDetails, ConsoleHistory, GameDetails},
         launch_h2m::{h2m_running, LaunchError},
     },
     utils::caching::ReadCacheErr,
 };
 use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
 
 const SOURCE_HMW: &str = "HMW master server";
 const SOURCE_HMW_CACHED: &str = "Cached HMW server";
@@ -49,13 +49,15 @@ impl From<ConnectionHelp> for Cow<'static, str> {
     }
 }
 
-pub struct DisplayLogs<'a>(pub &'a [String]);
+pub struct DisplayLogs<'a>(pub &'a ConsoleHistory);
 
 impl Display for DisplayLogs<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for line in self.0 {
+        let last = self.0.last.load(Ordering::Relaxed);
+        for line in &self.0.history[last..] {
             writeln!(f, "{line}")?;
         }
+        self.0.last.store(self.0.history.len(), Ordering::SeqCst);
         Ok(())
     }
 }
