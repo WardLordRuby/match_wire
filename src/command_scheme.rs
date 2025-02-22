@@ -1,5 +1,5 @@
 use crate::cli::{REGION_LEN, SOURCE_LEN};
-use repl_oxide::completion::{CommandScheme, InnerScheme, RecData, RecKind, ROOT};
+use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKind};
 
 pub const COMPLETION: CommandScheme = init_command_scheme();
 
@@ -78,7 +78,7 @@ const COMMAND_INNER: [InnerScheme; 9] = [
     // filter
     InnerScheme::new(
         RecData::new(
-            Some(ROOT),
+            Parent::Root,
             None,
             Some(&FILTER_SHORT),
             Some(&FILTER_RECS),
@@ -90,7 +90,7 @@ const COMMAND_INNER: [InnerScheme; 9] = [
     // reconnect
     InnerScheme::new(
         RecData::new(
-            Some(ROOT),
+            Parent::Root,
             None,
             Some(&RECONNECT_SHORT),
             Some(&RECONNECT_RECS),
@@ -100,23 +100,23 @@ const COMMAND_INNER: [InnerScheme; 9] = [
         Some(&RECONNECT_INNTER),
     ),
     // launch
-    InnerScheme::end(ROOT),
+    InnerScheme::end(Parent::Root),
     // cache
     InnerScheme::new(
         RecData::new(
-            Some(ROOT),
+            Parent::Root,
             Some(&CACHE_ALIAS),
             None,
             Some(&CACHE_RECS),
             RecKind::value_with_num_args(1),
-            true,
+            false,
         ),
         None,
     ),
     // console
     InnerScheme::new(
         RecData::new(
-            Some(ROOT),
+            Parent::Root,
             None,
             None,
             Some(&CONSOLE_RECS),
@@ -125,38 +125,38 @@ const COMMAND_INNER: [InnerScheme; 9] = [
         ),
         Some(&CONSOLE_INNER),
     ), // game-dir
-    InnerScheme::end(ROOT),
+    InnerScheme::end(Parent::Root),
     // local-env
-    InnerScheme::end(ROOT),
+    InnerScheme::end(Parent::Root),
     // quit
-    InnerScheme::end(ROOT),
+    InnerScheme::end(Parent::Root),
     // version
-    InnerScheme::end(ROOT),
+    InnerScheme::end(Parent::Root),
 ];
 
 const FILTER_INNER: [InnerScheme; 11] = [
     // limit
     InnerScheme::empty_with(
-        COMMAND_RECS[0],
+        Parent::Entry(COMMAND_RECS[0]),
         RecKind::user_defined_with_num_args(1),
         false,
     ),
     // player-min
     InnerScheme::empty_with(
-        COMMAND_RECS[0],
+        Parent::Entry(COMMAND_RECS[0]),
         RecKind::user_defined_with_num_args(1),
         false,
     ),
     // team-size-max
     InnerScheme::empty_with(
-        COMMAND_RECS[0],
+        Parent::Entry(COMMAND_RECS[0]),
         RecKind::user_defined_with_num_args(1),
         false,
     ),
     // region
     InnerScheme::new(
         RecData::new(
-            Some(COMMAND_RECS[0]),
+            Parent::Entry(COMMAND_RECS[0]),
             Some(&FILTER_REGIONS_ALIAS),
             None,
             Some(&FILTER_REGIONS),
@@ -168,7 +168,7 @@ const FILTER_INNER: [InnerScheme; 11] = [
     // source
     InnerScheme::new(
         RecData::new(
-            Some(COMMAND_RECS[0]),
+            Parent::Entry(COMMAND_RECS[0]),
             Some(&FILTER_SOURCE_ALIAS),
             None,
             Some(&FILTER_SOURCE_RECS),
@@ -179,25 +179,25 @@ const FILTER_INNER: [InnerScheme; 11] = [
     ),
     // includes
     InnerScheme::empty_with(
-        COMMAND_RECS[0],
+        Parent::Entry(COMMAND_RECS[0]),
         RecKind::user_defined_with_num_args(usize::MAX),
         false,
     ),
     // excludes
     InnerScheme::empty_with(
-        COMMAND_RECS[0],
+        Parent::Entry(COMMAND_RECS[0]),
         RecKind::user_defined_with_num_args(usize::MAX),
         false,
     ),
     // with-bots
-    InnerScheme::flag(COMMAND_RECS[0], false),
+    InnerScheme::flag(Parent::Entry(COMMAND_RECS[0]), false),
     // without-bots
-    InnerScheme::flag(COMMAND_RECS[0], false),
+    InnerScheme::flag(Parent::Entry(COMMAND_RECS[0]), false),
     // include-unresponsive
-    InnerScheme::flag(COMMAND_RECS[0], false),
+    InnerScheme::flag(Parent::Entry(COMMAND_RECS[0]), false),
     // retry-max
     InnerScheme::empty_with(
-        COMMAND_RECS[0],
+        Parent::Entry(COMMAND_RECS[0]),
         RecKind::user_defined_with_num_args(1),
         false,
     ),
@@ -205,10 +205,10 @@ const FILTER_INNER: [InnerScheme; 11] = [
 
 const RECONNECT_INNTER: [InnerScheme; 2] = [
     // history
-    InnerScheme::end(COMMAND_RECS[1]),
+    InnerScheme::end(Parent::Entry(COMMAND_RECS[1])),
     // connect
     InnerScheme::empty_with(
-        COMMAND_RECS[1],
+        Parent::Entry(COMMAND_RECS[1]),
         RecKind::user_defined_with_num_args(1),
         true,
     ),
@@ -216,5 +216,5 @@ const RECONNECT_INNTER: [InnerScheme; 2] = [
 
 const CONSOLE_INNER: [InnerScheme; 1] = [
     // all
-    InnerScheme::end(COMMAND_RECS[4]),
+    InnerScheme::end(Parent::Entry(COMMAND_RECS[4])),
 ];
