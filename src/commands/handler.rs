@@ -694,7 +694,7 @@ impl CommandContext {
                         }
                         handle.new_line()?;
                     }
-                    _ => (),
+                    _ => handle.set_uneventful(),
                 }
                 HookedEvent::continue_hook()
             });
