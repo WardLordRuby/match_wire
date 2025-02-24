@@ -1,24 +1,24 @@
 use crate::{
+    CACHED_DATA, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
     cli::{CacheCmd, Command, Filters},
     commands::{
         filter::build_favorites,
-        launch_h2m::{h2m_running, initalize_listener, launch_h2m_pseudo, LaunchError},
+        launch_h2m::{LaunchError, h2m_running, initalize_listener, launch_h2m_pseudo},
     },
     exe_details, leave_splash_screen,
     utils::{
-        caching::{build_cache, write_cache, Cache},
+        caching::{Cache, build_cache, write_cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         json_data::Version,
     },
-    CACHED_DATA, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
+    EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
     ansi_code::{GREEN, RED, RESET, YELLOW},
     callback::{AsyncCallback, InputEventHook, ModLineState},
-    executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
-    EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
+    executor::{CommandHandle as CmdHandle, Executor, format_for_clap},
 };
 use std::{
     borrow::Cow,
@@ -27,14 +27,14 @@ use std::{
     io::{self, Stdout},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use tokio::{
     sync::{
-        mpsc::{channel, Receiver, Sender},
         Mutex, RwLock, RwLockReadGuard,
+        mpsc::{Receiver, Sender, channel},
     },
     task::JoinHandle,
 };
@@ -95,6 +95,7 @@ impl Display for Message {
     }
 }
 
+#[derive(Debug)]
 pub struct GameDetails {
     pub path: PathBuf,
     pub game_name: Cow<'static, str>,

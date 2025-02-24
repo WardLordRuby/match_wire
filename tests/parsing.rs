@@ -10,13 +10,22 @@ mod tests {
         const INPUT: [&str; 3] = [
             "\u{1b}[m\u{1b}[38;5;3m\u{1b}[mJoining [US] ^5CWS ^7| ^1Best Maps ^:TDM...",
             "\u{1b}[m\u{1b}[38;5;3m\u{1b}[mJoining ^3:: OP GOLD ::^7 | ^1Mosh Pit^7 | ^:MW2/COD4 MAPS^7 | ^1Double XP^7 | ^:Map Vote^7 | ^1#2...",
-            "\u{1b}[m\u{1b}[38;5;3m\u{1b}[mJoining ^1[^2F^3r^4e^5a^5k ^1o^2f ^3D^4u^5t^6y^1] ^7 24/7 DOM | ^: [2XP] ^7 | ^1 [LA-2]..."
+            "\u{1b}[m\u{1b}[38;5;3m\u{1b}[mJoining ^1[^2F^3r^4e^5a^5k ^1o^2f ^3D^4u^5t^6y^1] ^7 24/7 DOM | ^: [2XP] ^7 | ^1 [LA-2]...",
         ];
 
         const OUTPUT: [(&str, &str); 3] = [
-            ("[us] cws | best maps tdm", "[US] ^5CWS ^7| ^1Best Maps ^:TDM"),
-            (":: op gold :: | mosh pit | mw2/cod4 maps | double xp | map vote | #2", "^3:: OP GOLD ::^7 | ^1Mosh Pit^7 | ^:MW2/COD4 MAPS^7 | ^1Double XP^7 | ^:Map Vote^7 | ^1#2"),
-            ("[freak of duty]  24/7 dom |  [2xp]  |  [la-2]", "^1[^2F^3r^4e^5a^5k ^1o^2f ^3D^4u^5t^6y^1] ^7 24/7 DOM | ^: [2XP] ^7 | ^1 [LA-2]")
+            (
+                "[us] cws | best maps tdm",
+                "[US] ^5CWS ^7| ^1Best Maps ^:TDM",
+            ),
+            (
+                ":: op gold :: | mosh pit | mw2/cod4 maps | double xp | map vote | #2",
+                "^3:: OP GOLD ::^7 | ^1Mosh Pit^7 | ^:MW2/COD4 MAPS^7 | ^1Double XP^7 | ^:Map Vote^7 | ^1#2",
+            ),
+            (
+                "[freak of duty]  24/7 dom |  [2xp]  |  [la-2]",
+                "^1[^2F^3r^4e^5a^5k ^1o^2f ^3D^4u^5t^6y^1] ^7 24/7 DOM | ^: [2XP] ^7 | ^1 [LA-2]",
+            ),
         ];
 
         for (i, host) in INPUT.iter().enumerate() {
@@ -34,14 +43,30 @@ mod tests {
             "Connecting to server:[0] {152.53.39.127:27017} ^5[US-EAST] ^3Respex ^1| ^6Map Voting ^1| ^2COD4^7/^3MW2 ^4Maps ^1| ^9HARDCORE TDM ^1| 2XP",
             "Connecting to server:[49] {2.56.166.179:27017} ^1Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",
             "Connecting to server:[33] {99.41.89.109:27020} ^:[NA-S] ^7| ^2Ashes ^7SnD 6v6 ^62XP",
-            "Connecting to server:[3] {103.195.100.207:29737} ^1~ M ~ ^2MANIACOS ^7SHIPMENT"
+            "Connecting to server:[3] {103.195.100.207:29737} ^1~ M ~ ^2MANIACOS ^7SHIPMENT",
         ];
 
         const OUTPUT: [(&str, &str, SocketAddr); 4] = [
-            ("[us-east] respex | map voting | cod4/mw2 maps | hardcore tdm | 2xp", "^5[US-EAST] ^3Respex ^1| ^6Map Voting ^1| ^2COD4^7/^3MW2 ^4Maps ^1| ^9HARDCORE TDM ^1| 2XP", SocketAddr::new(IpAddr::V4(Ipv4Addr::new(152, 53, 39, 127)), 27017)),
-            ("crimson tide | 24/7 shipment & rust us #6", "^1Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6", SocketAddr::new(IpAddr::V4(Ipv4Addr::new(2, 56, 166, 179)), 27017)),
-            ("[na-s] | ashes snd 6v6 2xp", "^:[NA-S] ^7| ^2Ashes ^7SnD 6v6 ^62XP", SocketAddr::new(IpAddr::V4(Ipv4Addr::new(99, 41, 89, 109)), 27020)),
-            ("~ m ~ maniacos shipment", "^1~ M ~ ^2MANIACOS ^7SHIPMENT", SocketAddr::new(IpAddr::V4(Ipv4Addr::new(103, 195,100, 207)), 29737))
+            (
+                "[us-east] respex | map voting | cod4/mw2 maps | hardcore tdm | 2xp",
+                "^5[US-EAST] ^3Respex ^1| ^6Map Voting ^1| ^2COD4^7/^3MW2 ^4Maps ^1| ^9HARDCORE TDM ^1| 2XP",
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(152, 53, 39, 127)), 27017),
+            ),
+            (
+                "crimson tide | 24/7 shipment & rust us #6",
+                "^1Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(2, 56, 166, 179)), 27017),
+            ),
+            (
+                "[na-s] | ashes snd 6v6 2xp",
+                "^:[NA-S] ^7| ^2Ashes ^7SnD 6v6 ^62XP",
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(99, 41, 89, 109)), 27020),
+            ),
+            (
+                "~ m ~ maniacos shipment",
+                "^1~ M ~ ^2MANIACOS ^7SHIPMENT",
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(103, 195, 100, 207)), 29737),
+            ),
         ];
 
         for (i, host) in INPUT.iter().enumerate() {

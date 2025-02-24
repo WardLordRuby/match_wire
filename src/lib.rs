@@ -29,7 +29,7 @@ use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, LazyLock, Mutex},
+    sync::{LazyLock, Mutex, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::task::JoinHandle;
@@ -45,8 +45,7 @@ pub const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
 const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
 const MOD_FILES_MODULE_NAME: &str = "mod";
-const HMW_DOWNLOAD_HINT: &str =
-    "HMW mod files are available to download for free through the Horizon MW launcher\n\
+const HMW_DOWNLOAD_HINT: &str = "HMW mod files are available to download for free through the Horizon MW launcher\n\
     https://docs.horizonmw.org/download/";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;

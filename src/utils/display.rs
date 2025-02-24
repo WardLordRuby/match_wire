@@ -2,7 +2,7 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, ConsoleHistory, GameDetails},
-        launch_h2m::{h2m_running, LaunchError},
+        launch_h2m::{LaunchError, h2m_running},
     },
     utils::caching::ReadCacheErr,
 };
@@ -237,7 +237,10 @@ pub struct HmwUpdateHelp;
 
 impl Display for HmwUpdateHelp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "A new version of HMW is available for download. Use 'HMW Launcher.exe' to update game files")
+        write!(
+            f,
+            "A new version of HMW is available for download. Use 'HMW Launcher.exe' to update game files"
+        )
     }
 }
 

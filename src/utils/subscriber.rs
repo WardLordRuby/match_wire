@@ -6,8 +6,8 @@ use tracing::{Event, Level, Subscriber};
 #[cfg(not(debug_assertions))]
 use tracing_subscriber::{
     fmt::{
-        format::{FormatEvent, FormatFields, PrettyFields, Writer},
         FmtContext,
+        format::{FormatEvent, FormatFields, PrettyFields, Writer},
     },
     registry::LookupSpan,
 };
@@ -112,7 +112,7 @@ where
 #[cfg(not(debug_assertions))]
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
     use constcat::concat;
-    use tracing_subscriber::{filter::DynFilterFn, Layer};
+    use tracing_subscriber::{Layer, filter::DynFilterFn};
 
     const NAME: &str = env!("CARGO_PKG_NAME");
     const LOG_NAME: &str = concat!(NAME, ".log");
@@ -154,7 +154,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
 
 #[cfg(debug_assertions)]
 pub fn init_subscriber(_local_env_dir: &std::path::Path) -> std::io::Result<()> {
-    use tracing_subscriber::{filter::LevelFilter, Layer};
+    use tracing_subscriber::{Layer, filter::LevelFilter};
 
     tracing_subscriber::registry()
         .with(

@@ -7,7 +7,7 @@ MatchWire enhances the core H2M/HMW experience by offering key quality-of-life i
 Featuring a robust Server Scraper with extensive filtering options. Additionally, MatchWire
 makes it simple to reconnect to previously joined servers, streamlining your gameplay experience.
 Created by: WardLordRuby <@7thWardLord Discord>"""
-edition = "2021"
+edition = "2024"
 
 [package.metadata.winresource]
 ProductName = "MatchWire"
@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 winpty-rs = "0.4.0"
-winapi = { version = "0.3.9", features = ["winver"] }
+windows-sys = { version = "0.59.0", features = ["Win32_Storage", "Win32_Storage_FileSystem", "Win32_UI" , "Win32_UI_WindowsAndMessaging"] }
 regex = "1.11.1"
 sha2 = "0.10.8"
 constcat = "0.6.0"

@@ -1,11 +1,11 @@
 use crate::{
+    LOG_ONLY,
     cli::HistoryArgs,
     commands::{
         handler::{CommandContext, CommandHandle, CommandSender},
         launch_h2m::HostName,
     },
     utils::display::{ConnectionHelp, DisplayHistoryErr},
-    LOG_ONLY,
 };
 use repl_oxide::ansi_code::{RESET, YELLOW};
 use std::{

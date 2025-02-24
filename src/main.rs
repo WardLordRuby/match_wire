@@ -1,22 +1,22 @@
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
-    await_user_for_end, check_app_dir_exists,
+    CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT, await_user_for_end, check_app_dir_exists,
     commands::{
         handler::{CommandContext, GameDetails, Message, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
     utils::{
-        caching::{build_cache, read_cache, write_cache, Cache},
+        caching::{Cache, build_cache, read_cache, write_cache},
         display::DisplayPanic,
         subscriber::init_subscriber,
     },
-    CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT,
 };
 use repl_oxide::{
+    EventLoop,
     ansi_code::{RED, RESET},
     executor::{CommandHandle, Executor},
-    repl_builder, EventLoop,
+    repl_builder,
 };
 use std::{borrow::Cow, io, path::PathBuf};
 use tokio::sync::mpsc::Receiver;

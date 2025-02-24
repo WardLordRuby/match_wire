@@ -1,52 +1,37 @@
 use crate::{
     commands::{
-        filter::{try_get_info, GetInfoMetaData, Request, Sourced},
+        filter::{GetInfoMetaData, Request, Sourced, try_get_info},
         handler::{CommandContext, Message},
     },
     parse_hostname, strip_ansi_private_modes,
     utils::caching::Cache,
 };
+use core::str;
 use repl_oxide::strip_ansi;
 use serde::{Deserialize, Serialize};
 use std::{
-    ffi::{CStr, OsStr, OsString},
+    ffi::{OsStr, OsString, c_void},
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
-use tokio::sync::{mpsc::Sender, Mutex};
+use tokio::sync::{Mutex, mpsc::Sender};
 use tracing::trace;
-use winapi::{
-    shared::{minwindef::DWORD, windef::HWND},
-    um::{
-        winnt::WCHAR,
-        winuser::{EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible},
-        winver::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW},
+use windows_sys::Win32::{
+    Foundation::HWND,
+    Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
     },
+    UI::WindowsAndMessaging::{EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible},
 };
-use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
+use winptyrs::{AgentConfig, MouseMode, PTY, PTYArgs, PTYBackend};
 
-#[repr(C)]
-#[allow(non_snake_case, non_camel_case_types)]
-struct VS_FIXEDFILEINFO {
-    dwSignature: DWORD,
-    dwStrucVersion: DWORD,
-    dwFileVersionMS: DWORD,
-    dwFileVersionLS: DWORD,
-    dwProductVersionMS: DWORD,
-    dwProductVersionLS: DWORD,
-    dwFileFlagsMask: DWORD,
-    dwFileFlags: DWORD,
-    dwFileOS: DWORD,
-    dwFileType: DWORD,
-    dwFileSubtype: DWORD,
-    dwFileDateMS: DWORD,
-    dwFileDateLS: DWORD,
-}
+#[allow(non_camel_case_types)]
+type wchar_t = u16;
 
 const H2M_WINDOW_NAMES: [&str; 3] = ["h2m", "hmw", "horizonmw"];
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
@@ -464,6 +449,10 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
 
 pub fn h2m_running() -> bool {
     let mut result: bool = false;
+
+    // Saftey:
+    // - saftey guarantees in `enum_windows_callback` hold true
+    // - `lParam` is a controlled type by us
     unsafe {
         EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize);
     }
@@ -472,67 +461,90 @@ pub fn h2m_running() -> bool {
 
 #[allow(clippy::identity_op)]
 pub fn get_exe_version(path: &Path) -> Option<f64> {
-    let wide_path: Vec<u16> = OsStr::new(path)
+    let wide_path = OsStr::new(path)
         .encode_wide()
         .chain(std::iter::once(0))
-        .collect();
+        .collect::<Vec<wchar_t>>();
 
-    unsafe {
-        let size = GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut());
-        if size == 0 {
-            return None;
-        }
+    // Saftey:
+    // - `lpstrFilename`: Unicode is defined so C type `LPWSTR` is used, Windows type def for `wchar_t` is a unsigned short rust equivalent `u16`
+    // - `GetFileVersionInfoSizeW` always sets `lpdwHandle` to 0
+    let size = unsafe { GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut()) };
+    if size == 0 {
+        return None;
+    }
 
-        let mut buffer: Vec<u8> = vec![0; size as usize];
-        if GetFileVersionInfoW(wide_path.as_ptr(), 0, size, buffer.as_mut_ptr() as *mut _) == 0 {
-            return None;
-        }
+    let mut buffer = vec![0_u8; size as usize];
 
-        let mut version_info: *mut winapi::ctypes::c_void = std::ptr::null_mut();
-        let mut len: u32 = 0;
-        if VerQueryValueW(
+    // Saftey:
+    // - `lpstrFilename`: Unicode is defined so C type `LPWSTR` is used, Windows type def for `wchar_t` is a unsigned short rust equivalent `u16`
+    // - `GetFileVersionInfoW` ignores `dwHandle`
+    // - `size` is correctly aquired from `GetFileVersionInfoSizeW` and is not empty
+    // - `lpData` file version will always fit within `u8`s
+    if unsafe { GetFileVersionInfoW(wide_path.as_ptr(), 0, size, buffer.as_mut_ptr() as *mut _) }
+        == 0
+    {
+        return None;
+    }
+
+    const VER_PATH: [wchar_t; 2] = ['\\' as u16, 0];
+    let mut version_info: *mut c_void = std::ptr::null_mut();
+    let mut len = 0;
+
+    // Saftey:
+    // - `pBlock` accepts any and `GetFileVersionInfoW` correctly writes the verson to `buffer`
+    // - `ipSubBlock` correctly points to the `u16` encoded version-information path `VER_INFO`
+    // - `lplpBuffer` takes a `c_void` mut pointer
+    // - `puLen` is defined as a `PUINT` rust equivalent `*mut u32`
+    if unsafe {
+        VerQueryValueW(
             buffer.as_ptr() as *const _,
-            "\\".encode_utf16()
-                .chain(std::iter::once(0))
-                .collect::<Vec<WCHAR>>()
-                .as_ptr(),
+            VER_PATH.as_ptr(),
             &mut version_info,
             &mut len,
-        ) == 0
-        {
-            return None;
-        }
-
-        let info = &*(version_info as *const VS_FIXEDFILEINFO);
-        let major = (info.dwFileVersionMS >> 16) & 0xffff;
-        let minor = (info.dwFileVersionMS >> 0) & 0xffff;
-        let build = (info.dwFileVersionLS >> 16) & 0xffff;
-        let revision = (info.dwFileVersionLS >> 0) & 0xffff;
-
-        let trim_u16 = |num: u16| -> String {
-            if num == 0 {
-                "0".to_string()
-            } else {
-                num.to_string().trim_start_matches('0').to_string()
-            }
-        };
-
-        let version = format!(
-            "{}.{}{}{}",
-            major,
-            trim_u16(minor as u16),
-            trim_u16(build as u16),
-            trim_u16(revision as u16)
-        );
-        version.parse().ok()
+        )
+    } == 0
+    {
+        return None;
     }
+
+    // Saftey: `VerQueryValueW` did not error so it is okay to cast do the supplied struct
+    let info = unsafe { &*(version_info as *const VS_FIXEDFILEINFO) };
+
+    let major = (info.dwFileVersionMS >> 16) & 0xffff;
+    let minor = (info.dwFileVersionMS >> 0) & 0xffff;
+    let build = (info.dwFileVersionLS >> 16) & 0xffff;
+    let revision = (info.dwFileVersionLS >> 0) & 0xffff;
+
+    let trim_u16 = |num: u16| -> String {
+        if num == 0 {
+            "0".to_string()
+        } else {
+            num.to_string().trim_start_matches('0').to_string()
+        }
+    };
+
+    let version = format!(
+        "{}.{}{}{}",
+        major,
+        trim_u16(minor as u16),
+        trim_u16(build as u16),
+        trim_u16(revision as u16)
+    );
+    version.parse().ok()
 }
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i32 {
-    let mut title: [u16; 512] = [0; 512];
-    let length = GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32);
+    let mut title: [wchar_t; 512] = [0; 512];
 
-    if length <= 0 && IsWindowVisible(hwnd) == 0 {
+    // Saftey:
+    // - hwnd is supplied by the sys call
+    // - `title` is the expected `u16` byte buffer
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let length = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
+
+    // Saftey: hwnd is supplied by the sys call
+    if length <= 0 && unsafe { IsWindowVisible(hwnd) } == 0 {
         return 1;
     }
 
@@ -547,21 +559,27 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         return 1;
     }
 
-    let mut class_name: [i8; 256] = [0; 256];
-    let length = GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32);
+    let mut class_name = [0; 256];
+
+    // Saftey:
+    // - hwnd is supplied by the sys call
+    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let length = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
 
     if length <= 0 {
         return 1;
     }
 
-    let class_name_str = CStr::from_ptr(class_name.as_ptr()).to_str().unwrap_or("");
+    let class_name_str = str::from_utf8(&class_name[..length as usize]).unwrap_or_default();
 
     // Check if the window class name indicates it is the game window or the game's splash screen
     if H2M_WINDOW_CLASS_NAMES
         .iter()
         .any(|&h2m_class| class_name_str == h2m_class)
     {
-        let result = &mut *(lparam as *mut bool);
+        // Saftey: We input `lparam` as a `bool` in `h2m_running`
+        let result = &mut unsafe { *(lparam as *mut bool) };
         *result = true;
         return 0; // Break
     }

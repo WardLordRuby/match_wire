@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeMap};
 
 use crate::commands::launch_h2m::HostName;
 

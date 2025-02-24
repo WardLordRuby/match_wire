@@ -1,4 +1,5 @@
 use crate::{
+    LOG_ONLY,
     cli::{Filters, Region, Source},
     location_api_key::FIND_IP_NET_PRIVATE_KEY,
     lowercase_vec, parse_hostname,
@@ -10,7 +11,6 @@ use crate::{
         },
         json_data::*,
     },
-    LOG_ONLY,
 };
 
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
@@ -106,7 +106,9 @@ pub async fn build_favorites(
     });
 
     if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
-        println!("{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}")
+        println!(
+            "{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}"
+        )
     }
 
     let (mut servers, update_cache) = filter_server_list(args, cache, limit)
