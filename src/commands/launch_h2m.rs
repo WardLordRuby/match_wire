@@ -448,7 +448,7 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
 }
 
 pub fn h2m_running() -> bool {
-    let mut result: bool = false;
+    let mut result = false;
 
     // Saftey:
     // - saftey guarantees in `enum_windows_callback` hold true
@@ -538,7 +538,6 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     let mut title: [wchar_t; 512] = [0; 512];
 
     // Saftey:
-    // - hwnd is supplied by the sys call
     // - `title` is the expected `u16` byte buffer
     // - `nMaxCount` is a `c_int` that is expected to be `i32`
     let length = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
@@ -562,7 +561,6 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     let mut class_name = [0; 256];
 
     // Saftey:
-    // - hwnd is supplied by the sys call
     // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
     // - `nMaxCount` is a `c_int` that is expected to be `i32`
     let length = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
@@ -579,7 +577,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         .any(|&h2m_class| class_name_str == h2m_class)
     {
         // Saftey: We input `lparam` as a `bool` in `h2m_running`
-        let result = &mut unsafe { *(lparam as *mut bool) };
+        let result = unsafe { &mut *(lparam as *mut bool) };
         *result = true;
         return 0; // Break
     }
