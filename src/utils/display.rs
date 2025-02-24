@@ -18,7 +18,7 @@ const SOURCE_IW4_CACHED: &str = "Cached Iw4m server";
 pub struct ConnectionHelp;
 
 fn connection_help() -> &'static str {
-    if h2m_running() {
+    if h2m_running().unwrap_or_else(LaunchError::resolve) {
         concat!(
             "Close MW2 Remastered and use command `",
             YELLOW,
@@ -222,6 +222,7 @@ impl Display for LaunchError {
         let display = match self {
             LaunchError::Running(msg) => *msg,
             LaunchError::SpawnErr(err) => &err.to_string_lossy(),
+            LaunchError::WinApiErr((msg, code)) => return write!(f, "{msg} code: {code}"),
         };
         write!(f, "{display}")
     }

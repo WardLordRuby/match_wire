@@ -20,13 +20,13 @@ use std::{
     },
 };
 use tokio::sync::{Mutex, mpsc::Sender};
-use tracing::trace;
+use tracing::{error, trace};
 use windows_sys::Win32::{
-    Foundation::HWND,
+    Foundation::{GetLastError, HWND},
     Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
     },
-    UI::WindowsAndMessaging::{EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible},
+    UI::WindowsAndMessaging::{EnumWindows, GetClassNameA, GetWindowTextW},
 };
 use winptyrs::{AgentConfig, MouseMode, PTY, PTYArgs, PTYBackend};
 
@@ -158,7 +158,9 @@ impl HostName {
     }
 
     async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, HostRequestErr> {
-        let input = String::from_utf16_lossy(value).to_lowercase();
+        let mut input = String::from_utf16_lossy(value);
+        input.make_ascii_lowercase();
+
         let ip_str = input
             .split_once(CONNECT_STR)
             .map(|(_, suf)| suf)
@@ -417,12 +419,20 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 pub enum LaunchError {
     Running(&'static str),
     SpawnErr(OsString),
+    WinApiErr((&'static str, u32)),
+}
+
+impl LaunchError {
+    pub fn resolve(self) -> bool {
+        error!("{self}");
+        false
+    }
 }
 
 pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
-    if h2m_running() {
+    if h2m_running()? {
         return Err(LaunchError::Running("H2M is already running"));
     }
 
@@ -447,16 +457,25 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     Ok(conpty)
 }
 
-pub fn h2m_running() -> bool {
+pub fn h2m_running() -> Result<bool, LaunchError> {
     let mut result = false;
 
     // Saftey:
     // - saftey guarantees in `enum_windows_callback` hold true
     // - `lParam` is a controlled type by us
-    unsafe {
-        EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize);
+    if unsafe { EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize) } == 0 {
+        // Saftey: Enum windows returned error (0), it must have set an Error code
+        match unsafe { GetLastError() } {
+            0 => (),
+            err => {
+                return Err(LaunchError::WinApiErr((
+                    "Windows api EnumWindows returned error",
+                    err,
+                )));
+            }
+        }
     }
-    result
+    Ok(result)
 }
 
 #[allow(clippy::identity_op)]
@@ -540,20 +559,18 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     // Saftey:
     // - `title` is the expected `u16` byte buffer
     // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let length = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
+    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
 
-    // Saftey: hwnd is supplied by the sys call
-    if length <= 0 && unsafe { IsWindowVisible(hwnd) } == 0 {
+    if t_len <= 0 {
         return 1;
     }
 
-    let window_title = OsString::from_wide(&title[..length as usize])
-        .to_string_lossy()
-        .to_ascii_lowercase();
+    let mut window_title = String::from_utf16_lossy(&title[..t_len as usize]);
+    window_title.make_ascii_lowercase();
 
     if !H2M_WINDOW_NAMES
         .iter()
-        .any(|game_name| window_title.contains(game_name))
+        .any(|&game_name| window_title.contains(game_name))
     {
         return 1;
     }
@@ -563,13 +580,13 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     // Saftey:
     // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
     // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let length = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
+    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
 
-    if length <= 0 {
+    if c_len <= 0 {
         return 1;
     }
 
-    let class_name_str = str::from_utf8(&class_name[..length as usize]).unwrap_or_default();
+    let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
 
     // Check if the window class name indicates it is the game window or the game's splash screen
     if H2M_WINDOW_CLASS_NAMES
@@ -579,8 +596,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         // Saftey: We input `lparam` as a `bool` in `h2m_running`
         let result = unsafe { &mut *(lparam as *mut bool) };
         *result = true;
-        return 0; // Break
     }
 
-    1 // Continue
+    1
 }

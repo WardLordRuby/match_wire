@@ -414,7 +414,7 @@ impl CommandContext {
     }
 
     async fn try_send_quit_cmd(&mut self) {
-        if !h2m_running() {
+        if !h2m_running().unwrap_or_else(LaunchError::resolve) {
             return;
         }
         let Ok(lock) = self.check_h2m_connection().await else {
@@ -463,7 +463,7 @@ impl CommandContext {
                         println!("{ConnectionHelp}");
                     }
                 }
-                LaunchError::SpawnErr(err) => error!("{}", err.to_string_lossy()),
+                other_err => error!("{other_err}"),
             },
         };
         Ok(CommandHandle::Processed)
@@ -595,7 +595,7 @@ impl CommandContext {
             console.last.store(0, Ordering::SeqCst);
         }
 
-        if h2m_connection_err || !h2m_running() {
+        if h2m_connection_err || !h2m_running().unwrap_or_else(LaunchError::resolve) {
             if !console.history.is_empty() {
                 println!("{YELLOW}No active connection to H2M, displaying old logs{RESET}");
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -709,7 +709,9 @@ impl CommandContext {
     }
 
     async fn quit(&mut self) -> io::Result<CommandHandle> {
-        if self.check_h2m_connection().await.is_err() || !h2m_running() {
+        if self.check_h2m_connection().await.is_err()
+            || !h2m_running().unwrap_or_else(LaunchError::resolve)
+        {
             return Ok(CommandHandle::Exit);
         }
 
