@@ -2,7 +2,7 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, ConsoleHistory, GameDetails},
-        launch_h2m::{LaunchError, h2m_running},
+        launch_h2m::{LaunchError, game_open},
     },
     utils::caching::ReadCacheErr,
 };
@@ -17,23 +17,19 @@ const SOURCE_IW4_CACHED: &str = "Cached Iw4m server";
 
 pub struct ConnectionHelp;
 
-fn connection_help() -> &'static str {
-    if h2m_running().unwrap_or_else(LaunchError::resolve) {
-        concat!(
-            "Close MW2 Remastered and use command `",
-            YELLOW,
-            "launch",
-            RESET,
-            "` to establish valid connection"
-        )
+fn connection_help() -> Cow<'static, str> {
+    if let Some(game_name) = game_open().unwrap_or_else(LaunchError::resolve_to_closed) {
+        Cow::Owned(format!(
+            "Close {game_name} and use command `{YELLOW}launch{RESET}` to establish valid connection"
+        ))
     } else {
-        concat!(
+        Cow::Borrowed(concat!(
             "Use command `",
             YELLOW,
             "launch",
             RESET,
             "` to re-launch game"
-        )
+        ))
     }
 }
 
@@ -45,7 +41,7 @@ impl Display for ConnectionHelp {
 
 impl From<ConnectionHelp> for Cow<'static, str> {
     fn from(_value: ConnectionHelp) -> Self {
-        Cow::Borrowed(connection_help())
+        connection_help()
     }
 }
 
@@ -169,10 +165,10 @@ impl Display for DisplayPanic<'_> {
 impl Display for Sourced {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let display = match self {
-            Sourced::Hmw(_) => SOURCE_HMW,
-            Sourced::HmwCached(_) => SOURCE_HMW_CACHED,
-            Sourced::Iw4(_) => SOURCE_IW4,
-            Sourced::Iw4Cached(_) => SOURCE_IW4_CACHED,
+            Self::Hmw(_) => SOURCE_HMW,
+            Self::HmwCached(_) => SOURCE_HMW_CACHED,
+            Self::Iw4(_) => SOURCE_IW4,
+            Self::Iw4Cached(_) => SOURCE_IW4_CACHED,
         };
         write!(f, "{display}")
     }
@@ -219,12 +215,11 @@ impl Display for UnresponsiveCounter {
 
 impl Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display = match self {
-            LaunchError::Running(msg) => *msg,
-            LaunchError::SpawnErr(err) => &err.to_string_lossy(),
-            LaunchError::WinApiErr((msg, code)) => return write!(f, "{msg} code: {code}"),
-        };
-        write!(f, "{display}")
+        match self {
+            Self::GameRunning(found_game) => write!(f, "{found_game} is already running"),
+            Self::SpawnErr(err) => write!(f, "{}", err.to_string_lossy()),
+            Self::WinApiErr((msg, code)) => write!(f, "{msg} code: {code}"),
+        }
     }
 }
 

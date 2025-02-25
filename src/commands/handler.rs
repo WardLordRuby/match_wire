@@ -3,9 +3,9 @@ use crate::{
     cli::{CacheCmd, Command, Filters},
     commands::{
         filter::build_favorites,
-        launch_h2m::{LaunchError, h2m_running, initalize_listener, launch_h2m_pseudo},
+        launch_h2m::{LaunchError, game_open, initalize_listener, launch_h2m_pseudo},
     },
-    exe_details, leave_splash_screen,
+    exe_details, leave_splash_screen, print_during_splash,
     utils::{
         caching::{Cache, build_cache, write_cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
@@ -251,7 +251,7 @@ impl CommandContext {
                     Ok(Some(Ok(_))) | Ok(None) => unreachable!("by covered paths"),
                 };
                 error!("Could not launch H2M as child process: {err}");
-                println!("{ConnectionHelp}");
+                print_during_splash(Message::Str(ConnectionHelp.into()));
                 (None, false)
             }
         };
@@ -414,7 +414,10 @@ impl CommandContext {
     }
 
     async fn try_send_quit_cmd(&mut self) {
-        if !h2m_running().unwrap_or_else(LaunchError::resolve) {
+        if game_open()
+            .unwrap_or_else(LaunchError::resolve_to_closed)
+            .is_none()
+        {
             return;
         }
         let Ok(lock) = self.check_h2m_connection().await else {
@@ -445,6 +448,14 @@ impl CommandContext {
     }
 
     pub async fn launch_handler(&mut self) -> io::Result<CommandHandle> {
+        if self.check_h2m_connection().await.is_ok() {
+            println!(
+                "{GREEN}Connection to {} already active{RESET}",
+                self.game_name()
+            );
+            return Ok(CommandHandle::Processed);
+        }
+
         match launch_h2m_pseudo(&self.game.path) {
             Ok(conpty) => {
                 info!("Launching {}...", self.game_name());
@@ -455,13 +466,9 @@ impl CommandContext {
                 }
             }
             Err(err) => match err {
-                LaunchError::Running(msg) => {
-                    if self.check_h2m_connection().await.is_ok() {
-                        info!("Connection already active")
-                    } else {
-                        error!("{msg}");
-                        println!("{ConnectionHelp}");
-                    }
+                already_open_err @ LaunchError::GameRunning(_) => {
+                    println!("{RED}{already_open_err}{RESET}");
+                    println!("{ConnectionHelp}");
                 }
                 other_err => error!("{other_err}"),
             },
@@ -595,13 +602,23 @@ impl CommandContext {
             console.last.store(0, Ordering::SeqCst);
         }
 
-        if h2m_connection_err || !h2m_running().unwrap_or_else(LaunchError::resolve) {
+        if h2m_connection_err
+            || game_open()
+                .unwrap_or_else(LaunchError::resolve_to_closed)
+                .is_none()
+        {
             if !console.history.is_empty() {
-                println!("{YELLOW}No active connection to H2M, displaying old logs{RESET}");
+                println!(
+                    "{YELLOW}No active connection to {}, displaying old logs{RESET}",
+                    self.game_name()
+                );
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 print!("{}", DisplayLogs(&console));
             } else {
-                println!("{YELLOW}No active connection to H2M{RESET}");
+                println!(
+                    "{YELLOW}No active connection to {}{RESET}",
+                    self.game_name()
+                );
             }
             return Ok(CommandHandle::Processed);
         }
@@ -709,9 +726,15 @@ impl CommandContext {
     }
 
     async fn quit(&mut self) -> io::Result<CommandHandle> {
-        if self.check_h2m_connection().await.is_err()
-            || !h2m_running().unwrap_or_else(LaunchError::resolve)
+        if game_open()
+            .unwrap_or_else(LaunchError::resolve_to_open)
+            .is_none()
         {
+            while self.check_h2m_connection().await.is_ok() {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+            return Ok(CommandHandle::Exit);
+        } else if self.check_h2m_connection().await.is_err() {
             return Ok(CommandHandle::Exit);
         }
 

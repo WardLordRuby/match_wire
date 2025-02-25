@@ -33,10 +33,10 @@ use winptyrs::{AgentConfig, MouseMode, PTY, PTYArgs, PTYBackend};
 #[allow(non_camel_case_types)]
 type wchar_t = u16;
 
-const H2M_WINDOW_NAMES: [&str; 3] = ["h2m", "hmw", "horizonmw"];
+const GAME_WINDOW_NAMES: [&str; 3] = ["h2m", "hmw", "horizonmw"];
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
-const H2M_WINDOW_CLASS_NAMES: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
+const GAME_WINDOW_CLASS_NAMES: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
 const JOIN_STR: &str = "Joining ";
 const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
 // const CONNECTING_STR: &str = "Connecti";
@@ -417,23 +417,28 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
 }
 
 pub enum LaunchError {
-    Running(&'static str),
+    GameRunning(&'static str),
     SpawnErr(OsString),
     WinApiErr((&'static str, u32)),
 }
 
 impl LaunchError {
-    pub fn resolve(self) -> bool {
+    pub fn resolve_to_closed(self) -> Option<&'static str> {
         error!("{self}");
-        false
+        None
+    }
+    /// Return holds a placeholder string that is not to be used
+    pub fn resolve_to_open(self) -> Option<&'static str> {
+        error!("{self}");
+        Some("don't use this value")
     }
 }
 
 pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     // MARK: FIXME
     // can we figure out a way to never inherit pseudo process name
-    if h2m_running()? {
-        return Err(LaunchError::Running("H2M is already running"));
+    if let Some(game_name) = game_open()? {
+        return Err(LaunchError::GameRunning(game_name));
     }
 
     let pty_args = PTYArgs {
@@ -457,8 +462,8 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     Ok(conpty)
 }
 
-pub fn h2m_running() -> Result<bool, LaunchError> {
-    let mut result = false;
+pub fn game_open() -> Result<Option<&'static str>, LaunchError> {
+    let mut result = "";
 
     // Saftey:
     // - saftey guarantees in `enum_windows_callback` hold true
@@ -475,7 +480,7 @@ pub fn h2m_running() -> Result<bool, LaunchError> {
             }
         }
     }
-    Ok(result)
+    Ok((!result.is_empty()).then_some(result))
 }
 
 #[allow(clippy::identity_op)]
@@ -568,12 +573,12 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     let mut window_title = String::from_utf16_lossy(&title[..t_len as usize]);
     window_title.make_ascii_lowercase();
 
-    if !H2M_WINDOW_NAMES
-        .iter()
-        .any(|&game_name| window_title.contains(game_name))
-    {
+    let Some(associated_game) = GAME_WINDOW_NAMES
+        .into_iter()
+        .find(|&game_name| window_title.contains(game_name))
+    else {
         return 1;
-    }
+    };
 
     let mut class_name = [0; 256];
 
@@ -589,13 +594,22 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
 
     // Check if the window class name indicates it is the game window or the game's splash screen
-    if H2M_WINDOW_CLASS_NAMES
+    if GAME_WINDOW_CLASS_NAMES
         .iter()
         .any(|&h2m_class| class_name_str == h2m_class)
     {
-        // Saftey: We input `lparam` as a `bool` in `h2m_running`
-        let result = unsafe { &mut *(lparam as *mut bool) };
-        *result = true;
+        // Saftey:
+        // - We input `lparam` as a `*mut &'static str` casted to `isize`
+        // - We can assign `associated_game` since we know it is a static value
+        // - memory `lparam` points to lives for longer than `EnumWindows`
+        // - memory is aligned since raw pointers will always be the same size as a `isize`
+        let res = unsafe { &mut *(lparam as *mut &str) };
+
+        if !res.is_empty() {
+            return 1;
+        }
+
+        *res = associated_game;
     }
 
     1
