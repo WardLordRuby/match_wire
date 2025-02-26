@@ -1,14 +1,14 @@
 use crate::{
-    CACHED_DATA, LOG_ONLY, Operation, OperationResult,
     cli::Source,
     commands::{
-        filter::{DEFUALT_SOURCES, Server, Sourced, get_sourced_servers, queue_info_requests},
+        filter::{get_sourced_servers, queue_info_requests, Server, Sourced, DEFUALT_SOURCES},
         handler::CommandContext,
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
     utils::json_data::{CacheFile, ContCodeMap, ServerCache},
+    Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use constcat::concat;
 use std::{
@@ -17,8 +17,10 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     path::Path,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
+use tokio::sync::Mutex;
 use tracing::{error, info, instrument, trace};
 
 pub struct Cache {
@@ -117,42 +119,29 @@ impl Cache {
     }
 }
 
-impl CacheFile {
-    fn from(connection_history: Option<Vec<HostName>>, cache: Cache) -> Self {
+impl From<Cache> for CacheFile {
+    fn from(mut value: Cache) -> Self {
         CacheFile {
             version: env!("CARGO_PKG_VERSION").to_string(),
             created: std::time::SystemTime::now(),
-            connection_history: connection_history.unwrap_or_default(),
-            cache: ServerCache::from(cache),
-        }
-    }
-
-    fn from_backups(
-        connection_history: Option<Vec<HostName>>,
-        regions: Option<HashMap<IpAddr, [char; 2]>>,
-    ) -> Self {
-        CacheFile {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            created: std::time::SystemTime::now(),
-            connection_history: connection_history.unwrap_or_default(),
-            cache: ServerCache {
-                regions: regions.unwrap_or_default(),
-                ..Default::default()
-            },
+            connection_history: std::mem::take(&mut value.connection_history),
+            cache: ServerCache::from(value),
         }
     }
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn build_cache(
-    connection_history: Option<Vec<HostName>>,
-    regions: Option<HashMap<IpAddr, [char; 2]>>,
-) -> Result<CacheFile, (&'static str, CacheFile)> {
+pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<CacheFile, &'static str> {
     info!("Updating cache...");
 
-    let servers = match get_sourced_servers(DEFUALT_SOURCES, None).await {
-        Ok(data) => data,
-        Err(err) => return Err((err, CacheFile::from_backups(connection_history, regions))),
+    let servers = get_sourced_servers(DEFUALT_SOURCES, prev).await?;
+
+    let regions = match prev {
+        Some(p) => {
+            let mut lock = p.lock().await;
+            Some(std::mem::take(&mut lock.ip_to_region))
+        }
+        None => None,
     };
 
     let mut cache = Cache::default();
@@ -194,33 +183,26 @@ pub async fn build_cache(
         }
     }
 
-    Ok(CacheFile::from(connection_history, cache))
+    Ok(CacheFile::from(cache))
 }
 
 pub struct ReadCacheErr {
     pub err: Cow<'static, str>,
-    pub connection_history: Option<Vec<HostName>>,
-    pub region_cache: Option<HashMap<IpAddr, [char; 2]>>,
+    pub cache: Option<Cache>,
 }
 
 impl ReadCacheErr {
     fn new<C: Into<Cow<'static, str>>>(err: C) -> Self {
         ReadCacheErr {
             err: err.into(),
-            connection_history: None,
-            region_cache: None,
+            cache: None,
         }
     }
 
-    fn with_old<C: Into<Cow<'static, str>>>(
-        err: C,
-        history: Vec<HostName>,
-        region: HashMap<IpAddr, [char; 2]>,
-    ) -> Self {
+    fn with_old<C: Into<Cow<'static, str>>>(err: C, cache: Cache) -> Self {
         ReadCacheErr {
             err: err.into(),
-            connection_history: Some(history),
-            region_cache: Some(region),
+            cache: Some(cache),
         }
     }
 }
@@ -229,8 +211,7 @@ impl From<io::Error> for ReadCacheErr {
     fn from(value: io::Error) -> Self {
         ReadCacheErr {
             err: format!("{value}, Starting new cache file").into(),
-            connection_history: None,
-            region_cache: None,
+            cache: None,
         }
     }
 }
@@ -239,8 +220,7 @@ impl From<serde_json::Error> for ReadCacheErr {
     fn from(value: serde_json::Error) -> Self {
         ReadCacheErr {
             err: format!("{value}, Starting new cache file").into(),
-            connection_history: None,
-            region_cache: None,
+            cache: None,
         }
     }
 }
@@ -251,21 +231,19 @@ pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
         Ok(OperationResult::Bool(true)) => {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
             let reader = io::BufReader::new(file);
-            let data = serde_json::from_reader::<_, CacheFile>(reader)?;
+            let file_contents = serde_json::from_reader::<_, CacheFile>(reader)?;
             trace!("Cache read from file");
             let curr_time = std::time::SystemTime::now();
-            match curr_time.duration_since(data.created) {
+            match curr_time.duration_since(file_contents.created) {
                 Ok(time) if time > Duration::new(60 * 60 * 24, 0) => Err(ReadCacheErr::with_old(
                     "cache is too old",
-                    data.connection_history,
-                    data.cache.regions,
+                    Cache::from(file_contents),
                 )),
                 Err(err) => Err(ReadCacheErr::with_old(
                     err.to_string(),
-                    data.connection_history,
-                    data.cache.regions,
+                    Cache::from(file_contents),
                 )),
-                _ => Ok(Cache::from(data)),
+                _ => Ok(Cache::from(file_contents)),
             }
         }
         Ok(OperationResult::Bool(false)) => {

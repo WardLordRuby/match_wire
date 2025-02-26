@@ -1,24 +1,24 @@
 use crate::{
-    CACHED_DATA, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
     cli::{CacheCmd, Command, Filters},
     commands::{
         filter::build_favorites,
-        launch_h2m::{LaunchError, game_open, initalize_listener, launch_h2m_pseudo},
+        launch_h2m::{game_open, initalize_listener, launch_h2m_pseudo, LaunchError},
     },
     exe_details, leave_splash_screen, print_during_splash,
     utils::{
-        caching::{Cache, build_cache, write_cache},
+        caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         json_data::Version,
     },
+    CACHED_DATA, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
-    EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
     ansi_code::{GREEN, RED, RESET, YELLOW},
     callback::{AsyncCallback, HookLifecycle, InputEventHook},
-    executor::{CommandHandle as CmdHandle, Executor, format_for_clap},
+    executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
+    EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
 };
 use std::{
     borrow::Cow,
@@ -27,14 +27,14 @@ use std::{
     io::{self, Stdout},
     path::{Path, PathBuf},
     sync::{
-        Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
     },
 };
 use tokio::{
     sync::{
+        mpsc::{channel, Receiver, Sender},
         Mutex, RwLock, RwLockReadGuard,
-        mpsc::{Receiver, Sender, channel},
     },
     task::JoinHandle,
 };
@@ -516,13 +516,12 @@ impl CommandContext {
     }
 
     async fn new_favorites_with(&self, args: Option<Filters>) -> io::Result<CommandHandle> {
-        let cache = self.cache();
         let exe_dir = self.game.path.parent().expect("has parent");
 
         let new_entries_found = build_favorites(
             exe_dir,
             &args.unwrap_or_default(),
-            cache,
+            self.cache(),
             self.game.version.unwrap_or(1.0),
         )
         .await
@@ -551,33 +550,14 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         };
 
-        let cache_file = match arg {
-            CacheCmd::Update => {
-                let cache_arc = self.cache();
-                let mut cache = cache_arc.lock().await;
+        let prev = matches!(arg, CacheCmd::Update).then_some(&self.cache);
 
-                match build_cache(
-                    Some(std::mem::take(&mut cache.connection_history)),
-                    Some(std::mem::take(&mut cache.ip_to_region)),
-                )
-                .await
-                {
-                    Ok(data) => data,
-                    Err((err, backup)) => {
-                        cache.connection_history = backup.connection_history;
-                        cache.ip_to_region = backup.cache.regions;
-                        error!("{err}, cache remains unchanged");
-                        return Ok(CommandHandle::Processed);
-                    }
-                }
+        let cache_file = match build_cache(prev).await {
+            Ok(data) => data,
+            Err(err) => {
+                error!("{err}, cache remains unchanged");
+                return Ok(CommandHandle::Processed);
             }
-            CacheCmd::Reset => match build_cache(None, None).await {
-                Ok(data) => data,
-                Err((err, _)) => {
-                    error!("{err}, cache remains unchanged");
-                    return Ok(CommandHandle::Processed);
-                }
-            },
         };
 
         match std::fs::File::create(local_dir.join(CACHED_DATA)) {
@@ -588,8 +568,8 @@ impl CommandContext {
             }
             Err(err) => error!("{err}"),
         }
-        let cache = self.cache();
-        let mut cache = cache.lock().await;
+
+        let mut cache = self.cache.lock().await;
         *cache = Cache::from(cache_file);
         Ok(CommandHandle::Processed)
     }

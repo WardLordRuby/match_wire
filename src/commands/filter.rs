@@ -1,5 +1,4 @@
 use crate::{
-    LOG_ONLY,
     cli::{Filters, Region, Source},
     location_api_key::FIND_IP_NET_PRIVATE_KEY,
     lowercase_vec, parse_hostname,
@@ -11,8 +10,10 @@ use crate::{
         },
         json_data::*,
     },
+    LOG_ONLY,
 };
 
+use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinSet};
@@ -31,10 +32,11 @@ use std::{
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net";
 
-const IW4_MASTER_URL: &str = "http://master.iw4.zip";
-const HMW_MASTER_URL: &str = "http://ms.s2mod.to/game-servers";
+const IW4_MASTER_URL: &str = "https://master.iw4.zip";
 const JSON_SERVER_ENDPOINT: &str = "/instance";
 const SERVER_GET_INFO_ENDPOINT: &str = "/getInfo";
+
+const HMW_MASTER_URL: &str = "https://ms.horizonmw.org/game-servers";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
@@ -61,8 +63,8 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
 
 async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
     trace!("retreiving iw4 master server list");
-    let instance_url = format!("{IW4_MASTER_URL}{JSON_SERVER_ENDPOINT}");
-    reqwest::get(instance_url.as_str())
+    const INSTANCE_URL: &str = concat!(IW4_MASTER_URL, JSON_SERVER_ENDPOINT);
+    reqwest::get(INSTANCE_URL)
         .await?
         .json::<Vec<HostData>>()
         .await
@@ -408,7 +410,8 @@ async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
                     })
                     .collect::<Vec<_>>();
                 if !backup.is_empty() {
-                    error!("{err}");
+                    error!("{RED}Could not fetch iw4 servers{RESET}");
+                    error!(name: LOG_ONLY, "{err}");
                     warn!("{}", DisplayCachedServerUse("iw4", backup.len()));
                     return Ok(backup);
                 }
@@ -438,7 +441,8 @@ async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
                     })
                     .collect::<Vec<_>>();
                 if !backup.is_empty() {
-                    error!("{err}");
+                    error!("{RED}Could not fetch HMW servers{RESET}");
+                    error!(name: LOG_ONLY, "{err}");
                     warn!("{}", DisplayCachedServerUse("HMW", backup.len()));
                     return Ok(backup);
                 }

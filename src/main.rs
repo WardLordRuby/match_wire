@@ -1,25 +1,26 @@
 use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
-    CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT, await_user_for_end, check_app_dir_exists,
+    await_user_for_end, check_app_dir_exists,
     commands::{
         handler::{CommandContext, GameDetails, Message, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
     utils::{
-        caching::{Cache, build_cache, read_cache, write_cache},
+        caching::{build_cache, read_cache, write_cache, Cache},
         display::DisplayPanic,
+        json_data::CacheFile,
         subscriber::init_subscriber,
     },
+    CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT,
 };
 use repl_oxide::{
-    EventLoop,
     ansi_code::{RED, RESET},
     executor::{CommandHandle, Executor},
-    repl_builder,
+    repl_builder, EventLoop,
 };
-use std::{borrow::Cow, io, path::PathBuf};
-use tokio::sync::mpsc::Receiver;
+use std::{borrow::Cow, io, path::PathBuf, sync::Arc};
+use tokio::sync::{mpsc::Receiver, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 
@@ -199,20 +200,26 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
     let cache_task = tokio::spawn({
         let cache_path = local_dir.as_deref().map(|local| local.join(CACHED_DATA));
         async move {
-            let (connection_history, region_cache) = match cache_res {
+            let cache = match cache_res {
                 Some(Ok(cache)) => return cache,
                 Some(Err(err)) => {
                     error!("{err}");
-                    (err.connection_history, err.region_cache)
+                    err.cache.map(|c| Arc::new(Mutex::new(c)))
                 }
-                None => (None, None),
+                None => None,
             };
-            let cache_file = build_cache(connection_history, region_cache)
-                .await
-                .unwrap_or_else(|(err, backup)| {
+            let cache_file = match build_cache(cache.as_ref()).await {
+                Ok(c) => c,
+                Err(err) => {
                     error!("{err}");
-                    backup
-                });
+                    if let Some(prev) = cache {
+                        let mut lock = prev.lock().await;
+                        CacheFile::from(std::mem::take(&mut *lock))
+                    } else {
+                        CacheFile::from(Cache::default())
+                    }
+                }
+            };
             if let Some(cache) = cache_path.as_deref() {
                 match std::fs::File::create(cache) {
                     Ok(file) => match serde_json::to_writer_pretty(file, &cache_file) {
