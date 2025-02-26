@@ -76,7 +76,7 @@ async fn run_eval_print_loop(
 
     loop {
         line_handle.clear_unwanted_inputs(&mut reader).await?;
-        line_handle.render()?;
+        line_handle.render(command_context)?;
 
         tokio::select! {
             biased;
@@ -90,18 +90,13 @@ async fn run_eval_print_loop(
             }
 
             Some(event_result) = reader.next() => {
-                match line_handle.process_input_event(event_result?)? {
+                match line_handle.process_input_event(command_context, event_result?)? {
                     EventLoop::Continue => (),
                     EventLoop::Break => break,
-                    EventLoop::Callback(callback) => {
-                        callback(command_context).expect("`end_forward_logs` does not error")
-                    },
                     EventLoop::AsyncCallback(callback) => {
                         if let Err(err) = callback(command_context).await {
                             error!("{err}");
-                            if let Some(on_err_callback) = line_handle.conditionally_remove_hook(&err)? {
-                                on_err_callback(command_context).expect("`end_forward_logs` does not error");
-                            }
+                            line_handle.conditionally_remove_hook(command_context, &err)?;
                         }
                     },
                     EventLoop::TryProcessInput(Ok(user_tokens)) => {

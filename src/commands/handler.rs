@@ -17,7 +17,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
     ansi_code::{GREEN, RED, RESET, YELLOW},
-    callback::{AsyncCallback, InputEventHook, ModLineState},
+    callback::{AsyncCallback, HookLifecycle, InputEventHook},
     executor::{CommandHandle as CmdHandle, Executor, format_for_clap},
 };
 use std::{
@@ -623,21 +623,22 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        self.forward_logs.store(true, Ordering::SeqCst);
         print!("{}", DisplayLogs(&console));
         drop(console);
 
         let uid = HookUID::new();
         let game_exe_name = self.game.game_file_name().into_owned();
 
-        let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(move |handle| {
+        let init: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(move |handle, context| {
+            context.forward_logs.store(true, Ordering::SeqCst);
             handle.set_prompt(&game_exe_name);
             handle.disable_completion();
             handle.disable_line_stylization();
             Ok(())
         });
 
-        let revert: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
+        let revert: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, context| {
+            context.forward_logs().store(false, Ordering::SeqCst);
             handle.set_prompt(MAIN_PROMPT);
             handle.enable_completion();
             handle.enable_line_stylization();
@@ -645,7 +646,7 @@ impl CommandContext {
         });
 
         let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-            Box::new(move |handle, event| {
+            Box::new(move |handle, _context, event| {
                 match event {
                     Event::Key(KeyEvent {
                         code: KeyCode::Char('d'),
@@ -664,10 +665,7 @@ impl CommandContext {
                         ..
                     }) => {
                         if handle.input().is_empty() {
-                            return HookedEvent::new(
-                                EventLoop::Callback(Box::new(end_forward_logs)),
-                                HookControl::Release,
-                            );
+                            return HookedEvent::release_hook();
                         }
                         handle.ctrl_c_line()?;
                     }
@@ -680,10 +678,7 @@ impl CommandContext {
                         ..
                     }) => {
                         if handle.input().is_empty() {
-                            return HookedEvent::new(
-                                EventLoop::Callback(Box::new(end_forward_logs)),
-                                HookControl::Release,
-                            );
+                            return HookedEvent::release_hook();
                         }
                         handle.remove_char()?;
                     }
@@ -720,7 +715,6 @@ impl CommandContext {
         Ok(CommandHandle::InsertHook(InputHook::new(
             uid,
             InputHook::new_hook_states(init, revert),
-            Some(Box::new(end_forward_logs)),
             input_hook,
         )))
     }
@@ -744,20 +738,20 @@ impl CommandContext {
             self.game_name()
         );
 
-        let init: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
+        let init: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, _context| {
             handle.set_prompt(&format!(
                 "Press ({YELLOW}y{RESET}) or ({YELLOW}ctrl_c{RESET}) to close"
             ));
             Ok(())
         });
 
-        let revert: Box<ModLineState<CommandContext, Stdout>> = Box::new(|handle| {
+        let revert: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, _context| {
             handle.set_prompt(MAIN_PROMPT);
             Ok(())
         });
 
         let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-            Box::new(|_handle, event| match event {
+            Box::new(|_handle, _context, event| match event {
                 Event::Key(
                     KeyEvent {
                         code: KeyCode::Char('c'),
@@ -774,16 +768,9 @@ impl CommandContext {
 
         Ok(CommandHandle::InsertHook(InputHook::with_new_uid(
             InputHook::new_hook_states(init, revert),
-            None,
             input_hook,
         )))
     }
-}
-
-#[inline]
-fn end_forward_logs(context: &mut CommandContext) -> Result<(), InputHookErr> {
-    context.forward_logs().store(false, Ordering::SeqCst);
-    Ok(())
 }
 
 pub trait CommandSender {
