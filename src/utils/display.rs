@@ -2,7 +2,7 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, ConsoleHistory, GameDetails},
-        launch_h2m::{LaunchError, game_open},
+        launch_h2m::{game_open, LaunchError},
     },
     utils::caching::ReadCacheErr,
 };

@@ -17,7 +17,7 @@ pub mod utils {
 use clap::CommandFactory;
 use cli::Command;
 use commands::{
-    handler::{AppDetails, Message},
+    handler::{AppDetails, Message, StartupCacheContents},
     launch_h2m::get_exe_version,
 };
 use constcat::concat;
@@ -29,11 +29,15 @@ use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc, LazyLock},
     time::Duration,
 };
 use tokio::task::JoinHandle;
-use utils::json_data::{HmwManifest, Version};
+use tracing::error;
+use utils::{
+    caching::{build_cache, Cache, ReadCacheErr},
+    json_data::{CacheFile, HmwManifest, Version},
+};
 
 #[cfg(not(debug_assertions))]
 use crossterm::{execute, terminal};
@@ -45,11 +49,14 @@ pub const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
 const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
 const MOD_FILES_MODULE_NAME: &str = "mod";
-const HMW_DOWNLOAD_HINT: &str = "HMW mod files are available to download for free through the Horizon MW launcher\n\
+const HMW_DOWNLOAD_HINT: &str =
+    "HMW mod files are available to download for free through the Horizon MW launcher\n\
     https://docs.horizonmw.org/download/";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub const H2M_MAX_TEAM_SIZE: i64 = 9;
+
+pub const SAVED_HISTORY_CAP: usize = 20;
 
 pub const REQUIRED_FILES: [&str; 7] = [
     "h1_mp64_ship.exe",
@@ -65,8 +72,8 @@ pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub const CACHED_DATA: &str = "cache.json";
 
 pub static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
-pub static SPLASH_SCREEN_MSG_BUFFER: LazyLock<Mutex<String>> =
-    LazyLock::new(|| Mutex::new(String::new()));
+pub static SPLASH_SCREEN_MSG_BUFFER: LazyLock<std::sync::Mutex<String>> =
+    LazyLock::new(|| std::sync::Mutex::new(String::new()));
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -381,4 +388,59 @@ pub fn print_during_splash(message: Message) {
 
     let mut msg_queue = SPLASH_SCREEN_MSG_BUFFER.lock().expect("lock uncontested");
     msg_queue.push_str(&format!("{message}\n"));
+}
+
+pub async fn startup_cache_task(
+    cache_res: Option<Result<CacheFile, ReadCacheErr>>,
+) -> StartupCacheContents {
+    use tokio::sync::Mutex;
+
+    let (cmd_history, cache) = match cache_res {
+        Some(Ok(mut file_contents)) => {
+            return StartupCacheContents {
+                command_history: std::mem::take(&mut file_contents.cmd_history),
+                cache: Arc::new(Mutex::new(Cache::from(file_contents))),
+                modified: false,
+            }
+        }
+        Some(Err(err)) => {
+            error!("{err}");
+            if let Some(mut file_contents) = err.cache {
+                (
+                    Some(std::mem::take(&mut file_contents.cmd_history)),
+                    Some(Arc::new(Mutex::new(Cache::from(file_contents)))),
+                )
+            } else {
+                (None, None)
+            }
+        }
+        None => (None, None),
+    };
+    let (cache, modified) = match build_cache(cache.as_ref()).await {
+        Ok(c) => {
+            let cache = if let Some(prev) = cache {
+                let mut lock = prev.lock().await;
+                *lock = c;
+                drop(lock);
+                prev
+            } else {
+                Arc::new(Mutex::new(c))
+            };
+            (cache, true)
+        }
+        Err(err) => {
+            error!("{err}");
+            let cache = if let Some(prev) = cache {
+                prev
+            } else {
+                Arc::new(Mutex::new(Cache::default()))
+            };
+            (cache, false)
+        }
+    };
+    StartupCacheContents {
+        command_history: cmd_history.unwrap_or_default(),
+        cache,
+        modified,
+    }
 }

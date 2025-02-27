@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        filter::{GetInfoMetaData, Request, Sourced, try_get_info},
+        filter::{try_get_info, GetInfoMetaData, Request, Sourced},
         handler::{CommandContext, Message},
     },
     parse_hostname, strip_ansi_private_modes,
@@ -10,25 +10,25 @@ use core::str;
 use repl_oxide::strip_ansi;
 use serde::{Deserialize, Serialize};
 use std::{
-    ffi::{OsStr, OsString, c_void},
+    ffi::{c_void, OsStr, OsString},
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     },
 };
-use tokio::sync::{Mutex, mpsc::Sender};
+use tokio::sync::{mpsc::Sender, Mutex};
 use tracing::{error, trace};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HWND},
     Storage::FileSystem::{
-        GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
     },
     UI::WindowsAndMessaging::{EnumWindows, GetClassNameA, GetWindowTextW},
 };
-use winptyrs::{AgentConfig, MouseMode, PTY, PTYArgs, PTYBackend};
+use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
 
 #[allow(non_camel_case_types)]
 type wchar_t = u16;

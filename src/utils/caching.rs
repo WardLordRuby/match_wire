@@ -7,7 +7,7 @@ use crate::{
         reconnect::HISTORY_MAX,
     },
     does_dir_contain, new_io_error,
-    utils::json_data::{CacheFile, ContCodeMap, ServerCache},
+    utils::json_data::{CacheFile, ContCodeMap},
     Operation, OperationResult, CACHED_DATA, LOG_ONLY,
 };
 use constcat::concat;
@@ -42,17 +42,6 @@ impl From<CacheFile> for Cache {
             iw4m: value.cache.iw4m,
             hmw: value.cache.hmw,
             created: value.created,
-        }
-    }
-}
-
-impl From<Cache> for ServerCache {
-    fn from(value: Cache) -> Self {
-        ServerCache {
-            iw4m: value.iw4m,
-            hmw: value.hmw,
-            regions: value.ip_to_region,
-            host_names: value.host_to_connect,
         }
     }
 }
@@ -119,19 +108,8 @@ impl Cache {
     }
 }
 
-impl From<Cache> for CacheFile {
-    fn from(mut value: Cache) -> Self {
-        CacheFile {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            created: std::time::SystemTime::now(),
-            connection_history: std::mem::take(&mut value.connection_history),
-            cache: ServerCache::from(value),
-        }
-    }
-}
-
 #[instrument(level = "trace", skip_all)]
-pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<CacheFile, &'static str> {
+pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'static str> {
     info!("Updating cache...");
 
     let servers = get_sourced_servers(DEFUALT_SOURCES, prev).await?;
@@ -183,12 +161,12 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<CacheFile, 
         }
     }
 
-    Ok(CacheFile::from(cache))
+    Ok(cache)
 }
 
 pub struct ReadCacheErr {
     pub err: Cow<'static, str>,
-    pub cache: Option<Cache>,
+    pub cache: Option<CacheFile>,
 }
 
 impl ReadCacheErr {
@@ -199,7 +177,7 @@ impl ReadCacheErr {
         }
     }
 
-    fn with_old<C: Into<Cow<'static, str>>>(err: C, cache: Cache) -> Self {
+    fn with_old<C: Into<Cow<'static, str>>>(err: C, cache: CacheFile) -> Self {
         ReadCacheErr {
             err: err.into(),
             cache: Some(cache),
@@ -226,7 +204,7 @@ impl From<serde_json::Error> for ReadCacheErr {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
+pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
     match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
         Ok(OperationResult::Bool(true)) => {
             let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
@@ -235,15 +213,11 @@ pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
             trace!("Cache read from file");
             let curr_time = std::time::SystemTime::now();
             match curr_time.duration_since(file_contents.created) {
-                Ok(time) if time > Duration::new(60 * 60 * 24, 0) => Err(ReadCacheErr::with_old(
-                    "cache is too old",
-                    Cache::from(file_contents),
-                )),
-                Err(err) => Err(ReadCacheErr::with_old(
-                    err.to_string(),
-                    Cache::from(file_contents),
-                )),
-                _ => Ok(Cache::from(file_contents)),
+                Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
+                    Err(ReadCacheErr::with_old("cache is too old", file_contents))
+                }
+                Err(err) => Err(ReadCacheErr::with_old(err.to_string(), file_contents)),
+                _ => Ok(file_contents),
             }
         }
         Ok(OperationResult::Bool(false)) => {
@@ -255,7 +229,7 @@ pub fn read_cache(local_env_dir: &Path) -> Result<Cache, ReadCacheErr> {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn write_cache(context: &CommandContext) -> io::Result<()> {
+pub async fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Result<()> {
     let Some(local_path) = context.local_dir() else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
@@ -274,6 +248,7 @@ pub async fn write_cache(context: &CommandContext) -> io::Result<()> {
                 } else {
                     &cache.connection_history
                 },
+                "cmd_history": cmd_history,
                 "cache": {
                     "iw4m": cache.iw4m,
                     "hmw": cache.hmw,

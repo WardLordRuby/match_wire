@@ -10,7 +10,7 @@ use crate::{
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
         json_data::Version,
     },
-    CACHED_DATA, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
+    LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
 };
 use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -18,7 +18,7 @@ use repl_oxide::{
     ansi_code::{GREEN, RED, RESET, YELLOW},
     callback::{AsyncCallback, HookLifecycle, InputEventHook},
     executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
-    EventLoop, HookControl, HookUID, HookedEvent, InputHook, InputHookErr,
+    repl_builder, CallbackErr, EventLoop, HookControl, HookUID, HookedEvent, InputHook, LineReader,
 };
 use std::{
     borrow::Cow,
@@ -204,20 +204,28 @@ pub struct CommandContext {
 }
 
 impl Executor<Stdout> for CommandContext {
-    async fn try_execute_command(&mut self, user_tokens: Vec<String>) -> io::Result<CommandHandle> {
-        match Command::try_parse_from(format_for_clap(user_tokens)) {
-            Ok(command) => match command {
-                Command::Filter { args } => self.new_favorites_with(args).await,
-                Command::Reconnect { args } => self.reconnect(args).await,
-                Command::Launch => self.launch_handler().await,
-                Command::Cache { option } => self.modify_cache(option).await,
-                Command::Console { all } => self.open_game_console(all).await,
-                Command::GameDir => open_dir(self.game.path.parent()),
-                Command::LocalEnv => open_dir(self.local_dir.as_deref()),
-                Command::Version => self.print_version(),
-                Command::Quit => self.quit().await,
-            },
-            Err(err) => err.print().map(|_| CommandHandle::Processed),
+    async fn try_execute_command(
+        &mut self,
+        _line_handle: &mut LineReader<Self, Stdout>,
+        user_tokens: Vec<String>,
+    ) -> io::Result<CommandHandle> {
+        let command = match Command::try_parse_from(format_for_clap(user_tokens)) {
+            Ok(c) => c,
+            Err(err) => return err.print().map(|_| CommandHandle::Processed),
+        };
+
+        self.cache_needs_update.store(true, Ordering::Relaxed);
+
+        match command {
+            Command::Filter { args } => self.new_favorites_with(args).await,
+            Command::Reconnect { args } => self.reconnect(args).await,
+            Command::Launch => self.launch_handler().await,
+            Command::Cache { option } => self.modify_cache(option).await,
+            Command::Console { all } => self.open_game_console(all).await,
+            Command::GameDir => open_dir(self.game.path.parent()),
+            Command::LocalEnv => open_dir(self.local_dir.as_deref()),
+            Command::Version => self.print_version(),
+            Command::Quit => self.quit().await,
         }
     }
 }
@@ -225,15 +233,29 @@ impl Executor<Stdout> for CommandContext {
 pub struct StartupData {
     pub local_dir: Option<PathBuf>,
     pub game: GameDetails,
-    pub cache_task: JoinHandle<Cache>,
+    pub cache_task: JoinHandle<StartupCacheContents>,
     pub splash_task: JoinHandle<io::Result<()>>,
     pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
     pub version_task: JoinHandle<reqwest::Result<AppDetails>>,
     pub hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
 }
 
+#[derive(Default)]
+pub struct StartupCacheContents {
+    pub command_history: Vec<String>,
+    pub cache: Arc<Mutex<Cache>>,
+    pub modified: bool,
+}
+
 impl CommandContext {
-    pub async fn from(mut startup_data: StartupData) -> (Self, (Receiver<Message>, Receiver<()>)) {
+    pub async fn from(
+        mut startup_data: StartupData,
+        term: Stdout,
+    ) -> (
+        LineReader<Self, Stdout>,
+        Self,
+        (Receiver<Message>, Receiver<()>),
+    ) {
         let (launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
             startup_data.launch_task,
             startup_data.version_task,
@@ -289,15 +311,19 @@ impl CommandContext {
             };
             error!("Could not get latest HMW version: {err}");
         };
+        let startup_contents = cache_res.unwrap_or_else(|err| {
+            error!("Critical error building cache, could not populate cache");
+            error!(name: LOG_ONLY, "{err:?}");
+            StartupCacheContents::default()
+        });
 
-        let cache_needs_update = Arc::new(AtomicBool::new(false));
+        let cache_needs_update = Arc::new(AtomicBool::new(startup_contents.modified));
         let (update_cache_tx, update_cache_rx) = channel(20);
 
         tokio::spawn({
             let cache_needs_update = Arc::clone(&cache_needs_update);
             async move {
                 loop {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
                     if cache_needs_update
                         .compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst)
                         .is_ok()
@@ -305,6 +331,7 @@ impl CommandContext {
                     {
                         break;
                     }
+                    tokio::time::sleep(tokio::time::Duration::from_secs(240)).await;
                 }
             }
         });
@@ -312,11 +339,7 @@ impl CommandContext {
         let (message_tx, message_rx) = channel(50);
 
         let mut ctx = CommandContext {
-            cache: Arc::new(Mutex::new(cache_res.unwrap_or_else(|err| {
-                error!("Critical error building cache, could not populate cache");
-                error!(name: LOG_ONLY, "{err:?}");
-                Cache::default()
-            }))),
+            cache: startup_contents.cache,
             msg_sender: message_tx,
             app,
             game: startup_data.game,
@@ -335,7 +358,17 @@ impl CommandContext {
 
         leave_splash_screen(startup_data.splash_task).await;
 
-        (ctx, (message_rx, update_cache_rx))
+        (
+            repl_builder(term)
+                .with_prompt(MAIN_PROMPT)
+                .with_completion(&crate::command_scheme::COMPLETION)
+                .with_custom_quit_command("quit")
+                .with_history_entries(&startup_contents.command_history)
+                .build()
+                .expect("`Stdout` accepts crossterm commands"),
+            ctx,
+            (message_rx, update_cache_rx),
+        )
     }
     #[inline]
     pub fn cache(&self) -> Arc<Mutex<Cache>> {
@@ -388,6 +421,7 @@ impl CommandContext {
     pub fn game_version(&self) -> Option<f64> {
         self.game.version
     }
+    #[inline]
     pub fn game_name(&self) -> Cow<'static, str> {
         Cow::clone(&self.game.game_name)
     }
@@ -403,9 +437,9 @@ impl CommandContext {
             .unwrap_or_else(|err| err.0.log())
     }
 
-    pub async fn graceful_shutdown(&mut self) {
+    pub async fn graceful_shutdown(&mut self, cmd_history: &[String]) {
         if self.cache_needs_update().load(Ordering::SeqCst) {
-            write_cache(self)
+            write_cache(self, cmd_history)
                 .await
                 .unwrap_or_else(|err| error!(name: LOG_ONLY, "{err}"))
         }
@@ -437,9 +471,9 @@ impl CommandContext {
         &mut self,
         command: S,
         input_hook_uid: HookUID,
-    ) -> Result<Result<(), Cow<'static, str>>, InputHookErr> {
+    ) -> Result<Result<(), Cow<'static, str>>, CallbackErr> {
         let lock = self.check_h2m_connection().await.map_err(|err| {
-            InputHookErr::new(input_hook_uid, format!("Could not send command: {err}"))
+            CallbackErr::new(input_hook_uid, format!("Could not send command: {err}"))
         })?;
 
         let game_console = lock.read().await;
@@ -545,32 +579,23 @@ impl CommandContext {
     }
 
     async fn modify_cache(&self, arg: CacheCmd) -> io::Result<CommandHandle> {
-        let Some(ref local_dir) = self.local_dir else {
+        if self.local_dir.is_none() {
             error!("Can not create cache with out a valid save directory");
             return Ok(CommandHandle::Processed);
-        };
+        }
 
-        let prev = matches!(arg, CacheCmd::Update).then_some(&self.cache);
-
-        let cache_file = match build_cache(prev).await {
-            Ok(data) => data,
+        match build_cache(matches!(arg, CacheCmd::Update).then_some(&self.cache)).await {
+            Ok(cache) => {
+                let mut lock = self.cache.lock().await;
+                *lock = cache
+            }
             Err(err) => {
                 error!("{err}, cache remains unchanged");
                 return Ok(CommandHandle::Processed);
             }
         };
 
-        match std::fs::File::create(local_dir.join(CACHED_DATA)) {
-            Ok(file) => {
-                if let Err(err) = serde_json::to_writer_pretty(file, &cache_file) {
-                    error!("{err}")
-                }
-            }
-            Err(err) => error!("{err}"),
-        }
-
-        let mut cache = self.cache.lock().await;
-        *cache = Cache::from(cache_file);
+        self.cache_needs_update.store(true, Ordering::SeqCst);
         Ok(CommandHandle::Processed)
     }
 
@@ -669,8 +694,8 @@ impl CommandContext {
                         if !handle.input().is_empty() {
                             let cmd = handle.new_line()?;
 
-                            let send_user_cmd: Box<AsyncCallback<CommandContext>> =
-                                Box::new(move |context| {
+                            let send_user_cmd: Box<AsyncCallback<CommandContext, Stdout>> =
+                                Box::new(move |_handle, context| {
                                     Box::pin(async move {
                                         context
                                             .try_send_cmd_from_hook(cmd, uid)

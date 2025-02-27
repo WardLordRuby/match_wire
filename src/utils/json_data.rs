@@ -114,7 +114,11 @@ pub struct Version {
 pub struct CacheFile {
     pub version: String,
     pub created: std::time::SystemTime,
+    #[serde(default)]
+    pub cmd_history: Vec<String>,
+    #[serde(default)]
     pub connection_history: Vec<HostName>,
+    #[serde(default)]
     pub cache: ServerCache,
 }
 

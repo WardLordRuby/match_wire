@@ -6,21 +6,25 @@ use match_wire::{
         launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
+    startup_cache_task,
     utils::{
-        caching::{build_cache, read_cache, write_cache, Cache},
+        caching::{read_cache, write_cache},
         display::DisplayPanic,
-        json_data::CacheFile,
         subscriber::init_subscriber,
     },
-    CACHED_DATA, LOCAL_DATA, LOG_ONLY, MAIN_PROMPT,
+    LOCAL_DATA, LOG_ONLY, SAVED_HISTORY_CAP,
 };
 use repl_oxide::{
     ansi_code::{RED, RESET},
     executor::{CommandHandle, Executor},
-    repl_builder, EventLoop,
+    EventLoop, LineReader,
 };
-use std::{borrow::Cow, io, path::PathBuf, sync::Arc};
-use tokio::sync::{mpsc::Receiver, Mutex};
+use std::{
+    borrow::Cow,
+    io::{self, Stdout},
+    path::PathBuf,
+};
+use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 
@@ -41,8 +45,8 @@ async fn main() {
     )
     .unwrap();
 
-    let (mut command_context, receivers) = match app_startup() {
-        Ok(startup_data) => CommandContext::from(startup_data).await,
+    let (mut line_handle, mut command_context, receivers) = match app_startup() {
+        Ok(startup_data) => CommandContext::from(startup_data, term).await,
         Err(err) => {
             eprintln!("{RED}{err}{RESET}");
             await_user_for_end();
@@ -52,28 +56,24 @@ async fn main() {
 
     print_help();
 
-    run_eval_print_loop(&mut command_context, receivers, term)
+    run_eval_print_loop(&mut line_handle, &mut command_context, receivers)
         .await
         .unwrap_or_else(|err| error!("{err}"));
 
-    command_context.graceful_shutdown().await;
+    command_context
+        .graceful_shutdown(&line_handle.export_history(Some(SAVED_HISTORY_CAP)))
+        .await;
 }
 
 async fn run_eval_print_loop(
+    line_handle: &mut LineReader<CommandContext, Stdout>,
     command_context: &mut CommandContext,
     receivers: (Receiver<Message>, Receiver<()>),
-    term: io::Stdout,
 ) -> io::Result<()> {
     let (mut message_rx, mut update_cache_rx) = receivers;
     let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
 
     let mut reader = EventStream::new();
-    let mut line_handle = repl_builder(term)
-        .with_prompt(MAIN_PROMPT)
-        .with_completion(&match_wire::command_scheme::COMPLETION)
-        .with_custom_quit_command("quit")
-        .build()
-        .expect("input writer accepts crossterm commands");
 
     loop {
         line_handle.clear_unwanted_inputs(&mut reader).await?;
@@ -95,15 +95,16 @@ async fn run_eval_print_loop(
                     EventLoop::Continue => (),
                     EventLoop::Break => break,
                     EventLoop::AsyncCallback(callback) => {
-                        if let Err(err) = callback(command_context).await {
+                        if let Err(err) = callback(line_handle, command_context).await {
                             error!("{err}");
                             line_handle.conditionally_remove_hook(command_context, &err)?;
                         }
                     },
                     EventLoop::TryProcessInput(Ok(user_tokens)) => {
-                        match command_context.try_execute_command(user_tokens).await? {
+                        match command_context.try_execute_command(line_handle, user_tokens).await? {
                             CommandHandle::Processed => (),
                             CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
+                            CommandHandle::ExecuteAsyncCallback(_) => unreachable!("callback type is not used here"),
                             CommandHandle::Exit => break,
                         }
                     }
@@ -118,7 +119,7 @@ async fn run_eval_print_loop(
             }
 
             Some(_) = update_cache_rx.recv() => {
-                if let Err(err) = write_cache(command_context).await {
+                if let Err(err) = write_cache(command_context, &line_handle.export_history(Some(SAVED_HISTORY_CAP))).await {
                     command_context.send_message(err).await
                 };
                 line_handle.set_uneventful();
@@ -197,46 +198,10 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
         init_subscriber(std::path::Path::new("")).unwrap();
     }
 
-    let cache_task = tokio::spawn({
-        let cache_path = local_dir.as_deref().map(|local| local.join(CACHED_DATA));
-        async move {
-            let cache = match cache_res {
-                Some(Ok(cache)) => return cache,
-                Some(Err(err)) => {
-                    error!("{err}");
-                    err.cache.map(|c| Arc::new(Mutex::new(c)))
-                }
-                None => None,
-            };
-            let cache_file = match build_cache(cache.as_ref()).await {
-                Ok(c) => c,
-                Err(err) => {
-                    error!("{err}");
-                    if let Some(prev) = cache {
-                        let mut lock = prev.lock().await;
-                        CacheFile::from(std::mem::take(&mut *lock))
-                    } else {
-                        CacheFile::from(Cache::default())
-                    }
-                }
-            };
-            if let Some(cache) = cache_path.as_deref() {
-                match std::fs::File::create(cache) {
-                    Ok(file) => match serde_json::to_writer_pretty(file, &cache_file) {
-                        Ok(()) => info!(name: LOG_ONLY, "Cache saved locally"),
-                        Err(err) => error!("{err}"),
-                    },
-                    Err(err) => error!("{err}"),
-                }
-            }
-            Cache::from(cache_file)
-        }
-    });
-
     Ok(StartupData {
         local_dir,
         game,
-        cache_task,
+        cache_task: tokio::spawn(startup_cache_task(cache_res)),
         splash_task,
         launch_task,
         version_task,
