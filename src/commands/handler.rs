@@ -643,7 +643,7 @@ impl CommandContext {
         });
 
         let revert: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, context| {
-            context.forward_logs().store(false, Ordering::SeqCst);
+            context.forward_logs.store(false, Ordering::SeqCst);
             handle.set_prompt(MAIN_PROMPT);
             handle.enable_completion();
             handle.enable_line_stylization();

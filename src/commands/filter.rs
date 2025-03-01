@@ -313,7 +313,9 @@ pub struct HostMeta {
 impl HostMeta {
     fn try_from(host_ip: &str, webfront_url: &str, server: ServerInfo) -> Option<Self> {
         resolve_address(&server.ip, host_ip, webfront_url)
-            .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+            .map_err(|err| {
+                error!(name: LOG_ONLY, "{err}, server_ip: {}, host_ip: {host_ip}, webfront_url: {webfront_url}", server.ip)
+            })
             .map(|ip| HostMeta {
                 resolved_addr: SocketAddr::new(ip, server.port),
                 server,
@@ -410,7 +412,7 @@ async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
                     })
                     .collect::<Vec<_>>();
                 if !backup.is_empty() {
-                    error!("{RED}Could not fetch iw4 servers{RESET}");
+                    error!("Could not fetch iw4 servers");
                     error!(name: LOG_ONLY, "{err}");
                     warn!("{}", DisplayCachedServerUse("iw4", backup.len()));
                     return Ok(backup);
@@ -441,7 +443,7 @@ async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
                     })
                     .collect::<Vec<_>>();
                 if !backup.is_empty() {
-                    error!("{RED}Could not fetch HMW servers{RESET}");
+                    error!("Could not fetch HMW servers");
                     error!(name: LOG_ONLY, "{err}");
                     warn!("{}", DisplayCachedServerUse("HMW", backup.len()));
                     return Ok(backup);
@@ -842,7 +844,14 @@ fn try_resolve_from_str(ip: &str) -> Option<IpAddr> {
 
 #[instrument(level = "trace", skip_all)]
 fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> Result<IpAddr, AddrParseError> {
-    match ip.parse::<IpAddr>() {
+    let ip_trim = ip.trim_matches('/').trim_matches(':');
+
+    if let Some(ip) = try_resolve_from_str(ip_trim) {
+        trace!("Found socket address of: {ip}, from: {ip_trim}");
+        return Ok(ip);
+    }
+
+    match ip_trim.parse::<IpAddr>() {
         Ok(ip) => Ok(ip),
         Err(err) => {
             const HTTP_ENDING: &str = "//";
@@ -852,7 +861,7 @@ fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> Result<IpAddr, AddrParse
                 let ipv6_slice = if let Some(j) = webfront_url[ip_start..].rfind(PORT_SEPERATOR) {
                     let ip_end = j + ip_start;
                     if ip_end <= ip_start {
-                        error!(name: LOG_ONLY, "Bad ipv6 string slice");
+                        error!(name: LOG_ONLY, "Bad ipv6 slice op: {webfront_url}");
                         return Err(err);
                     }
                     &webfront_url[ip_start..ip_end]

@@ -16,8 +16,8 @@ use match_wire::{
 };
 use repl_oxide::{
     ansi_code::{RED, RESET},
-    executor::{CommandHandle, Executor},
-    EventLoop, LineReader,
+    executor::Executor,
+    general_event_process, LineReader,
 };
 use std::{
     borrow::Cow,
@@ -91,26 +91,7 @@ async fn run_eval_print_loop(
             }
 
             Some(event_result) = reader.next() => {
-                match line_handle.process_input_event(command_context, event_result?)? {
-                    EventLoop::Continue => (),
-                    EventLoop::Break => break,
-                    EventLoop::AsyncCallback(callback) => {
-                        if let Err(err) = callback(line_handle, command_context).await {
-                            error!("{err}");
-                            line_handle.conditionally_remove_hook(command_context, &err)?;
-                        }
-                    },
-                    EventLoop::TryProcessInput(Ok(user_tokens)) => {
-                        match command_context.try_execute_command(line_handle, user_tokens).await? {
-                            CommandHandle::Processed => (),
-                            CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
-                            CommandHandle::Exit => break,
-                        }
-                    }
-                    EventLoop::TryProcessInput(Err(mismatched_quotes)) => {
-                        eprintln!("{RED}{mismatched_quotes}{RESET}")
-                    },
-                }
+                general_event_process!(line_handle, command_context, event_result)
             }
 
             Some(msg) = message_rx.recv() => {
@@ -119,9 +100,11 @@ async fn run_eval_print_loop(
 
             Some(_) = update_cache_rx.recv() => {
                 if let Err(err) = write_cache(command_context, &line_handle.export_history(Some(SAVED_HISTORY_CAP))).await {
-                    command_context.send_message(err).await
+                    error!(name: LOG_ONLY, "{err}");
+                    line_handle.print_background_msg(err)?
+                } else {
+                    line_handle.set_uneventful();
                 };
-                line_handle.set_uneventful();
             }
         }
     }
