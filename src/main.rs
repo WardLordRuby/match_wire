@@ -104,7 +104,6 @@ async fn run_eval_print_loop(
                         match command_context.try_execute_command(line_handle, user_tokens).await? {
                             CommandHandle::Processed => (),
                             CommandHandle::InsertHook(input_hook) => line_handle.register_input_hook(input_hook),
-                            CommandHandle::ExecuteAsyncCallback(_) => unreachable!("callback type is not used here"),
                             CommandHandle::Exit => break,
                         }
                     }

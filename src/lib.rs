@@ -419,9 +419,10 @@ pub async fn startup_cache_task(
     let (cache, modified) = match build_cache(cache.as_ref()).await {
         Ok(c) => {
             let cache = if let Some(prev) = cache {
-                let mut lock = prev.lock().await;
-                *lock = c;
-                drop(lock);
+                {
+                    let mut lock = prev.lock().await;
+                    *lock = c;
+                }
                 prev
             } else {
                 Arc::new(Mutex::new(c))
