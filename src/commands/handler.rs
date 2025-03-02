@@ -18,7 +18,7 @@ use repl_oxide::{
     ansi_code::{GREEN, RED, RESET, YELLOW},
     callback::{AsyncCallback, HookLifecycle, InputEventHook},
     executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
-    repl_builder, CallbackErr, EventLoop, HookControl, HookUID, HookedEvent, InputHook, LineReader,
+    repl_builder, CallbackErr, EventLoop, HookControl, HookUID, HookedEvent, InputHook, Repl,
 };
 use std::{
     borrow::Cow,
@@ -184,6 +184,7 @@ impl From<Version> for AppDetails {
 }
 
 pub type CommandHandle = CmdHandle<CommandContext, Stdout>;
+pub type ReplHandle = Repl<CommandContext, Stdout>;
 
 #[derive(Default)]
 pub struct ConsoleHistory {
@@ -206,7 +207,7 @@ pub struct CommandContext {
 impl Executor<Stdout> for CommandContext {
     async fn try_execute_command(
         &mut self,
-        _line_handle: &mut LineReader<Self, Stdout>,
+        _line_handle: &mut ReplHandle,
         user_tokens: Vec<String>,
     ) -> io::Result<CommandHandle> {
         let command = match Command::try_parse_from(format_for_clap(user_tokens)) {
@@ -251,11 +252,7 @@ impl CommandContext {
     pub async fn from(
         mut startup_data: StartupData,
         term: Stdout,
-    ) -> (
-        LineReader<Self, Stdout>,
-        Self,
-        (Receiver<Message>, Receiver<()>),
-    ) {
+    ) -> (ReplHandle, Self, (Receiver<Message>, Receiver<()>)) {
         let (launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
             startup_data.launch_task,
             startup_data.version_task,

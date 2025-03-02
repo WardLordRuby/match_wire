@@ -2,7 +2,7 @@ use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
     await_user_for_end, check_app_dir_exists,
     commands::{
-        handler::{CommandContext, GameDetails, Message, StartupData},
+        handler::{CommandContext, GameDetails, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
@@ -17,13 +17,9 @@ use match_wire::{
 use repl_oxide::{
     ansi_code::{RED, RESET},
     executor::Executor,
-    general_event_process, LineReader,
+    general_event_process,
 };
-use std::{
-    borrow::Cow,
-    io::{self, Stdout},
-    path::PathBuf,
-};
+use std::{borrow::Cow, io, path::PathBuf};
 use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
@@ -66,7 +62,7 @@ async fn main() {
 }
 
 async fn run_eval_print_loop(
-    line_handle: &mut LineReader<CommandContext, Stdout>,
+    line_handle: &mut ReplHandle,
     command_context: &mut CommandContext,
     receivers: (Receiver<Message>, Receiver<()>),
 ) -> io::Result<()> {
