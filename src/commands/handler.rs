@@ -16,9 +16,9 @@ use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, RESET, YELLOW},
-    callback::{AsyncCallback, HookLifecycle, InputEventHook},
     executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
-    repl_builder, CallbackErr, EventLoop, HookControl, HookUID, HookedEvent, InputHook, Repl,
+    repl_builder, CallbackErr, EventLoop, HookControl, HookStates, HookUID, HookedEvent, InputHook,
+    Repl,
 };
 use std::{
     borrow::Cow,
@@ -629,96 +629,86 @@ impl CommandContext {
         drop(console);
 
         let uid = HookUID::new();
-        let game_exe_name = self.game.game_file_name().into_owned();
 
-        let init: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(move |handle, context| {
-            context.forward_logs.store(true, Ordering::SeqCst);
-            handle.set_prompt(&game_exe_name);
-            handle.disable_completion();
-            handle.disable_line_stylization();
-            Ok(())
-        });
+        let line_changes = HookStates::<CommandContext, _>::new(
+            |handle, context| {
+                context.forward_logs.store(true, Ordering::SeqCst);
+                handle.set_prompt(&context.game.game_file_name());
+                handle.disable_completion();
+                handle.disable_line_stylization();
+                Ok(())
+            },
+            |handle, context| {
+                context.forward_logs.store(false, Ordering::SeqCst);
+                handle.set_prompt(MAIN_PROMPT);
+                handle.enable_completion();
+                handle.enable_line_stylization();
+                Ok(())
+            },
+        );
 
-        let revert: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, context| {
-            context.forward_logs.store(false, Ordering::SeqCst);
-            handle.set_prompt(MAIN_PROMPT);
-            handle.enable_completion();
-            handle.enable_line_stylization();
-            Ok(())
-        });
-
-        let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-            Box::new(move |handle, _context, event| {
-                match event {
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char('d'),
-                        modifiers: KeyModifiers::CONTROL,
-                        ..
-                    }) => {
-                        handle.clear_line()?;
-                        return HookedEvent::new(
-                            handle.process_close_signal()?,
-                            HookControl::Release,
-                        );
-                    }
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char('c'),
-                        modifiers: KeyModifiers::CONTROL,
-                        ..
-                    }) => {
-                        if handle.input().is_empty() {
-                            return HookedEvent::release_hook();
-                        }
-                        handle.ctrl_c_line()?;
-                    }
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char(c),
-                        ..
-                    }) => handle.insert_char(c),
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Backspace,
-                        ..
-                    }) => {
-                        if handle.input().is_empty() {
-                            return HookedEvent::release_hook();
-                        }
-                        handle.remove_char()?;
-                    }
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Enter,
-                        ..
-                    }) => {
-                        if !handle.input().is_empty() {
-                            let cmd = handle.new_line()?;
-
-                            let send_user_cmd: Box<AsyncCallback<CommandContext, Stdout>> =
-                                Box::new(move |_handle, context| {
-                                    Box::pin(async move {
-                                        context
-                                            .try_send_cmd_from_hook(cmd, uid)
-                                            .await?
-                                            .unwrap_or_else(|err| error!("{err}"));
-                                        Ok(())
-                                    })
-                                });
-
-                            return HookedEvent::new(
-                                EventLoop::AsyncCallback(send_user_cmd),
-                                HookControl::Continue,
-                            );
-                        }
-                        handle.new_line()?;
-                    }
-                    _ => handle.set_uneventful(),
+        let input_hook = InputHook::new(uid, line_changes, move |handle, _context, event| {
+            match event {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('d'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }) => {
+                    handle.clear_line()?;
+                    return HookedEvent::new(handle.process_close_signal()?, HookControl::Release);
                 }
-                HookedEvent::continue_hook()
-            });
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                }) => {
+                    if handle.input().is_empty() {
+                        return HookedEvent::release_hook();
+                    }
+                    handle.ctrl_c_line()?;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(c),
+                    ..
+                }) => handle.insert_char(c),
+                Event::Key(KeyEvent {
+                    code: KeyCode::Backspace,
+                    ..
+                }) => {
+                    if handle.input().is_empty() {
+                        return HookedEvent::release_hook();
+                    }
+                    handle.remove_char()?;
+                }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Enter,
+                    ..
+                }) => {
+                    if !handle.input().is_empty() {
+                        let cmd = handle.new_line()?;
 
-        Ok(CommandHandle::InsertHook(InputHook::new(
-            uid,
-            InputHook::new_hook_states(init, revert),
-            input_hook,
-        )))
+                        let send_user_cmd = EventLoop::<CommandContext, _>::new_async_callback(
+                            move |_handle, context| {
+                                Box::pin(async move {
+                                    context
+                                        .try_send_cmd_from_hook(cmd, uid)
+                                        .await?
+                                        .unwrap_or_else(|err| error!("{err}"));
+                                    Ok(())
+                                })
+                            },
+                        );
+
+                        return HookedEvent::new(send_user_cmd, HookControl::Continue);
+                    }
+                    handle.new_line()?;
+                }
+                _ => handle.set_uneventful(),
+            }
+            HookedEvent::continue_hook()
+        });
+
+        Ok(CommandHandle::InsertHook(input_hook))
     }
 
     async fn quit(&mut self) -> io::Result<CommandHandle> {
@@ -740,20 +730,21 @@ impl CommandContext {
             self.game_name()
         );
 
-        let init: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, _context| {
-            handle.set_prompt(&format!(
-                "Press ({YELLOW}y{RESET}) or ({YELLOW}ctrl_c{RESET}) to close"
-            ));
-            Ok(())
-        });
+        let line_changes = HookStates::new(
+            |handle, _context| {
+                handle.set_prompt(&format!(
+                    "Press ({YELLOW}y{RESET}) or ({YELLOW}ctrl_c{RESET}) to close"
+                ));
+                Ok(())
+            },
+            |handle, _context| {
+                handle.set_prompt(MAIN_PROMPT);
+                Ok(())
+            },
+        );
 
-        let revert: Box<HookLifecycle<CommandContext, Stdout>> = Box::new(|handle, _context| {
-            handle.set_prompt(MAIN_PROMPT);
-            Ok(())
-        });
-
-        let input_hook: Box<InputEventHook<CommandContext, Stdout>> =
-            Box::new(|_handle, _context, event| match event {
+        let input_hook =
+            InputHook::with_new_uid(line_changes, |_handle, _context, event| match event {
                 Event::Key(
                     KeyEvent {
                         code: KeyCode::Char('c'),
@@ -768,10 +759,7 @@ impl CommandContext {
                 _ => HookedEvent::release_hook(),
             });
 
-        Ok(CommandHandle::InsertHook(InputHook::with_new_uid(
-            InputHook::new_hook_states(init, revert),
-            input_hook,
-        )))
+        Ok(CommandHandle::InsertHook(input_hook))
     }
 }
 
