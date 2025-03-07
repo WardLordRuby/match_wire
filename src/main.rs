@@ -91,13 +91,13 @@ async fn run_eval_print_loop(
             }
 
             Some(msg) = message_rx.recv() => {
-                line_handle.print_background_msg(msg)?
+                line_handle.println(msg)?
             }
 
             Some(_) = update_cache_rx.recv() => {
                 if let Err(err) = write_cache(command_context, &line_handle.export_history(Some(SAVED_HISTORY_CAP))).await {
-                    error!(name: LOG_ONLY, "{err}");
-                    line_handle.print_background_msg(err)?
+                    line_handle.prep_for_background_msg()?;
+                    error!("{err}");
                 } else {
                     line_handle.set_uneventful();
                 };
