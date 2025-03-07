@@ -4,7 +4,7 @@ use crate::{
         filter::build_favorites,
         launch_h2m::{game_open, initalize_listener, launch_h2m_pseudo, LaunchError},
     },
-    exe_details, leave_splash_screen, print_during_splash,
+    exe_details, get_latest_hmw_hash, leave_splash_screen, print_during_splash,
     utils::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
@@ -225,7 +225,7 @@ impl Executor<Stdout> for CommandContext {
             Command::Console { all } => self.open_game_console(all).await,
             Command::GameDir => open_dir(self.game.path.parent()),
             Command::LocalEnv => open_dir(self.local_dir.as_deref()),
-            Command::Version => self.print_version(),
+            Command::Version => self.print_version().await,
             Command::Quit => self.quit().await,
         }
     }
@@ -567,7 +567,23 @@ impl CommandContext {
         Ok(CommandHandle::Processed)
     }
 
-    fn print_version(&self) -> io::Result<CommandHandle> {
+    async fn print_version(&mut self) -> io::Result<CommandHandle> {
+        if self.game.hash_latest.is_none() {
+            println!("{GREEN}Trying to get lastest HMW version..{RESET}");
+
+            self.game.hash_latest = get_latest_hmw_hash()
+                .await
+                .map_err(|err| error!("{err}"))
+                .ok()
+                .and_then(|res| {
+                    match res {
+                        Ok(_) => info!("Found latest HMW version"),
+                        Err(err) => error!("{err}"),
+                    }
+                    res.ok()
+                })
+        }
+
         println!("{}", self.app);
         if self.game.version.is_some() || self.game.hash_curr.is_some() {
             println!("{}", self.game)
