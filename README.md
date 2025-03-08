@@ -1,7 +1,7 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
 [filter-help]: https://i.imgur.com/abZEeNh.png "query arguments"
 [reconnect-help]: https://i.imgur.com/fvRZ7PW.png "history arguments"
-[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/latest/download/match_wire.exe
+[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.6.0-pre/match_wire.exe
 [nexus-link]: https://www.nexusmods.com/callofdutymodernwarfareremastered/mods/2
 [hmw-discord]: https://discord.com/invite/HorizonMW
 [hmw-launcher-dl]: https://docs.horizonmw.org/download/
