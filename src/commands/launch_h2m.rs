@@ -369,14 +369,11 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                     let mut chars = line.char_indices().peekable();
                     let mut color_cmd = None;
                     while let Some((i, ESCAPE_CHAR)) = chars.next() {
-                        chars.find(|&(j, c)| {
-                            c.is_alphabetic() && {
-                                if c == COLOR_CMD {
-                                    color_cmd = Some(&line[i..=j]);
-                                }
-                                true
+                        if let Some((j, c)) = chars.find(|(_, c)| c.is_alphabetic()) {
+                            if c == COLOR_CMD {
+                                color_cmd = Some(&line[i..=j]);
                             }
-                        });
+                        }
                         if chars.peek().is_none() {
                             if let Some(cmd) = color_cmd {
                                 if line != cmd {

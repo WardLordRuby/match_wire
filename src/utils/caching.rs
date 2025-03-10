@@ -114,15 +114,16 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
 
     let servers = get_sourced_servers(DEFUALT_SOURCES, prev).await?;
 
+    let mut cache = Cache::default();
+
     let regions = match prev {
         Some(p) => {
             let mut lock = p.lock().await;
+            std::mem::swap(&mut cache.connection_history, &mut lock.connection_history);
             Some(std::mem::take(&mut lock.ip_to_region))
         }
         None => None,
     };
-
-    let mut cache = Cache::default();
 
     let client = reqwest::Client::builder()
         .timeout(tokio::time::Duration::from_secs(3))
