@@ -17,8 +17,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, RESET, YELLOW},
     executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
-    repl_builder, CallbackErr, EventLoop, HookControl, HookStates, HookUID, HookedEvent, InputHook,
-    Repl,
+    input_hook::{CallbackErr, HookControl, HookStates, HookUID, HookedEvent, InputHook},
+    repl_builder, EventLoop, Repl,
 };
 use std::{
     borrow::Cow,
