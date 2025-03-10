@@ -1,4 +1,5 @@
 use crate::{
+    cli::Source,
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, ConsoleHistory, GameDetails},
@@ -10,10 +11,23 @@ use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
 
-const SOURCE_HMW: &str = "HMW master server";
-const SOURCE_HMW_CACHED: &str = "Cached HMW server";
-const SOURCE_IW4: &str = "Iw4m master server";
-const SOURCE_IW4_CACHED: &str = "Cached Iw4m server";
+pub const DISP_NAME_HMW: &str = "HMW";
+pub const DISP_NAME_H2M: &str = "H2M";
+const DISP_NAME_IW4: &str = "Iw4m";
+
+macro_rules! server_type {
+    (master, $name:expr) => {
+        concat!($name, " master server")
+    };
+    (cached, $name:expr) => {
+        concat!("Cached ", $name, " server")
+    };
+}
+
+pub const SOURCE_HMW: &str = server_type!(master, DISP_NAME_HMW);
+const SOURCE_HMW_CACHED: &str = server_type!(cached, DISP_NAME_HMW);
+const SOURCE_IW4: &str = server_type!(master, DISP_NAME_IW4);
+const SOURCE_IW4_CACHED: &str = server_type!(cached, DISP_NAME_IW4);
 
 pub struct ConnectionHelp;
 
@@ -74,7 +88,7 @@ impl Display for DisplayServerCount {
 }
 
 ///`(source, count)`
-pub struct DisplayCachedServerUse(pub &'static str, pub usize);
+pub struct DisplayCachedServerUse(pub Source, pub usize);
 
 impl Display for DisplayCachedServerUse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -164,13 +178,29 @@ impl Display for DisplayPanic<'_> {
 
 impl Display for Sourced {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display = match self {
-            Self::Hmw(_) => SOURCE_HMW,
-            Self::HmwCached(_) => SOURCE_HMW_CACHED,
-            Self::Iw4(_) => SOURCE_IW4,
-            Self::Iw4Cached(_) => SOURCE_IW4_CACHED,
-        };
-        write!(f, "{display}")
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Hmw(_) => SOURCE_HMW,
+                Self::HmwCached(_) => SOURCE_HMW_CACHED,
+                Self::Iw4(_) => SOURCE_IW4,
+                Self::Iw4Cached(_) => SOURCE_IW4_CACHED,
+            }
+        )
+    }
+}
+
+impl Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Source::Iw4Master => DISP_NAME_IW4,
+                Source::HmwMaster => DISP_NAME_HMW,
+            }
+        )
     }
 }
 

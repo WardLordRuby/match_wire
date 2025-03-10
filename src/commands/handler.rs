@@ -7,7 +7,7 @@ use crate::{
     exe_details, get_latest_hmw_hash, leave_splash_screen, print_during_splash,
     utils::{
         caching::{build_cache, write_cache, Cache},
-        display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp},
+        display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_H2M, DISP_NAME_HMW},
         json_data::Version,
     },
     LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
@@ -112,9 +112,9 @@ impl GameDetails {
             .to_string_lossy();
 
         match file_name.as_ref() {
-            n if n == REQUIRED_FILES[6] || n == REQUIRED_FILES[5] => Cow::Borrowed("HMW"),
+            n if n == REQUIRED_FILES[6] || n == REQUIRED_FILES[5] => Cow::Borrowed(DISP_NAME_HMW),
             n if n == REQUIRED_FILES[3] || n == REQUIRED_FILES[1] || n == REQUIRED_FILES[4] => {
-                Cow::Borrowed("H2M")
+                Cow::Borrowed(DISP_NAME_H2M)
             }
             _ => Cow::Owned(file_name.into_owned()),
         }
@@ -123,7 +123,7 @@ impl GameDetails {
     pub fn default(exe_dir: &Path) -> Self {
         GameDetails {
             path: exe_dir.join(REQUIRED_FILES[6]),
-            game_name: Cow::Borrowed("HMW"),
+            game_name: Cow::Borrowed(DISP_NAME_HMW),
             version: None,
             hash_curr: None,
             hash_latest: None,
