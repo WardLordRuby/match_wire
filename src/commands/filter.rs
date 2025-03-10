@@ -378,45 +378,70 @@ impl Sourced {
     }
 }
 
-async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<Sourced>> {
-    match get_iw4_master().await {
-        Ok(mut hosts) => {
-            hosts
-                .iter_mut()
-                .for_each(|host| host.servers.retain(|server| server.game == GAME_ID));
-            hosts.retain(|host| !host.servers.is_empty());
-            Ok(hosts
-                .into_iter()
-                .flat_map(|host| {
-                    host.servers
-                        .into_iter()
-                        .filter_map(|server| {
-                            HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
-                                .map(Sourced::Iw4)
-                        })
+impl Source {
+    fn with_cached_ip(self, addr: SocketAddr) -> Sourced {
+        match self {
+            Source::Iw4Master => Sourced::Iw4Cached(addr),
+            Source::HmwMaster => Sourced::HmwCached(addr),
+        }
+    }
+
+    async fn try_use_cached_servers(
+        self,
+        cache: Option<Arc<Mutex<Cache>>>,
+        err: &reqwest::Error,
+    ) -> Option<Vec<Sourced>> {
+        let cache = cache?;
+        let cached = {
+            let lock = cache.lock().await;
+            let backup = match self {
+                Source::Iw4Master => &lock.iw4m,
+                Source::HmwMaster => &lock.hmw,
+            };
+
+            backup
+                .iter()
+                .flat_map(|(&ip, ports)| {
+                    ports
+                        .iter()
+                        .map(|&port| self.with_cached_ip(SocketAddr::new(ip, port)))
                         .collect::<Vec<_>>()
                 })
-                .collect())
+                .collect::<Vec<_>>()
+        };
+
+        if cached.is_empty() {
+            return None;
         }
-        Err(err) => {
-            if let Some(cache) = cache {
-                let cache = cache.lock().await;
-                let backup = cache
-                    .iw4m
-                    .iter()
-                    .flat_map(|(&ip, ports)| {
-                        ports
-                            .iter()
-                            .map(|&port| Sourced::Iw4Cached(SocketAddr::new(ip, port)))
-                            .collect::<Vec<_>>()
+
+        error!("Could not fetch {self} servers");
+        error!(name: LOG_ONLY, "{err}");
+        warn!("{}", DisplayCachedServerUse(self, cached.len()));
+        Some(cached)
+    }
+}
+
+async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<Sourced>> {
+    match get_iw4_master().await {
+        Ok(hosts) => Ok(hosts
+            .into_iter()
+            .filter_map(|mut host| {
+                host.servers.retain(|server| server.game == GAME_ID);
+                (!host.servers.is_empty()).then_some(host)
+            })
+            .flat_map(|host| {
+                host.servers
+                    .into_iter()
+                    .filter_map(|server| {
+                        HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
+                            .map(Sourced::Iw4)
                     })
-                    .collect::<Vec<_>>();
-                if !backup.is_empty() {
-                    error!("Could not fetch iw4 servers");
-                    error!(name: LOG_ONLY, "{err}");
-                    warn!("{}", DisplayCachedServerUse("iw4", backup.len()));
-                    return Ok(backup);
-                }
+                    .collect::<Vec<_>>()
+            })
+            .collect()),
+        Err(err) => {
+            if let Some(backup) = Source::Iw4Master.try_use_cached_servers(cache, &err).await {
+                return Ok(backup);
             }
             Err(err)
         }
@@ -430,24 +455,8 @@ async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
             .filter_map(Sourced::try_from_hmw_master)
             .collect()),
         Err(err) => {
-            if let Some(cache) = cache {
-                let cache = cache.lock().await;
-                let backup = cache
-                    .hmw
-                    .iter()
-                    .flat_map(|(&ip, ports)| {
-                        ports
-                            .iter()
-                            .map(|&port| Sourced::HmwCached(SocketAddr::new(ip, port)))
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-                if !backup.is_empty() {
-                    error!("Could not fetch HMW servers");
-                    error!(name: LOG_ONLY, "{err}");
-                    warn!("{}", DisplayCachedServerUse("HMW", backup.len()));
-                    return Ok(backup);
-                }
+            if let Some(backup) = Source::HmwMaster.try_use_cached_servers(cache, &err).await {
+                return Ok(backup);
             }
             Err(err)
         }
