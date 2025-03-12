@@ -42,14 +42,14 @@ const FAVORITES: &str = "favourites.json";
 
 const DEFAULT_H2M_SERVER_CAP: usize = 100;
 const DEFUALT_INFO_RETRIES: u8 = 3;
-pub const DEFUALT_SOURCES: [Source; 2] = [Source::Iw4Master, Source::HmwMaster];
+pub(crate) const DEFUALT_SOURCES: [Source; 2] = [Source::Iw4Master, Source::HmwMaster];
 const RETRY_TIME_SCALE: u64 = 800; // ms
 const LOCAL_HOST: &str = "localhost";
 
-pub const GAME_ID: &str = "H2M";
-const NA_CONT_CODE: [[char; 2]; 1] = [['N', 'A']];
-const EU_CONT_CODE: [[char; 2]; 1] = [['E', 'U']];
-const APAC_CONT_CODES: [[char; 2]; 3] = [['A', 'F'], ['A', 'S'], ['O', 'C']];
+pub(crate) const GAME_ID: &str = "H2M";
+const NA_CONT_CODE: [[u8; 2]; 1] = [[b'N', b'A']];
+const EU_CONT_CODE: [[u8; 2]; 1] = [[b'E', b'U']];
+const APAC_CONT_CODES: [[u8; 2]; 3] = [[b'A', b'F'], [b'A', b'S'], [b'O', b'C']];
 
 fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
@@ -79,7 +79,7 @@ async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
 }
 
 #[instrument(name = "filter", level = "trace", skip_all)]
-pub async fn build_favorites(
+pub(crate) async fn build_favorites(
     curr_dir: &Path,
     args: &Filters,
     cache: Arc<Mutex<Cache>>,
@@ -143,9 +143,9 @@ pub async fn build_favorites(
     Ok(update_cache)
 }
 
-pub struct Server {
-    pub source: Sourced,
-    pub info: Option<GetInfo>,
+pub(crate) struct Server {
+    pub(crate) source: Sourced,
+    pub(crate) info: Option<GetInfo>,
 }
 
 impl From<HostMeta> for Server {
@@ -156,10 +156,10 @@ impl From<HostMeta> for Server {
             info: Some(GetInfo {
                 clients: value.server.clients,
                 max_clients: value.server.max_clients,
-                private_clients: 0,
+                // private_clients: 0,
                 bots: 0,
-                game_name: value.server.game,
-                game_type: value.server.game_type,
+                // game_name: value.server.game,
+                // game_type: value.server.game_type,
                 host_name: value.server.host_name,
             }),
             source: Sourced::Iw4Cached(value.resolved_addr),
@@ -167,16 +167,17 @@ impl From<HostMeta> for Server {
     }
 }
 
-pub struct GetInfoMetaData {
+pub(crate) struct GetInfoMetaData {
     msg: String,
     display_url: bool,
     display_socket_addr: bool,
     display_source: bool,
     retries: u8,
-    pub url: String,
-    pub meta: Sourced,
+    pub(crate) url: String,
+    pub(crate) meta: Sourced,
 }
 
+#[allow(dead_code)]
 impl GetInfoMetaData {
     fn new(meta: Sourced) -> Self {
         GetInfoMetaData {
@@ -191,46 +192,46 @@ impl GetInfoMetaData {
     }
 
     #[inline]
-    pub fn set_err_msg(mut self, msg: String) -> Self {
+    pub(crate) fn set_err_msg(mut self, msg: String) -> Self {
         self.msg = msg;
         self
     }
 
     #[inline]
-    pub fn with_url(&mut self) -> &mut Self {
+    pub(crate) fn with_url(&mut self) -> &mut Self {
         self.display_url = true;
         self
     }
 
     #[inline]
-    pub fn with_socket_addr(&mut self) -> &mut Self {
+    pub(crate) fn with_socket_addr(&mut self) -> &mut Self {
         self.display_socket_addr = true;
         self
     }
 
     #[inline]
-    pub fn with_source(&mut self) -> &mut Self {
+    pub(crate) fn with_source(&mut self) -> &mut Self {
         self.display_source = true;
         self
     }
 
     #[inline]
     /// `GetInfoErr` default display is without addr
-    pub fn without_url(&mut self) -> &mut Self {
+    pub(crate) fn without_url(&mut self) -> &mut Self {
         self.display_url = false;
         self
     }
 
     #[inline]
     /// `GetInfoErr` default display is without ip
-    pub fn without_ip(&mut self) -> &mut Self {
+    pub(crate) fn without_ip(&mut self) -> &mut Self {
         self.display_url = false;
         self
     }
 
     #[inline]
     /// `GetInfoErr` default display is without source
-    pub fn without_source(&mut self) -> &mut Self {
+    pub(crate) fn without_source(&mut self) -> &mut Self {
         self.display_source = false;
         self
     }
@@ -253,11 +254,11 @@ impl Display for GetInfoMetaData {
 }
 
 #[derive(Default)]
-pub struct UnresponsiveCounter {
-    pub hmw: usize,
-    pub hmw_cached: usize,
-    pub iw4: usize,
-    pub iw4_cached: usize,
+pub(crate) struct UnresponsiveCounter {
+    pub(crate) hmw: usize,
+    pub(crate) hmw_cached: usize,
+    pub(crate) iw4: usize,
+    pub(crate) iw4_cached: usize,
 }
 
 impl UnresponsiveCounter {
@@ -276,12 +277,12 @@ impl UnresponsiveCounter {
     }
 }
 
-pub enum Request {
+pub(crate) enum Request {
     New(Sourced),
     Retry(GetInfoMetaData),
 }
 
-pub async fn try_get_info(
+pub(crate) async fn try_get_info(
     from: Request,
     client: reqwest::Client,
 ) -> Result<Server, GetInfoMetaData> {
@@ -305,9 +306,9 @@ pub async fn try_get_info(
     }
 }
 
-pub struct HostMeta {
-    pub resolved_addr: SocketAddr,
-    pub server: ServerInfo,
+pub(crate) struct HostMeta {
+    pub(crate) resolved_addr: SocketAddr,
+    pub(crate) server: ServerInfo,
 }
 
 impl HostMeta {
@@ -324,7 +325,7 @@ impl HostMeta {
     }
 }
 
-pub enum Sourced {
+pub(crate) enum Sourced {
     Hmw(SocketAddr),
     HmwCached(SocketAddr),
     Iw4(HostMeta),
@@ -332,7 +333,7 @@ pub enum Sourced {
 }
 
 impl Sourced {
-    pub fn to_valid_source(&self) -> Option<Source> {
+    pub(crate) fn to_valid_source(&self) -> Option<Source> {
         match self {
             Self::Hmw(_) => Some(Source::HmwMaster),
             Self::Iw4(_) => Some(Source::Iw4Master),
@@ -370,7 +371,7 @@ impl Sourced {
         Some(Sourced::Hmw(SocketAddr::new(ip, port)))
     }
 
-    pub fn socket_addr(&self) -> SocketAddr {
+    pub(crate) fn socket_addr(&self) -> SocketAddr {
         match self {
             Sourced::Hmw(addr) | Sourced::HmwCached(addr) | Sourced::Iw4Cached(addr) => *addr,
             Sourced::Iw4(meta) => meta.resolved_addr,
@@ -463,7 +464,7 @@ async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
     }
 }
 
-pub async fn queue_info_requests(
+pub(crate) async fn queue_info_requests(
     servers: Vec<Sourced>,
     remove_duplicates: bool,
     client: &Client,
@@ -502,7 +503,7 @@ impl Conversion for Vec<Sourced> {
     }
 }
 
-pub async fn get_sourced_servers<I>(
+pub(crate) async fn get_sourced_servers<I>(
     sources: I,
     cache: Option<&Arc<Mutex<Cache>>>,
 ) -> Result<Vec<Sourced>, &'static str>
@@ -541,16 +542,23 @@ where
     Ok(servers)
 }
 
-fn to_region_set(regions: &[Region]) -> HashSet<[char; 2]> {
-    fn to_chars(region: &Region) -> &'static [[char; 2]] {
-        match region {
+impl Region {
+    fn to_chars(self) -> &'static [[u8; 2]] {
+        match self {
             Region::Apac => &APAC_CONT_CODES,
             Region::EU => &EU_CONT_CODE,
             Region::NA => &NA_CONT_CODE,
         }
     }
+}
 
-    regions.iter().flat_map(to_chars).copied().collect()
+fn to_region_set(regions: &[Region]) -> HashSet<[u8; 2]> {
+    regions
+        .iter()
+        .copied()
+        .flat_map(Region::to_chars)
+        .copied()
+        .collect()
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -644,6 +652,8 @@ async fn filter_server_list(
             }
         }
 
+        drop(cache);
+
         if failure_count > 0 {
             eprintln!(
                 "{RED}Failed to resolve location for {failure_count} server {}{RESET}",
@@ -681,12 +691,17 @@ async fn filter_server_list(
         let mut sent_retires = false;
         let max_attempts = args.retry_max.unwrap_or(DEFUALT_INFO_RETRIES);
 
+        let mut cache = cache.lock().await;
+
         while !tasks.is_empty() {
             println!("{}", DisplayGetInfoCount(tasks.len(), sent_retires));
             let mut retries = JoinSet::new();
             while let Some(res) = tasks.join_next().await {
                 match res {
-                    Ok(Ok(server)) => valid_servers.push(server),
+                    Ok(Ok(server)) => {
+                        cache.update_cache_with(&server, None);
+                        valid_servers.push(server)
+                    }
                     Ok(Err(mut err)) => {
                         if err.retries < max_attempts {
                             let client = client.clone();
@@ -714,6 +729,8 @@ async fn filter_server_list(
             sent_retires = true;
             tasks = retries;
         }
+
+        drop(cache);
 
         if did_not_respond.total() > 0 {
             if use_backup_server_info {

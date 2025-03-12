@@ -183,13 +183,13 @@ impl From<Version> for AppDetails {
     }
 }
 
-pub type CommandHandle = CmdHandle<CommandContext, Stdout>;
+pub(crate) type CommandHandle = CmdHandle<CommandContext, Stdout>;
 pub type ReplHandle = Repl<CommandContext, Stdout>;
 
 #[derive(Default)]
-pub struct ConsoleHistory {
-    pub history: Vec<String>,
-    pub last: AtomicUsize,
+pub(crate) struct ConsoleHistory {
+    pub(crate) history: Vec<String>,
+    pub(crate) last: AtomicUsize,
 }
 
 pub struct CommandContext {
@@ -368,18 +368,20 @@ impl CommandContext {
         )
     }
     #[inline]
-    pub fn cache(&self) -> Arc<Mutex<Cache>> {
+    pub(crate) fn cache(&self) -> Arc<Mutex<Cache>> {
         Arc::clone(&self.cache)
     }
     #[inline]
-    pub fn cache_needs_update(&self) -> Arc<AtomicBool> {
+    pub(crate) fn cache_needs_update(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.cache_needs_update)
     }
     #[inline]
-    pub fn forward_logs(&self) -> Arc<AtomicBool> {
+    pub(crate) fn forward_logs(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.forward_logs)
     }
-    pub async fn check_h2m_connection(&mut self) -> Result<Arc<RwLock<PTY>>, Cow<'static, str>> {
+    pub(crate) async fn check_h2m_connection(
+        &mut self,
+    ) -> Result<Arc<RwLock<PTY>>, Cow<'static, str>> {
         let Some(ref lock) = self.pty_handle else {
             return Err(Cow::Borrowed("No Pseudoconsole set"));
         };
@@ -395,43 +397,32 @@ impl CommandContext {
         }
     }
     #[inline]
-    pub fn local_dir(&self) -> Option<&Path> {
+    pub(crate) fn local_dir(&self) -> Option<&Path> {
         self.local_dir.as_deref()
     }
     #[inline]
-    pub fn update_local_dir(&mut self, local_dir: PathBuf) {
-        self.local_dir = Some(local_dir)
-    }
-    #[inline]
-    pub fn h2m_console_history(&self) -> Arc<Mutex<ConsoleHistory>> {
+    pub(crate) fn h2m_console_history(&self) -> Arc<Mutex<ConsoleHistory>> {
         Arc::clone(&self.h2m_console_history)
     }
     #[inline]
-    pub fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
+    pub(crate) fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
         self.pty_handle.as_ref().map(Arc::clone)
     }
     #[inline]
-    pub fn msg_sender(&self) -> Sender<Message> {
+    pub(crate) fn msg_sender(&self) -> Sender<Message> {
         self.msg_sender.clone()
     }
     #[inline]
-    pub fn game_version(&self) -> Option<f64> {
+    pub(crate) fn game_version(&self) -> Option<f64> {
         self.game.version
     }
     #[inline]
-    pub fn game_name(&self) -> Cow<'static, str> {
+    pub(crate) fn game_name(&self) -> Cow<'static, str> {
         Cow::clone(&self.game.game_name)
     }
     #[inline]
     fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
-    }
-
-    pub async fn send_message<M: Into<Message>>(&self, msg: M) {
-        self.msg_sender
-            .send(msg.into())
-            .await
-            .unwrap_or_else(|err| err.0.log())
     }
 
     pub async fn graceful_shutdown(&mut self, cmd_history: &[String]) {
@@ -478,7 +469,7 @@ impl CommandContext {
         Ok(game_console.send_cmd(command))
     }
 
-    pub async fn launch_handler(&mut self) -> io::Result<CommandHandle> {
+    pub(crate) async fn launch_handler(&mut self) -> io::Result<CommandHandle> {
         if self.check_h2m_connection().await.is_ok() {
             println!(
                 "{GREEN}Connection to {} already active{RESET}",
@@ -779,7 +770,7 @@ impl CommandContext {
     }
 }
 
-pub trait CommandSender {
+pub(crate) trait CommandSender {
     fn send_cmd<S: AsRef<str>>(&self, command: S) -> Result<(), Cow<'static, str>>;
 }
 

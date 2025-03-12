@@ -66,7 +66,7 @@ fn display_history<'a>(history: &'a [HostName], host_to_connect: &'a HashMap<Str
 }
 
 impl CommandContext {
-    pub async fn reconnect(&mut self, args: HistoryArgs) -> std::io::Result<CommandHandle> {
+    pub(crate) async fn reconnect(&mut self, args: HistoryArgs) -> std::io::Result<CommandHandle> {
         let cache_arc = self.cache();
         let mut cache = cache_arc.lock().await;
         if cache.connection_history.is_empty() {

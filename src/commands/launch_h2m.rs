@@ -33,34 +33,39 @@ use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
 #[allow(non_camel_case_types)]
 type wchar_t = u16;
 
+macro_rules! utf16_array {
+    ($($c:literal),* $(,)?) => {
+        [$(($c as u16)),*]
+    };
+
+    (pairs: $(($a:literal, $b:literal)),* $(,)?) => {
+        [$(($a as u16, $b as u16)),*]
+    };
+}
+
 const GAME_WINDOW_NAMES: [&str; 3] = ["h2m", "hmw", "horizonmw"];
 // console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
 // game class = "H1" || splash screen class = "H2M Splash Screen"
 const GAME_WINDOW_CLASS_NAMES: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
 const JOIN_STR: &str = "Joining ";
-const JOIN_BYTES: [u16; 8] = [74, 111, 105, 110, 105, 110, 103, 32];
-// const CONNECTING_STR: &str = "Connecti";
-const CONNECTING_BYTES: [u16; 8] = [67, 111, 110, 110, 101, 99, 116, 105];
-const CONNECT_STR: &str = "connect "; // | "CONNECT "
-const CONNECT_BYTES: [(u16, u16); 8] = [
-    // (lower, upper)
-    (99, 67),
-    (111, 79),
-    (110, 78),
-    (110, 78),
-    (101, 69),
-    (99, 67),
-    (116, 84),
-    (32, 32),
+const JOIN_BYTES: [u16; 8] = utf16_array!['J', 'o', 'i', 'n', 'i', 'n', 'g', ' '];
+const CONNECTING_BYTES: [u16; 8] = utf16_array!['C', 'o', 'n', 'n', 'e', 'c', 't', 'i'];
+const CONNECT_STR: &str = "connect ";
+const CONNECT_BYTES: [(u16, u16); 8] = utf16_array![pairs:
+    ('c', 'C'),
+    ('o', 'O'),
+    ('n', 'N'),
+    ('n', 'N'),
+    ('e', 'E'),
+    ('c', 'C'),
+    ('t', 'T'),
+    (' ', ' '),
 ];
-const ERROR_BYTES: [u16; 9] = [27, 91, 51, 56, 59, 53, 59, 49, 109];
+const ERROR_BYTES: [u16; 9] = utf16_array!['\x1b', '[', '3', '8', ';', '5', ';', '1', 'm'];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
-const CARRIAGE_RETURN: u16 = 13;
-const NEW_LINE: u16 = 10;
-// const RESET_COLOR: [u16; 3] = [27, 91, 109];
-// const ESCAPE: u16 = 27;
-// const COLOR_CMD_BYTE: u16 = 109;
+const CARRIAGE_RETURN: u16 = '\r' as u16;
+const NEW_LINE: u16 = '\n' as u16;
 
 #[inline]
 fn case_insensitve_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
@@ -420,12 +425,12 @@ pub enum LaunchError {
 }
 
 impl LaunchError {
-    pub fn resolve_to_closed(self) -> Option<&'static str> {
+    pub(crate) fn resolve_to_closed(self) -> Option<&'static str> {
         error!("{self}");
         None
     }
     /// Return holds a placeholder string that is not to be used
-    pub fn resolve_to_open(self) -> Option<&'static str> {
+    pub(crate) fn resolve_to_open(self) -> Option<&'static str> {
         error!("{self}");
         Some("don't use this value")
     }
@@ -459,7 +464,7 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     Ok(conpty)
 }
 
-pub fn game_open() -> Result<Option<&'static str>, LaunchError> {
+pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
     let mut result = "";
 
     // Saftey:
@@ -481,7 +486,7 @@ pub fn game_open() -> Result<Option<&'static str>, LaunchError> {
 }
 
 #[allow(clippy::identity_op)]
-pub fn get_exe_version(path: &Path) -> Option<f64> {
+pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     let wide_path = OsStr::new(path)
         .encode_wide()
         .chain(std::iter::once(0))

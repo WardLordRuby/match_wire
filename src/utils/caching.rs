@@ -26,7 +26,7 @@ use tracing::{error, info, instrument, trace};
 pub struct Cache {
     /// Key: host name with cod color codes
     pub host_to_connect: HashMap<String, SocketAddr>,
-    pub ip_to_region: HashMap<IpAddr, [char; 2]>,
+    pub ip_to_region: HashMap<IpAddr, [u8; 2]>,
     pub connection_history: Vec<HostName>,
     pub iw4m: HashMap<IpAddr, Vec<u16>>,
     pub hmw: HashMap<IpAddr, Vec<u16>>,
@@ -79,7 +79,7 @@ impl Cache {
     fn try_insert_region_and_ports(
         &mut self,
         addr: SocketAddr,
-        region: Option<[char; 2]>,
+        region: Option<[u8; 2]>,
         valid_source: Option<Source>,
     ) {
         if let Some(region) = region {
@@ -90,7 +90,7 @@ impl Cache {
         }
     }
 
-    pub fn update_cache_with(&mut self, server: &Server, region: Option<[char; 2]>) {
+    pub(crate) fn update_cache_with(&mut self, server: &Server, region: Option<[u8; 2]>) {
         let socket_addr = server.source.socket_addr();
         if let Some(ref info) = server.info {
             self.host_to_connect
@@ -99,7 +99,7 @@ impl Cache {
         self.try_insert_region_and_ports(socket_addr, region, server.source.to_valid_source());
     }
 
-    pub fn push(&mut self, server: Server, region: Option<[char; 2]>) {
+    pub(crate) fn push(&mut self, server: Server, region: Option<[u8; 2]>) {
         let socket_addr = server.source.socket_addr();
         if let Some(info) = server.info {
             self.host_to_connect.insert(info.host_name, socket_addr);

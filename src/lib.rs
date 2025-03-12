@@ -29,7 +29,7 @@ use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc, LazyLock},
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 use tokio::task::JoinHandle;
@@ -42,10 +42,10 @@ use utils::{
 #[cfg(not(debug_assertions))]
 use crossterm::{execute, terminal};
 
-pub const MAIN_PROMPT: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
+pub(crate) const MAIN_PROMPT: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
-pub const VERSION_URL: &str =
+pub(crate) const VERSION_URL: &str =
     "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
 const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
 const MOD_FILES_MODULE_NAME: &str = "mod";
@@ -53,12 +53,12 @@ const HMW_DOWNLOAD_HINT: &str =
     "HMW mod files are available to download for free through the Horizon MW launcher\n\
     https://docs.horizonmw.org/download/";
 
-pub const H2M_MAX_CLIENT_NUM: i64 = 18;
-pub const H2M_MAX_TEAM_SIZE: i64 = 9;
+pub(crate) const H2M_MAX_CLIENT_NUM: i64 = 18;
+pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
 
 pub const SAVED_HISTORY_CAP: usize = 20;
 
-pub const REQUIRED_FILES: [&str; 7] = [
+pub(crate) const REQUIRED_FILES: [&str; 7] = [
     "h1_mp64_ship.exe",
     "h2m-mod",
     "players2",
@@ -69,11 +69,13 @@ pub const REQUIRED_FILES: [&str; 7] = [
 ];
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
-pub const CACHED_DATA: &str = "cache.json";
+pub(crate) const CACHED_DATA: &str = "cache.json";
 
-pub static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
-pub static SPLASH_SCREEN_MSG_BUFFER: LazyLock<std::sync::Mutex<String>> =
-    LazyLock::new(|| std::sync::Mutex::new(String::new()));
+pub(crate) static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
+
+#[cfg(not(debug_assertions))]
+pub(crate) static SPLASH_SCREEN_MSG_BUFFER: std::sync::LazyLock<std::sync::Mutex<String>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -111,14 +113,14 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static st
         .ok_or("hmw manifest.json formatting has changed"))
 }
 
-#[derive(Debug)]
-pub enum Operation {
+#[allow(dead_code)]
+pub(crate) enum Operation {
     All,
     Any,
     Count,
 }
 
-pub enum OperationResult<'a> {
+pub(crate) enum OperationResult<'a> {
     Bool(bool),
     Count((usize, HashSet<&'a str>)),
 }
@@ -126,7 +128,7 @@ pub enum OperationResult<'a> {
 /// `Operation::All` and `Operation::Any` map to `OperationResult::bool(_result_)`  
 /// `Operation::Count` maps to `OperationResult::Count((_num_found_, _HashSet<_&input_list_>))`  
 /// when matching you will always have to `_ => unreachable()` for the return type you will never get
-pub fn does_dir_contain<'a, T>(
+pub(crate) fn does_dir_contain<'a, T>(
     dir: &Path,
     operation: Operation,
     list: &'a [T],
@@ -275,11 +277,11 @@ pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     }
 }
 
-pub fn lowercase_vec(vec: &[String]) -> Vec<String> {
+pub(crate) fn lowercase_vec(vec: &[String]) -> Vec<String> {
     vec.iter().map(|s| s.trim().to_lowercase()).collect()
 }
 
-pub fn parse_hostname(name: &str) -> String {
+pub(crate) fn parse_hostname(name: &str) -> String {
     const COLOR_ESCAPE_CODE: char = '^';
     let mut host_name = String::new();
     let mut chars = name.chars().peekable();
@@ -356,7 +358,7 @@ pub async fn splash_screen() -> io::Result<()> {
     Ok(())
 }
 
-pub async fn leave_splash_screen(task: JoinHandle<io::Result<()>>) {
+pub(crate) async fn leave_splash_screen(task: JoinHandle<io::Result<()>>) {
     task.await.unwrap().unwrap();
 
     #[cfg(not(debug_assertions))]

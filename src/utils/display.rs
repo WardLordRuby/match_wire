@@ -11,8 +11,8 @@ use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
 
-pub const DISP_NAME_HMW: &str = "HMW";
-pub const DISP_NAME_H2M: &str = "H2M";
+pub(crate) const DISP_NAME_HMW: &str = "HMW";
+pub(crate) const DISP_NAME_H2M: &str = "H2M";
 const DISP_NAME_IW4: &str = "Iw4m";
 
 macro_rules! server_type {
@@ -24,12 +24,12 @@ macro_rules! server_type {
     };
 }
 
-pub const SOURCE_HMW: &str = server_type!(master, DISP_NAME_HMW);
+pub(crate) const SOURCE_HMW: &str = server_type!(master, DISP_NAME_HMW);
 const SOURCE_HMW_CACHED: &str = server_type!(cached, DISP_NAME_HMW);
 const SOURCE_IW4: &str = server_type!(master, DISP_NAME_IW4);
 const SOURCE_IW4_CACHED: &str = server_type!(cached, DISP_NAME_IW4);
 
-pub struct ConnectionHelp;
+pub(crate) struct ConnectionHelp;
 
 fn connection_help() -> Cow<'static, str> {
     if let Some(game_name) = game_open().unwrap_or_else(LaunchError::resolve_to_closed) {
@@ -59,7 +59,7 @@ impl From<ConnectionHelp> for Cow<'static, str> {
     }
 }
 
-pub struct DisplayLogs<'a>(pub &'a ConsoleHistory);
+pub(crate) struct DisplayLogs<'a>(pub(crate) &'a ConsoleHistory);
 
 impl Display for DisplayLogs<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,7 +73,7 @@ impl Display for DisplayLogs<'_> {
 }
 
 /// `(count, COLOR)`
-pub struct DisplayServerCount(pub usize, pub &'static str);
+pub(crate) struct DisplayServerCount(pub(crate) usize, pub(crate) &'static str);
 
 impl Display for DisplayServerCount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -88,7 +88,7 @@ impl Display for DisplayServerCount {
 }
 
 ///`(source, count)`
-pub struct DisplayCachedServerUse(pub Source, pub usize);
+pub(crate) struct DisplayCachedServerUse(pub(crate) Source, pub(crate) usize);
 
 impl Display for DisplayCachedServerUse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -103,7 +103,7 @@ impl Display for DisplayCachedServerUse {
 }
 
 /// `(count, sent_retires)`
-pub struct DisplayGetInfoCount(pub usize, pub bool);
+pub(crate) struct DisplayGetInfoCount(pub(crate) usize, pub(crate) bool);
 
 impl Display for DisplayGetInfoCount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -121,7 +121,11 @@ impl Display for DisplayGetInfoCount {
 }
 
 /// `(count, "singular", "plural")`
-pub struct DisplayCountOf(pub usize, pub &'static str, pub &'static str);
+pub(crate) struct DisplayCountOf(
+    pub(crate) usize,
+    pub(crate) &'static str,
+    pub(crate) &'static str,
+);
 
 impl Display for DisplayCountOf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -130,7 +134,11 @@ impl Display for DisplayCountOf {
 }
 
 /// `(count, "singular", "plural")`
-pub struct SingularPlural(pub usize, pub &'static str, pub &'static str);
+pub(crate) struct SingularPlural(
+    pub(crate) usize,
+    pub(crate) &'static str,
+    pub(crate) &'static str,
+);
 
 impl Display for SingularPlural {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -139,7 +147,7 @@ impl Display for SingularPlural {
 }
 
 /// `history.len()`
-pub struct DisplayHistoryErr(pub usize);
+pub(crate) struct DisplayHistoryErr(pub(crate) usize);
 
 impl Display for DisplayHistoryErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -259,7 +267,7 @@ impl Display for ReadCacheErr {
     }
 }
 
-pub struct HmwUpdateHelp;
+pub(crate) struct HmwUpdateHelp;
 
 impl Display for HmwUpdateHelp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
