@@ -109,7 +109,7 @@ impl Display for DisplayGetInfoCount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} 'getInfo' for {}...",
+            "{} 'getInfo' for {}",
             if !self.1 { "Requesting" } else { "Retring" },
             if !self.1 {
                 DisplayServerCount(self.0, GREEN)

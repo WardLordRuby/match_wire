@@ -44,7 +44,7 @@ async fn main() {
     let (mut line_handle, mut command_context, receivers) = match app_startup() {
         Ok(startup_data) => CommandContext::from(startup_data, term).await,
         Err(err) => {
-            eprintln!("{RED}{err}{RESET}");
+            println!("{RED}{err}{RESET}");
             await_user_for_end();
             return;
         }

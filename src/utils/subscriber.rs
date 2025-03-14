@@ -86,6 +86,7 @@ where
         writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
+        use crate::TERM_CLEAR_LINE;
         use repl_oxide::ansi_code::{BLUE, GREEN, MAGENTA, RED, RESET, YELLOW};
 
         let line_color = match *event.metadata().level() {
@@ -97,7 +98,7 @@ where
         };
 
         let print = |mut writer: Writer<'_>| {
-            write!(writer, "{line_color}")?;
+            write!(writer, "{TERM_CLEAR_LINE}{line_color}")?;
             self.inner.format_event(ctx, writer.by_ref(), event)?;
             write!(writer, "{RESET}")
         };

@@ -27,12 +27,15 @@ use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
     collections::HashSet,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::AtomicBool,
+        mpsc::{self, TryRecvError},
+        Arc,
+    },
     time::Duration,
 };
-use tokio::task::JoinHandle;
 use tracing::error;
 use utils::{
     caching::{build_cache, Cache, ReadCacheErr},
@@ -70,6 +73,8 @@ pub(crate) const REQUIRED_FILES: [&str; 7] = [
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
+
+pub(crate) const TERM_CLEAR_LINE: &str = "\r\x1B[J";
 
 pub(crate) static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
 
@@ -221,8 +226,8 @@ fn hash_file_hex(path: &Path) -> io::Result<String> {
 }
 
 pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
-    let version = get_exe_version(game_exe_path).map(Some).unwrap_or_else(|| {
-        eprintln!(
+    let version = get_exe_version(game_exe_path).or_else(|| {
+        println!(
             "{RED}Failed to get version of {}{RESET}",
             game_exe_path
                 .file_name()
@@ -232,17 +237,16 @@ pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
         None
     });
     let hash = hash_file_hex(game_exe_path)
-        .map(Some)
-        .unwrap_or_else(|err| {
-            eprintln!(
+        .map_err(|err| {
+            println!(
                 "{RED}{err}, input file_name: {}{RESET}",
                 game_exe_path
                     .file_name()
                     .expect("input was not modified")
                     .to_string_lossy()
-            );
-            None
-        });
+            )
+        })
+        .ok();
     (version, hash)
 }
 
@@ -277,8 +281,8 @@ pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     }
 }
 
-pub(crate) fn lowercase_vec(vec: &[String]) -> Vec<String> {
-    vec.iter().map(|s| s.trim().to_lowercase()).collect()
+pub(crate) fn make_slice_ascii_lowercase(vec: &mut [String]) {
+    vec.iter_mut().for_each(|s| s.make_ascii_lowercase());
 }
 
 pub(crate) fn parse_hostname(name: &str) -> String {
@@ -310,6 +314,54 @@ pub fn print_help() {
         .print_help()
         .expect("Failed to print help");
     println!();
+}
+
+pub(crate) struct Spinner {
+    task: std::thread::JoinHandle<io::Result<()>>,
+    sender: mpsc::Sender<String>,
+}
+
+impl Spinner {
+    pub(crate) fn new(mut message: String) -> Self {
+        let (tx, rx) = mpsc::channel();
+
+        Self {
+            task: std::thread::spawn(move || {
+                const SPINNER_CHARS: &str = "-\\|/";
+                let mut stdout = std::io::stdout();
+                for ch in SPINNER_CHARS.chars().cycle() {
+                    match rx.try_recv() {
+                        Ok(new) => message = new,
+                        Err(TryRecvError::Empty) => (),
+                        Err(TryRecvError::Disconnected) => {
+                            write!(stdout, "{TERM_CLEAR_LINE}")?;
+                            break;
+                        }
+                    }
+                    write!(stdout, "{TERM_CLEAR_LINE}{ch} {message}")?;
+                    stdout.flush()?;
+                    std::thread::sleep(tokio::time::Duration::from_millis(60));
+                }
+                Ok(())
+            }),
+            sender: tx,
+        }
+    }
+
+    pub(crate) fn update_message(&self, message: String) {
+        self.sender
+            .send(message)
+            .unwrap_or_else(|err| println!("{}...", err.0))
+    }
+
+    pub(crate) fn finish(self) {
+        drop(self.sender);
+        match self.task.join() {
+            Ok(Ok(())) => (),
+            Ok(Err(err)) => error!(name: LOG_ONLY, "{err}"),
+            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+        }
+    }
 }
 
 pub async fn splash_screen() -> io::Result<()> {
@@ -358,7 +410,7 @@ pub async fn splash_screen() -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) async fn leave_splash_screen(task: JoinHandle<io::Result<()>>) {
+pub(crate) async fn leave_splash_screen(task: tokio::task::JoinHandle<io::Result<()>>) {
     task.await.unwrap().unwrap();
 
     #[cfg(not(debug_assertions))]

@@ -8,7 +8,7 @@ use crate::{
     },
     does_dir_contain, new_io_error,
     utils::json_data::{CacheFile, ContCodeMap},
-    Operation, OperationResult, CACHED_DATA, LOG_ONLY,
+    Operation, OperationResult, Spinner, CACHED_DATA, LOG_ONLY, SPLASH_SCREEN_VIS,
 };
 use constcat::concat;
 use std::{
@@ -17,7 +17,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     path::Path,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::{Duration, SystemTime},
 };
 use tokio::sync::Mutex;
@@ -110,9 +110,26 @@ impl Cache {
 
 #[instrument(level = "trace", skip_all)]
 pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'static str> {
-    info!("Updating cache...");
+    let spinner = if !SPLASH_SCREEN_VIS.load(Ordering::SeqCst) {
+        Some(Spinner::new(String::from("Updating cache")))
+    } else {
+        info!("Updating cache...");
+        None
+    };
 
-    let servers = get_sourced_servers(DEFUALT_SOURCES, prev).await?;
+    let finish_spinner = || {
+        if let Some(spinner) = spinner {
+            spinner.finish();
+        }
+    };
+
+    let servers = match get_sourced_servers(DEFUALT_SOURCES, prev).await {
+        Ok(servers) => servers,
+        Err(err) => {
+            finish_spinner();
+            return Err(err);
+        }
+    };
 
     let mut cache = Cache::default();
 
@@ -161,6 +178,9 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
             Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
+
+    finish_spinner();
+    info!("Cache updated!");
 
     Ok(cache)
 }

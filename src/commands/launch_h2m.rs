@@ -136,8 +136,8 @@ impl HostName {
         let (host_name, socket_addr) = if version < 1.0 {
             let host_name = stripped
                 .split_once(JOIN_STR)
-                .map(|(_, suf)| suf)
                 .expect("`Connection::Browser` is found and client is 'origional h2m', meaning `JOIN_BYTES` were found in the `value` array")
+                .1
                 .strip_suffix("...")
                 .ok_or_else(|| {
                     format!("Unexpected H2M console output found. ansi_stripped_input: '{stripped}' does not end in: '...'")
@@ -168,8 +168,8 @@ impl HostName {
 
         let ip_str = input
             .split_once(CONNECT_STR)
-            .map(|(_, suf)| suf)
             .expect("`Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
+            .1
             .trim();
         let socket_addr = ip_str.parse::<SocketAddr>()?;
         let server_info = try_get_info(

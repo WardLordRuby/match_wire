@@ -1,7 +1,7 @@
 use crate::{
     cli::{Filters, Region, Source},
     location_api_key::FIND_IP_NET_PRIVATE_KEY,
-    lowercase_vec, parse_hostname,
+    make_slice_ascii_lowercase, parse_hostname,
     utils::{
         caching::Cache,
         display::{
@@ -10,7 +10,7 @@ use crate::{
         },
         json_data::*,
     },
-    LOG_ONLY,
+    Spinner, LOG_ONLY, TERM_CLEAR_LINE,
 };
 
 use constcat::concat;
@@ -81,7 +81,7 @@ async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
 #[instrument(name = "filter", level = "trace", skip_all)]
 pub(crate) async fn build_favorites(
     curr_dir: &Path,
-    args: &Filters,
+    args: Filters,
     cache: Arc<Mutex<Cache>>,
     version: f64,
 ) -> io::Result<bool> {
@@ -99,6 +99,8 @@ pub(crate) async fn build_favorites(
         Err(err) => return Err(err),
     };
 
+    let spinner = Spinner::new(String::new());
+
     let limit = args.limit.unwrap_or({
         if version < 1.0 {
             DEFAULT_H2M_SERVER_CAP
@@ -109,16 +111,16 @@ pub(crate) async fn build_favorites(
 
     if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
         println!(
-            "{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}"
+            "{TERM_CLEAR_LINE}{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}"
         )
     }
 
-    let (mut servers, update_cache) = filter_server_list(args, cache, limit)
+    let (mut servers, update_cache) = filter_server_list(args, cache, limit, &spinner)
         .await
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     println!(
-        "{} match the prameters in the current query",
+        "{TERM_CLEAR_LINE}{} match the prameters in the current query",
         DisplayServerCount(servers.len(), GREEN)
     );
 
@@ -135,6 +137,8 @@ pub(crate) async fn build_favorites(
     }
 
     serialize_json(&mut favorites_json, ips)?;
+
+    spinner.finish();
 
     println!(
         "{GREEN}{FAVORITES} updated with {}{RESET}",
@@ -563,26 +567,38 @@ fn to_region_set(regions: &[Region]) -> HashSet<[u8; 2]> {
 
 #[instrument(level = "trace", skip_all)]
 async fn filter_server_list(
-    args: &Filters,
+    mut args: Filters,
     cache: Arc<Mutex<Cache>>,
     limit: usize,
+    spinner: &Spinner,
 ) -> Result<(Vec<Server>, bool), &'static str> {
-    let mut servers = match args.source.as_deref() {
-        Some(user_sources) => {
-            get_sourced_servers(
-                user_sources.iter().copied().collect::<HashSet<_>>(),
-                Some(&cache),
-            )
-            .await
-        }
+    let sources = args
+        .source
+        .as_deref()
+        .map(|user_sources| user_sources.iter().copied().collect::<HashSet<_>>());
+
+    spinner.update_message(format!(
+        "Retrieving master {}",
+        SingularPlural(
+            sources
+                .as_ref()
+                .map(|s| s.len())
+                .unwrap_or(DEFUALT_SOURCES.len()),
+            "server",
+            "servers"
+        )
+    ));
+
+    let mut servers = match sources {
+        Some(user_sources) => get_sourced_servers(user_sources, Some(&cache)).await,
         None => get_sourced_servers(DEFUALT_SOURCES, Some(&cache)).await,
     }?;
 
     let cache_modified = if let Some(regions) = args.region.as_deref().map(to_region_set) {
-        println!(
-            "Determining region of {}...",
+        spinner.update_message(format!(
+            "Determining region of {}",
             DisplayServerCount(servers.len(), GREEN)
-        );
+        ));
 
         let mut valid_regions = Vec::new();
         let mut tasks = JoinSet::new();
@@ -655,11 +671,21 @@ async fn filter_server_list(
         drop(cache);
 
         if failure_count > 0 {
-            eprintln!(
-                "{RED}Failed to resolve location for {failure_count} server {}{RESET}",
+            println!(
+                "{TERM_CLEAR_LINE}{RED}Failed to resolve location for {failure_count} server {}{RESET}",
                 SingularPlural(failure_count, "hoster", "hosters")
             )
         }
+
+        println!(
+            "{TERM_CLEAR_LINE}{} match the input {}",
+            DisplayServerCount(valid_regions.len(), GREEN),
+            SingularPlural(
+                args.region.as_ref().expect("outer if").len(),
+                "region",
+                "regions"
+            ),
+        );
 
         servers = valid_regions;
         !new_lookups.is_empty()
@@ -694,7 +720,11 @@ async fn filter_server_list(
         let mut cache = cache.lock().await;
 
         while !tasks.is_empty() {
-            println!("{}", DisplayGetInfoCount(tasks.len(), sent_retires));
+            spinner.update_message(format!(
+                "{}",
+                DisplayGetInfoCount(tasks.len(), sent_retires)
+            ));
+
             let mut retries = JoinSet::new();
             while let Some(res) = tasks.join_next().await {
                 match res {
@@ -735,17 +765,17 @@ async fn filter_server_list(
         if did_not_respond.total() > 0 {
             if use_backup_server_info {
                 println!(
-                    "Included outdated server data for {YELLOW}{used_backup_data}{RESET} \
+                    "{TERM_CLEAR_LINE}Included outdated server data for {YELLOW}{used_backup_data}{RESET} \
                     of {} that did not respond to 'getInfo' request",
                     DisplayServerCount(did_not_respond.total(), RED)
                 )
             } else {
-                eprintln!("{did_not_respond}");
+                println!("{TERM_CLEAR_LINE}{did_not_respond}");
             }
         }
 
-        let include = args.includes.as_ref().map(|s| lowercase_vec(s));
-        let exclude = args.excludes.as_ref().map(|s| lowercase_vec(s));
+        args.includes.as_deref_mut().map(make_slice_ascii_lowercase);
+        args.excludes.as_deref_mut().map(make_slice_ascii_lowercase);
 
         for i in (0..valid_servers.len()).rev() {
             let server = &valid_servers[i];
@@ -780,23 +810,23 @@ async fn filter_server_list(
             }
 
             let mut hostname_l = None;
-            if let Some(ref strings) = include {
+            if let Some(include_terms) = args.includes.as_deref() {
                 hostname_l = Some(parse_hostname(&info.host_name));
-                if !strings
+                if !include_terms
                     .iter()
-                    .any(|string| hostname_l.as_ref().unwrap().contains(string))
+                    .any(|term| hostname_l.as_deref().unwrap().contains(term))
                 {
                     valid_servers.swap_remove(i);
                     continue;
                 }
             }
-            if let Some(ref strings) = exclude {
+            if let Some(exclude_terms) = args.excludes.as_deref() {
                 if hostname_l.is_none() {
                     hostname_l = Some(parse_hostname(&info.host_name));
                 }
-                if strings
+                if exclude_terms
                     .iter()
-                    .any(|string| hostname_l.as_ref().unwrap().contains(string))
+                    .any(|term| hostname_l.as_deref().unwrap().contains(term))
                 {
                     valid_servers.swap_remove(i);
                 }

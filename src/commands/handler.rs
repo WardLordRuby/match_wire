@@ -210,7 +210,7 @@ impl Executor<Stdout> for CommandContext {
         _line_handle: &mut ReplHandle,
         user_tokens: Vec<String>,
     ) -> io::Result<CommandHandle> {
-        let command = match Command::try_parse_from(format_for_clap(user_tokens)) {
+        let command = match Command::try_parse_from(format_for_clap(&user_tokens)) {
             Ok(c) => c,
             Err(err) => return err.print().map(|_| CommandHandle::Processed),
         };
@@ -542,7 +542,7 @@ impl CommandContext {
 
         let new_entries_found = build_favorites(
             exe_dir,
-            &args.unwrap_or_default(),
+            args.unwrap_or_default(),
             self.cache(),
             self.game.version.unwrap_or(1.0),
         )
