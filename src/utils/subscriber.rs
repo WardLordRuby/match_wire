@@ -64,12 +64,10 @@ fn print_during_splash<F>(print: F) -> std::fmt::Result
 where
     F: FnOnce(Writer<'_>) -> std::fmt::Result,
 {
-    let mut buffer = String::new();
-    print(Writer::new(&mut buffer))?;
     let mut msg_queue = crate::SPLASH_SCREEN_MSG_BUFFER
         .lock()
         .expect("no one will panic with lock & lock uncontested");
-    msg_queue.push_str(&buffer);
+    print(Writer::new(&mut *msg_queue))?;
     Ok(())
 }
 
