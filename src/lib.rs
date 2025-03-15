@@ -1,5 +1,3 @@
-pub mod cli;
-pub mod command_scheme;
 pub mod location_api_key;
 pub mod commands {
     pub mod filter;
@@ -7,23 +5,29 @@ pub mod commands {
     pub mod launch_h2m;
     pub mod reconnect;
 }
+pub mod models {
+    pub mod cli;
+    pub mod command_scheme;
+    pub mod json_data;
+}
 pub mod utils {
     pub mod caching;
     pub mod display;
-    pub mod json_data;
     pub mod subscriber;
 }
 
-use clap::CommandFactory;
-use cli::Command;
-use commands::{
-    handler::{AppDetails, Message, StartupCacheContents},
-    launch_h2m::get_exe_version,
+use crate::{
+    commands::{
+        handler::{AppDetails, Message, StartupCacheContents},
+        launch_h2m::get_exe_version,
+    },
+    models::{
+        cli::Command,
+        json_data::{CacheFile, HmwManifest, Version},
+    },
+    utils::caching::{build_cache, Cache, ReadCacheErr},
 };
-use constcat::concat;
-use crossterm::cursor;
-use repl_oxide::ansi_code::{RED, RESET};
-use sha2::{Digest, Sha256};
+
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -36,11 +40,13 @@ use std::{
     },
     time::Duration,
 };
+
+use clap::CommandFactory;
+use constcat::concat;
+use crossterm::cursor;
+use repl_oxide::ansi_code::{RED, RESET};
+use sha2::{Digest, Sha256};
 use tracing::error;
-use utils::{
-    caching::{build_cache, Cache, ReadCacheErr},
-    json_data::{CacheFile, HmwManifest, Version},
-};
 
 #[cfg(not(debug_assertions))]
 use crossterm::{execute, terminal};

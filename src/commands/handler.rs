@@ -1,25 +1,21 @@
 use crate::{
-    cli::{CacheCmd, Command, Filters},
     commands::{
         filter::build_favorites,
         launch_h2m::{game_open, initalize_listener, launch_h2m_pseudo, LaunchError},
     },
-    exe_details, get_latest_hmw_hash, leave_splash_screen, print_during_splash,
+    exe_details, get_latest_hmw_hash, leave_splash_screen,
+    models::{
+        cli::{CacheCmd, Command, Filters},
+        json_data::Version,
+    },
+    print_during_splash,
     utils::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_H2M, DISP_NAME_HMW},
-        json_data::Version,
     },
     LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
 };
-use clap::Parser;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use repl_oxide::{
-    ansi_code::{GREEN, RED, RESET, YELLOW},
-    executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
-    input_hook::{CallbackErr, HookControl, HookStates, HookUID, HookedEvent, InputHook},
-    repl_builder, EventLoop, Repl,
-};
+
 use std::{
     borrow::Cow,
     ffi::OsString,
@@ -30,6 +26,15 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+};
+
+use clap::Parser;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use repl_oxide::{
+    ansi_code::{GREEN, RED, RESET, YELLOW},
+    executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
+    input_hook::{CallbackErr, HookControl, HookStates, HookUID, HookedEvent, InputHook},
+    repl_builder, EventLoop, Repl,
 };
 use tokio::{
     sync::{
@@ -358,7 +363,7 @@ impl CommandContext {
         (
             repl_builder(term)
                 .with_prompt(MAIN_PROMPT)
-                .with_completion(&crate::command_scheme::COMPLETION)
+                .with_completion(&crate::models::command_scheme::COMPLETION)
                 .with_custom_quit_command("quit")
                 .with_history_entries(&startup_contents.command_history)
                 .build()

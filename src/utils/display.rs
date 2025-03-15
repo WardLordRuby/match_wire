@@ -1,15 +1,17 @@
 use crate::{
-    cli::Source,
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, ConsoleHistory, GameDetails},
         launch_h2m::{game_open, LaunchError},
     },
+    models::cli::Source,
     utils::caching::ReadCacheErr,
 };
+
+use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
+
 use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
-use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
 
 pub(crate) const DISP_NAME_HMW: &str = "HMW";
 pub(crate) const DISP_NAME_H2M: &str = "H2M";

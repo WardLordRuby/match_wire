@@ -1,4 +1,5 @@
-use crate::cli::{REGION_LEN, SOURCE_LEN};
+use super::cli::{REGION_LEN, SOURCE_LEN};
+
 use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKind};
 
 pub const COMPLETION: CommandScheme = init_command_scheme();

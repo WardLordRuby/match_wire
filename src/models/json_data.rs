@@ -1,3 +1,5 @@
+use crate::commands::launch_h2m::HostName;
+
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
@@ -5,8 +7,6 @@ use std::{
 };
 
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-
-use crate::commands::launch_h2m::HostName;
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct HostData {

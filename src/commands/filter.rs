@@ -1,23 +1,20 @@
 use crate::{
-    cli::{Filters, Region, Source},
     location_api_key::FIND_IP_NET_PRIVATE_KEY,
-    make_slice_ascii_lowercase, parse_hostname,
+    make_slice_ascii_lowercase,
+    models::{
+        cli::{Filters, Region, Source},
+        json_data::*,
+    },
+    parse_hostname,
     utils::{
         caching::Cache,
         display::{
             DisplayCachedServerUse, DisplayCountOf, DisplayGetInfoCount, DisplayServerCount,
             SingularPlural, SOURCE_HMW,
         },
-        json_data::*,
     },
     Spinner, LOG_ONLY, TERM_CLEAR_LINE,
 };
-
-use constcat::concat;
-use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
-use reqwest::Client;
-use tokio::{sync::Mutex, task::JoinSet};
-use tracing::{error, info, instrument, trace, warn};
 
 use std::{
     borrow::Cow,
@@ -29,6 +26,12 @@ use std::{
     path::Path,
     sync::Arc,
 };
+
+use constcat::concat;
+use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
+use reqwest::Client;
+use tokio::{sync::Mutex, task::JoinSet};
+use tracing::{error, info, instrument, trace, warn};
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net";
 
