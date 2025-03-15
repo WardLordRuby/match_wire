@@ -340,7 +340,7 @@ impl Spinner {
                     }
                     write!(stdout, "{TERM_CLEAR_LINE}{ch} {message}")?;
                     stdout.flush()?;
-                    std::thread::sleep(tokio::time::Duration::from_millis(60));
+                    std::thread::sleep(Duration::from_millis(60));
                 }
                 Ok(())
             }),
@@ -368,10 +368,9 @@ pub async fn splash_screen() -> io::Result<()> {
     #[cfg(not(debug_assertions))]
     {
         use crossterm::{
-            execute, queue,
-            terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
+            queue,
+            terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
         };
-        use std::sync::atomic::Ordering;
 
         // font: 4Max - patorjk.com
         const SPLASH_TEXT: [&str; 4] = [
@@ -383,7 +382,7 @@ pub async fn splash_screen() -> io::Result<()> {
 
         let mut stdout = std::io::stdout();
 
-        SPLASH_SCREEN_VIS.store(true, Ordering::SeqCst);
+        SPLASH_SCREEN_VIS.store(true, std::sync::atomic::Ordering::SeqCst);
         execute!(stdout, terminal::EnterAlternateScreen)?;
 
         let (width, height) = terminal::size()?;
@@ -400,11 +399,11 @@ pub async fn splash_screen() -> io::Result<()> {
                 crossterm::style::Print(line)
             )?;
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(160)).await;
+            tokio::time::sleep(Duration::from_millis(160)).await;
             execute!(stdout, EndSynchronizedUpdate)?;
         }
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
     Ok(())
@@ -420,7 +419,7 @@ pub(crate) async fn leave_splash_screen(task: tokio::task::JoinHandle<io::Result
         let mut buffer = loop {
             match SPLASH_SCREEN_MSG_BUFFER.try_lock() {
                 Ok(buffer) => break buffer,
-                Err(_) => tokio::time::sleep(tokio::time::Duration::from_millis(20)).await,
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
             }
         };
         print!("{}", std::mem::take(&mut *buffer))
@@ -449,7 +448,7 @@ pub async fn startup_cache_task(
 ) -> StartupCacheContents {
     use tokio::sync::Mutex;
 
-    let (cmd_history, cache) = match cache_res {
+    let (cmd_history, prev_cache) = match cache_res {
         Some(Ok(mut file_contents)) => {
             return StartupCacheContents {
                 command_history: std::mem::take(&mut file_contents.cmd_history),
@@ -459,40 +458,39 @@ pub async fn startup_cache_task(
         }
         Some(Err(err)) => {
             error!("{err}");
-            if let Some(mut file_contents) = err.cache {
-                (
-                    Some(std::mem::take(&mut file_contents.cmd_history)),
-                    Some(Arc::new(Mutex::new(Cache::from(file_contents)))),
-                )
-            } else {
-                (None, None)
-            }
+            err.cache
+                .map(|mut file_contents| {
+                    (
+                        Some(std::mem::take(&mut file_contents.cmd_history)),
+                        Some(Arc::new(Mutex::new(Cache::from(file_contents)))),
+                    )
+                })
+                .unwrap_or((None, None))
         }
         None => (None, None),
     };
-    let (cache, modified) = match build_cache(cache.as_ref()).await {
-        Ok(c) => {
-            let cache = if let Some(prev) = cache {
+
+    let build_res = build_cache(prev_cache.as_ref()).await;
+    let modified = build_res.is_ok();
+
+    let cache = match build_res {
+        Ok(updated_cache) => {
+            if let Some(prev) = prev_cache {
                 {
                     let mut lock = prev.lock().await;
-                    *lock = c;
+                    *lock = updated_cache;
                 }
                 prev
             } else {
-                Arc::new(Mutex::new(c))
-            };
-            (cache, true)
+                Arc::new(Mutex::new(updated_cache))
+            }
         }
         Err(err) => {
             error!("{err}");
-            let cache = if let Some(prev) = cache {
-                prev
-            } else {
-                Arc::new(Mutex::new(Cache::default()))
-            };
-            (cache, false)
+            prev_cache.unwrap_or_else(|| Arc::new(Mutex::new(Cache::default())))
         }
     };
+
     StartupCacheContents {
         command_history: cmd_history.unwrap_or_default(),
         cache,
