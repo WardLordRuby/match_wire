@@ -1,4 +1,3 @@
-use crossterm::{cursor, event::EventStream, execute, terminal};
 use match_wire::{
     await_user_for_end, check_app_dir_exists,
     commands::{
@@ -14,12 +13,15 @@ use match_wire::{
     },
     LOCAL_DATA, LOG_ONLY, SAVED_HISTORY_CAP,
 };
+
+use std::{borrow::Cow, io, path::PathBuf};
+
+use crossterm::{cursor, event::EventStream, execute, terminal};
 use repl_oxide::{
     ansi_code::{RED, RESET},
     executor::Executor,
     general_event_process,
 };
-use std::{borrow::Cow, io, path::PathBuf};
 use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
@@ -64,11 +66,9 @@ async fn main() {
 async fn run_eval_print_loop(
     line_handle: &mut ReplHandle,
     command_context: &mut CommandContext,
-    receivers: (Receiver<Message>, Receiver<()>),
+    (mut message_rx, mut update_cache_rx): (Receiver<Message>, Receiver<()>),
 ) -> io::Result<()> {
-    let (mut message_rx, mut update_cache_rx) = receivers;
     let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
-
     let mut reader = EventStream::new();
 
     loop {
@@ -116,7 +116,7 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
         #[cfg(not(debug_assertions))]
         {
             use clap::Parser;
-            match_wire::cli::Cli::parse().no_launch
+            match_wire::models::cli::Cli::parse().no_launch
         }
 
         #[cfg(debug_assertions)]

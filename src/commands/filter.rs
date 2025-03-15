@@ -1,23 +1,20 @@
 use crate::{
-    cli::{Filters, Region, Source},
     location_api_key::FIND_IP_NET_PRIVATE_KEY,
-    make_slice_ascii_lowercase, parse_hostname,
+    make_slice_ascii_lowercase,
+    models::{
+        cli::{Filters, Region, Source},
+        json_data::*,
+    },
+    parse_hostname,
     utils::{
         caching::Cache,
         display::{
             DisplayCachedServerUse, DisplayCountOf, DisplayGetInfoCount, DisplayServerCount,
             SingularPlural, SOURCE_HMW,
         },
-        json_data::*,
     },
     Spinner, LOG_ONLY, TERM_CLEAR_LINE,
 };
-
-use constcat::concat;
-use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
-use reqwest::Client;
-use tokio::{sync::Mutex, task::JoinSet};
-use tracing::{error, info, instrument, trace, warn};
 
 use std::{
     borrow::Cow,
@@ -29,6 +26,12 @@ use std::{
     path::Path,
     sync::Arc,
 };
+
+use constcat::concat;
+use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
+use reqwest::Client;
+use tokio::{sync::Mutex, task::JoinSet};
+use tracing::{error, info, instrument, trace, warn};
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net";
 
@@ -809,25 +812,21 @@ async fn filter_server_list(
                 continue;
             }
 
-            let mut hostname_l = None;
+            let mut normalized_hostname = None;
             if let Some(include_terms) = args.includes.as_deref() {
-                hostname_l = Some(parse_hostname(&info.host_name));
-                if !include_terms
-                    .iter()
-                    .any(|term| hostname_l.as_deref().unwrap().contains(term))
-                {
+                normalized_hostname = Some(parse_hostname(&info.host_name));
+                let hostname = normalized_hostname.as_deref().unwrap();
+                if !include_terms.iter().any(|term| hostname.contains(term)) {
                     valid_servers.swap_remove(i);
                     continue;
                 }
             }
             if let Some(exclude_terms) = args.excludes.as_deref() {
-                if hostname_l.is_none() {
-                    hostname_l = Some(parse_hostname(&info.host_name));
+                if normalized_hostname.is_none() {
+                    normalized_hostname = Some(parse_hostname(&info.host_name));
                 }
-                if exclude_terms
-                    .iter()
-                    .any(|term| hostname_l.as_deref().unwrap().contains(term))
-                {
+                let hostname = normalized_hostname.as_deref().unwrap();
+                if exclude_terms.iter().any(|term| hostname.contains(term)) {
                     valid_servers.swap_remove(i);
                 }
             }

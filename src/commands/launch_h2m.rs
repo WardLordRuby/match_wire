@@ -6,9 +6,7 @@ use crate::{
     parse_hostname, strip_ansi_private_modes,
     utils::caching::Cache,
 };
-use core::str;
-use repl_oxide::strip_ansi;
-use serde::{Deserialize, Serialize};
+
 use std::{
     ffi::{c_void, OsStr, OsString},
     net::{AddrParseError, SocketAddr},
@@ -19,6 +17,10 @@ use std::{
         Arc,
     },
 };
+
+use core::str;
+use repl_oxide::strip_ansi;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc::Sender, Mutex};
 use tracing::{error, trace};
 use windows_sys::Win32::{

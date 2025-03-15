@@ -1,16 +1,18 @@
 use crate::{
-    cli::HistoryArgs,
     commands::{
         handler::{CommandContext, CommandHandle, CommandSender},
         launch_h2m::HostName,
     },
+    models::cli::HistoryArgs,
     utils::display::{ConnectionHelp, DisplayHistoryErr},
     LOG_ONLY,
 };
-use repl_oxide::ansi_code::{RESET, YELLOW};
+
 use std::{
     borrow::Cow, collections::HashMap, fmt::Display, net::SocketAddr, sync::atomic::Ordering,
 };
+
+use repl_oxide::ansi_code::{RESET, YELLOW};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 use winptyrs::PTY;
