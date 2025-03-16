@@ -1,7 +1,7 @@
 use crate::{
     commands::{
         filter::build_favorites,
-        launch_h2m::{game_open, initalize_listener, launch_h2m_pseudo, LaunchError},
+        launch_h2m::{game_open, initialize_listener, launch_h2m_pseudo, LaunchError},
     },
     exe_details, get_latest_hmw_hash, leave_splash_screen,
     models::{
@@ -265,9 +265,9 @@ impl CommandContext {
             startup_data.cache_task
         );
 
-        let (handle, try_start_listener) = match launch_res {
-            Ok(Some(Ok(handle))) => (Some(handle), true),
-            Ok(None) => (None, false),
+        let handle = match launch_res {
+            Ok(Some(Ok(handle))) => Some(handle),
+            Ok(None) => None,
             rest => {
                 let err = match rest {
                     Err(join_err) => join_err.to_string(),
@@ -276,7 +276,7 @@ impl CommandContext {
                 };
                 error!("Could not launch H2M as child process: {err}");
                 print_during_splash(Message::Str(ConnectionHelp.into()));
-                (None, false)
+                None
             }
         };
 
@@ -352,7 +352,7 @@ impl CommandContext {
             h2m_console_history: Arc::new(Mutex::new(ConsoleHistory::default())),
         };
 
-        if try_start_listener {
+        if ctx.pty_handle.is_some() {
             ctx.listener_routine()
                 .await
                 .unwrap_or_else(|err| warn!("{err}"));
@@ -447,10 +447,10 @@ impl CommandContext {
         {
             return;
         }
-        let Ok(lock) = self.check_h2m_connection().await else {
+        let Ok(rw_console_lock) = self.check_h2m_connection().await else {
             return;
         };
-        let game_console = lock.read().await;
+        let game_console = rw_console_lock.read().await;
         match game_console.send_cmd("quit") {
             Ok(()) => {
                 info!(name: LOG_ONLY, "{}'s console accepted quit command", self.game_name());
@@ -465,11 +465,11 @@ impl CommandContext {
         command: S,
         input_hook_uid: HookUID,
     ) -> Result<Result<(), Cow<'static, str>>, CallbackErr> {
-        let lock = self.check_h2m_connection().await.map_err(|err| {
+        let rw_console_lock = self.check_h2m_connection().await.map_err(|err| {
             CallbackErr::new(input_hook_uid, format!("Could not send command: {err}"))
         })?;
 
-        let game_console = lock.read().await;
+        let game_console = rw_console_lock.read().await;
 
         Ok(game_console.send_cmd(command))
     }
@@ -505,10 +505,10 @@ impl CommandContext {
 
     /// if calling manually you are responsible for setting pty inside of context
     pub async fn listener_routine(&mut self) -> Result<(), String> {
-        initalize_listener(self).await?;
+        initialize_listener(self).await?;
         let handle = self
             .pty_handle()
-            .expect("initalize_listener returned early if this is `None`");
+            .expect("initialize_listener returned early if this is `None`");
         let msg_sender = self.msg_sender();
         let game_name = self.game_name();
         tokio::spawn(async move {
@@ -565,7 +565,7 @@ impl CommandContext {
 
     async fn print_version(&mut self) -> io::Result<CommandHandle> {
         if self.game.hash_latest.is_none() {
-            println!("{GREEN}Trying to get lastest HMW version..{RESET}");
+            println!("{GREEN}Trying to get latest HMW version..{RESET}");
 
             self.game.hash_latest = get_latest_hmw_hash()
                 .await
@@ -696,7 +696,7 @@ impl CommandContext {
                     code: KeyCode::Enter,
                     ..
                 }) => {
-                    if !handle.input().is_empty() {
+                    if !handle.input().trim().is_empty() {
                         let cmd = handle.new_line()?;
 
                         let send_user_cmd = EventLoop::<CommandContext, _>::new_async_callback(
@@ -782,13 +782,15 @@ pub(crate) trait CommandSender {
 impl CommandSender for RwLockReadGuard<'_, PTY> {
     /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
     fn send_cmd<S: AsRef<str>>(&self, command: S) -> Result<(), Cow<'static, str>> {
+        const NEW_LINE: &str = "\r\n";
         let cmd_str = command.as_ref();
+
         let mut os_command = OsString::from(cmd_str);
-        os_command.push("\r\n");
+        os_command.push(NEW_LINE);
 
         match self.write(os_command) {
-            Ok(chars) => {
-                if chars != cmd_str.chars().count() as u32 + 2 {
+            Ok(n_chars) => {
+                if n_chars != (cmd_str.chars().count() + NEW_LINE.len()) as u32 {
                     return Err(Cow::Borrowed("Failed to send command to h2m console"));
                 }
                 Ok(())

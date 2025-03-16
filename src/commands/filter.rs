@@ -44,8 +44,8 @@ const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
 const DEFAULT_H2M_SERVER_CAP: usize = 100;
-const DEFUALT_INFO_RETRIES: u8 = 3;
-pub(crate) const DEFUALT_SOURCES: [Source; 2] = [Source::Iw4Master, Source::HmwMaster];
+const DEFAULT_INFO_RETRIES: u8 = 3;
+pub(crate) const DEFAULT_SOURCES: [Source; 2] = [Source::Iw4Master, Source::HmwMaster];
 const RETRY_TIME_SCALE: u64 = 800; // ms
 const LOCAL_HOST: &str = "localhost";
 
@@ -65,20 +65,14 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
 }
 
 async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
-    trace!("retreiving iw4 master server list");
+    trace!("retrieving iw4 master server list");
     const INSTANCE_URL: &str = concat!(IW4_MASTER_URL, JSON_SERVER_ENDPOINT);
-    reqwest::get(INSTANCE_URL)
-        .await?
-        .json::<Vec<HostData>>()
-        .await
+    reqwest::get(INSTANCE_URL).await?.json().await
 }
 
 async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
-    trace!("retreiving hmw master server list");
-    reqwest::get(HMW_MASTER_URL)
-        .await?
-        .json::<Vec<String>>()
-        .await
+    trace!("retrieving hmw master server list");
+    reqwest::get(HMW_MASTER_URL).await?.json().await
 }
 
 #[instrument(name = "filter", level = "trace", skip_all)]
@@ -123,7 +117,7 @@ pub(crate) async fn build_favorites(
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     println!(
-        "{TERM_CLEAR_LINE}{} match the prameters in the current query",
+        "{TERM_CLEAR_LINE}{} match the parameters in the current query",
         DisplayServerCount(servers.len(), GREEN)
     );
 
@@ -157,7 +151,7 @@ pub(crate) struct Server {
 
 impl From<HostMeta> for Server {
     /// Real source is Sourced::Iw4  
-    /// Source kind is modifed to avoid cloning `ServerInfo` fields into the desired `GetInfo`
+    /// Source kind is modified to avoid cloning `ServerInfo` fields into the desired `GetInfo`
     fn from(value: HostMeta) -> Self {
         Server {
             info: Some(GetInfo {
@@ -586,7 +580,7 @@ async fn filter_server_list(
             sources
                 .as_ref()
                 .map(|s| s.len())
-                .unwrap_or(DEFUALT_SOURCES.len()),
+                .unwrap_or(DEFAULT_SOURCES.len()),
             "server",
             "servers"
         )
@@ -594,7 +588,7 @@ async fn filter_server_list(
 
     let mut servers = match sources {
         Some(user_sources) => get_sourced_servers(user_sources, Some(&cache)).await,
-        None => get_sourced_servers(DEFUALT_SOURCES, Some(&cache)).await,
+        None => get_sourced_servers(DEFAULT_SOURCES, Some(&cache)).await,
     }?;
 
     let cache_modified = if let Some(regions) = args.region.as_deref().map(to_region_set) {
@@ -621,7 +615,7 @@ async fn filter_server_list(
             }
             if new_lookups.insert(socket_addr.ip()) {
                 let client = client.clone();
-                trace!("Requsting location data for: {}", socket_addr.ip());
+                trace!("Requesting location data for: {}", socket_addr.ip());
                 tasks.spawn(async move {
                     try_location_lookup(&socket_addr.ip(), client)
                         .await
@@ -718,7 +712,7 @@ async fn filter_server_list(
         let mut did_not_respond = UnresponsiveCounter::default();
         let mut used_backup_data = 0_usize;
         let mut sent_retires = false;
-        let max_attempts = args.retry_max.unwrap_or(DEFUALT_INFO_RETRIES);
+        let max_attempts = args.retry_max.unwrap_or(DEFAULT_INFO_RETRIES);
 
         let mut cache = cache.lock().await;
 
@@ -911,9 +905,9 @@ fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> Result<IpAddr, AddrParse
         Err(err) => {
             const HTTP_ENDING: &str = "//";
             if let Some(i) = webfront_url.find(HTTP_ENDING) {
-                const PORT_SEPERATOR: char = ':';
+                const PORT_SEPARATOR: char = ':';
                 let ip_start = i + HTTP_ENDING.len();
-                let ipv6_slice = if let Some(j) = webfront_url[ip_start..].rfind(PORT_SEPERATOR) {
+                let ipv6_slice = if let Some(j) = webfront_url[ip_start..].rfind(PORT_SEPARATOR) {
                     let ip_end = j + ip_start;
                     if ip_end <= ip_start {
                         error!(name: LOG_ONLY, "Bad ipv6 slice op: {webfront_url}");

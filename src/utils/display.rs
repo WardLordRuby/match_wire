@@ -112,7 +112,7 @@ impl Display for DisplayGetInfoCount {
         write!(
             f,
             "{} 'getInfo' for {}",
-            if !self.1 { "Requesting" } else { "Retring" },
+            if !self.1 { "Requesting" } else { "Retrying" },
             if !self.1 {
                 DisplayServerCount(self.0, GREEN)
             } else {

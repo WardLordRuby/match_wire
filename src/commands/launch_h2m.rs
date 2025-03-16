@@ -70,7 +70,7 @@ const CARRIAGE_RETURN: u16 = '\r' as u16;
 const NEW_LINE: u16 = '\n' as u16;
 
 #[inline]
-fn case_insensitve_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
+fn case_insensitive_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
     debug_assert_eq!(window.len(), CONNECT_BYTES.len());
     if window
         .iter()
@@ -138,7 +138,7 @@ impl HostName {
         let (host_name, socket_addr) = if version < 1.0 {
             let host_name = stripped
                 .split_once(JOIN_STR)
-                .expect("`Connection::Browser` is found and client is 'origional h2m', meaning `JOIN_BYTES` were found in the `value` array")
+                .expect("`Connection::Browser` is found and client is 'original h2m', meaning `JOIN_BYTES` were found in the `value` array")
                 .1
                 .strip_suffix("...")
                 .ok_or_else(|| {
@@ -281,8 +281,8 @@ async fn add_to_history(
     }
 }
 
-pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), String> {
-    let pty = context.check_h2m_connection().await?;
+pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
+    let rw_console_lock = context.check_h2m_connection().await?;
 
     let console_history_arc = context.h2m_console_history();
     let cache_arc = context.cache();
@@ -307,7 +307,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         'task: loop {
             tokio::time::sleep(PROCESS_INTERVAL).await;
-            let handle = pty.read().await;
+            let handle = rw_console_lock.read().await;
             if !matches!(handle.is_alive(), Ok(true)) {
                 break;
             }
@@ -354,7 +354,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
                         .windows(connecting_bytes.len())
                         .any(|window| {
                             window == connecting_bytes
-                                || case_insensitve_cmp_direct(window, &mut connect_kind)
+                                || case_insensitive_cmp_direct(window, &mut connect_kind)
                         })
                 {
                     add_to_history(
@@ -413,7 +413,7 @@ pub async fn initalize_listener(context: &mut CommandContext) -> Result<(), Stri
         }
         send_msg_over(
             &msg_sender_arc,
-            Message::warn(format!("No longer reading {game_name} console ouput")),
+            Message::warn(format!("No longer reading {game_name} console output")),
         )
         .await;
     });
@@ -469,11 +469,11 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
 pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
     let mut result = "";
 
-    // Saftey:
-    // - saftey guarantees in `enum_windows_callback` hold true
+    // Safety:
+    // - Safety guarantees in `enum_windows_callback` hold true
     // - `lParam` is a controlled type by us
     if unsafe { EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize) } == 0 {
-        // Saftey: Enum windows returned error (0), it must have set an Error code
+        // Safety: Enum windows returned error (0), it must have set an Error code
         match unsafe { GetLastError() } {
             0 => (),
             err => {
@@ -494,7 +494,7 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
         .chain(std::iter::once(0))
         .collect::<Vec<wchar_t>>();
 
-    // Saftey:
+    // Safety:
     // - `lpstrFilename`: Unicode is defined so C type `LPWSTR` is used, Windows type def for `wchar_t` is a unsigned short rust equivalent `u16`
     // - `GetFileVersionInfoSizeW` always sets `lpdwHandle` to 0
     let size = unsafe { GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut()) };
@@ -504,10 +504,10 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
 
     let mut buffer = vec![0_u8; size as usize];
 
-    // Saftey:
+    // Safety:
     // - `lpstrFilename`: Unicode is defined so C type `LPWSTR` is used, Windows type def for `wchar_t` is a unsigned short rust equivalent `u16`
     // - `GetFileVersionInfoW` ignores `dwHandle`
-    // - `size` is correctly aquired from `GetFileVersionInfoSizeW` and is not empty
+    // - `size` is correctly acquired from `GetFileVersionInfoSizeW` and is not empty
     // - `lpData` file version will always fit within `u8`s
     if unsafe { GetFileVersionInfoW(wide_path.as_ptr(), 0, size, buffer.as_mut_ptr() as *mut _) }
         == 0
@@ -519,8 +519,8 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     let mut version_info: *mut c_void = std::ptr::null_mut();
     let mut len = 0;
 
-    // Saftey:
-    // - `pBlock` accepts any and `GetFileVersionInfoW` correctly writes the verson to `buffer`
+    // Safety:
+    // - `pBlock` accepts any and `GetFileVersionInfoW` correctly writes the version to `buffer`
     // - `ipSubBlock` correctly points to the `u16` encoded version-information path `VER_INFO`
     // - `lplpBuffer` takes a `c_void` mut pointer
     // - `puLen` is defined as a `PUINT` rust equivalent `*mut u32`
@@ -536,7 +536,7 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
         return None;
     }
 
-    // Saftey: `VerQueryValueW` did not error so it is okay to cast do the supplied struct
+    // Safety: `VerQueryValueW` did not error so it is okay to cast do the supplied struct
     let info = unsafe { &*(version_info as *const VS_FIXEDFILEINFO) };
 
     let major = (info.dwFileVersionMS >> 16) & 0xffff;
@@ -565,7 +565,7 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i32 {
     let mut title: [wchar_t; 512] = [0; 512];
 
-    // Saftey:
+    // Safety:
     // - `title` is the expected `u16` byte buffer
     // - `nMaxCount` is a `c_int` that is expected to be `i32`
     let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
@@ -586,7 +586,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
 
     let mut class_name = [0; 256];
 
-    // Saftey:
+    // Safety:
     // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
     // - `nMaxCount` is a `c_int` that is expected to be `i32`
     let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
@@ -602,7 +602,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
         .iter()
         .any(|&h2m_class| class_name_str == h2m_class)
     {
-        // Saftey:
+        // Safety:
         // - We input `lparam` as a `*mut &'static str` casted to `isize`
         // - We can assign `associated_game` since we know it is a static value
         // - memory `lparam` points to lives for longer than `EnumWindows`

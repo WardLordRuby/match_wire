@@ -80,7 +80,7 @@ async fn run_eval_print_loop(
 
             _ = close_listener.recv() => {
                 info!(name: LOG_ONLY, "forceful app shutdown");
-                // Appon a forceful close the app does not have enough time to aquire the cache lock and properly
+                // Upon a forceful close the app does not have enough time to acquire the cache lock and properly
                 // save the cache to file in the case that the `update_cache` flag is set so we force the process
                 // to exit avoiding the possibility of an ill formed cache to be saved locally
                 std::process::exit(0)

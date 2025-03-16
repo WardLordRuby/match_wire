@@ -441,7 +441,7 @@ pub fn print_during_splash(message: Message) {
 }
 
 #[cfg(not(debug_assertions))]
-/// **Only** use for errors encountered before tracing subscriber has been initalized
+/// **Only** use for errors encountered before tracing subscriber has been initialized
 pub fn print_during_splash(message: Message) {
     message.log();
 

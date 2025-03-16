@@ -2,6 +2,7 @@ use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_S
 
 use clap::{value_parser, ArgAction, Args, Parser, ValueEnum};
 
+#[cfg(not(debug_assertions))]
 #[derive(Parser, Debug)]
 pub struct Cli {
     #[arg(long)]

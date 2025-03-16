@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        filter::{get_sourced_servers, queue_info_requests, Server, Sourced, DEFUALT_SOURCES},
+        filter::{get_sourced_servers, queue_info_requests, Server, Sourced, DEFAULT_SOURCES},
         handler::CommandContext,
         launch_h2m::HostName,
         reconnect::HISTORY_MAX,
@@ -127,7 +127,7 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
         }
     };
 
-    let servers = match get_sourced_servers(DEFUALT_SOURCES, prev).await {
+    let servers = match get_sourced_servers(DEFAULT_SOURCES, prev).await {
         Ok(servers) => servers,
         Err(err) => {
             finish_spinner();

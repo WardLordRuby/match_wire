@@ -98,7 +98,7 @@ const COMMAND_INNER: [InnerScheme; 9] = [
             RecKind::argument_with_no_required_inputs(),
             false,
         ),
-        Some(&RECONNECT_INNTER),
+        Some(&RECONNECT_INNER),
     ),
     // launch
     InnerScheme::end(Parent::Root),
@@ -204,7 +204,7 @@ const FILTER_INNER: [InnerScheme; 11] = [
     ),
 ];
 
-const RECONNECT_INNTER: [InnerScheme; 2] = [
+const RECONNECT_INNER: [InnerScheme; 2] = [
     // history
     InnerScheme::end(Parent::Entry(COMMAND_RECS[1])),
     // connect

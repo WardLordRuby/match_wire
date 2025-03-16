@@ -6,7 +6,7 @@ mod tests {
     use repl_oxide::strip_ansi;
 
     #[test]
-    fn parse_hostnames_h2m() {
+    fn parse_host_names_h2m() {
         const INPUT: [&str; 3] = [
             "\u{1b}[m\u{1b}[38;5;3m\u{1b}[mJoining [US] ^5CWS ^7| ^1Best Maps ^:TDM...",
             "\u{1b}[m\u{1b}[38;5;3m\u{1b}[mJoining ^3:: OP GOLD ::^7 | ^1Mosh Pit^7 | ^:MW2/COD4 MAPS^7 | ^1Double XP^7 | ^:Map Vote^7 | ^1#2...",
@@ -38,7 +38,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_hostnames_hmw() {
+    fn parse_host_names_hmw() {
         const INPUT: [&str; 4] = [
             "Connecting to server:[0] {152.53.39.127:27017} ^5[US-EAST] ^3Respex ^1| ^6Map Voting ^1| ^2COD4^7/^3MW2 ^4Maps ^1| ^9HARDCORE TDM ^1| 2XP",
             "Connecting to server:[49] {2.56.166.179:27017} ^1Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",

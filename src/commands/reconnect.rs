@@ -83,7 +83,7 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        let rw_lock = match self.check_h2m_connection().await {
+        let rw_console_lock = match self.check_h2m_connection().await {
             Ok(lock) => lock,
             Err(err) => {
                 error!("{err}");
@@ -93,7 +93,7 @@ impl CommandContext {
         };
 
         let (target_i, modify_cache) =
-            if let Some(num) = args.connect.and_then(|i| (i > 1).then(|| usize::from(i))) {
+            if let Some(num) = args.connect.filter(|&i| i > 1).map(usize::from) {
                 if num > cache.connection_history.len() {
                     error!("{}", DisplayHistoryErr(cache.connection_history.len()));
                     return Ok(CommandHandle::Processed);
@@ -114,7 +114,7 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         };
 
-        if let Err(err) = connect_to(ip_port, &rw_lock).await {
+        if let Err(err) = connect_to(ip_port, &rw_console_lock).await {
             error!("{err}");
             return Ok(CommandHandle::Processed);
         }
@@ -131,8 +131,8 @@ impl CommandContext {
 }
 
 /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
-async fn connect_to(ip_port: SocketAddr, rw_lock: &RwLock<PTY>) -> Result<(), Cow<'_, str>> {
-    let game_console = rw_lock.read().await;
+async fn connect_to(ip_port: SocketAddr, console_lock: &RwLock<PTY>) -> Result<(), Cow<'_, str>> {
+    let game_console = console_lock.read().await;
     game_console.send_cmd("disconnect")?;
     tokio::time::sleep(CONSEC_CMD_DELAY).await;
     game_console.send_cmd(format!("connect {ip_port}"))
