@@ -13,7 +13,7 @@ use crate::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_H2M, DISP_NAME_HMW},
     },
-    LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
+    Spinner, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES,
 };
 
 use std::{
@@ -110,8 +110,8 @@ pub struct GameDetails {
 }
 
 impl GameDetails {
-    fn set_game_name(path: &Path) -> Cow<'static, str> {
-        let file_name = path
+    fn set_game_name(exe_path: &Path) -> Cow<'static, str> {
+        let file_name = exe_path
             .file_name()
             .expect("path points to exe")
             .to_string_lossy();
@@ -135,10 +135,10 @@ impl GameDetails {
         }
     }
 
-    pub fn new(path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
+    pub fn new(exe_path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
         GameDetails {
-            game_name: GameDetails::set_game_name(&path),
-            path,
+            game_name: GameDetails::set_game_name(&exe_path),
+            path: exe_path,
             version,
             hash_curr,
             hash_latest: None,
@@ -728,9 +728,13 @@ impl CommandContext {
             .unwrap_or_else(LaunchError::resolve_to_open)
             .is_none()
         {
+            let spinner = Spinner::new(format!("Waiting for {} to close", self.game_name()));
+
             while self.check_h2m_connection().await.is_ok() {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
+
+            spinner.finish();
             return Ok(CommandHandle::Exit);
         } else if self.check_h2m_connection().await.is_err() {
             return Ok(CommandHandle::Exit);
