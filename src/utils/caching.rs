@@ -63,6 +63,15 @@ impl Default for Cache {
     }
 }
 
+impl Sourced {
+    pub(crate) fn to_flattened_source(&self) -> Source {
+        match self {
+            Self::Hmw(_) | Self::HmwCached(_) => Source::HmwMaster,
+            Self::Iw4(_) | Self::Iw4Cached(_) => Source::Iw4Master,
+        }
+    }
+}
+
 impl Cache {
     fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
         let map = match source {
@@ -80,35 +89,32 @@ impl Cache {
             .or_insert(ports.to_vec());
     }
 
-    fn try_insert_region_and_ports(
+    fn internal_update_cache_call(
         &mut self,
         addr: SocketAddr,
-        region: Option<[u8; 2]>,
-        valid_source: Option<Source>,
+        source: Source,
+        host_name: Option<String>,
     ) {
-        if let Some(region) = region {
-            self.ip_to_region.insert(addr.ip(), region);
+        if let Some(host_name) = host_name {
+            self.host_to_connect.insert(host_name, addr);
         }
-        if let Some(source) = valid_source {
-            self.insert_ports(addr.ip(), &[addr.port()], source);
-        }
+        self.insert_ports(addr.ip(), &[addr.port()], source);
     }
 
-    pub(crate) fn update_cache_with(&mut self, server: &Server, region: Option<[u8; 2]>) {
-        let socket_addr = server.source.socket_addr();
-        if let Some(ref info) = server.info {
-            self.host_to_connect
-                .insert(info.host_name.clone(), socket_addr);
-        }
-        self.try_insert_region_and_ports(socket_addr, region, server.source.to_valid_source());
+    pub(crate) fn update_cache_with(&mut self, server: &Server) {
+        self.internal_update_cache_call(
+            server.source.socket_addr(),
+            server.source.to_flattened_source(),
+            server.info.as_ref().map(|info| info.host_name.clone()),
+        );
     }
 
-    pub(crate) fn push(&mut self, server: Server, region: Option<[u8; 2]>) {
-        let socket_addr = server.source.socket_addr();
-        if let Some(info) = server.info {
-            self.host_to_connect.insert(info.host_name, socket_addr);
-        }
-        self.try_insert_region_and_ports(socket_addr, region, server.source.to_valid_source());
+    pub(crate) fn push(&mut self, server: Server) {
+        self.internal_update_cache_call(
+            server.source.socket_addr(),
+            server.source.to_flattened_source(),
+            server.info.map(|info| info.host_name),
+        );
     }
 }
 
@@ -137,14 +143,18 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
 
     let mut cache = Cache::default();
 
-    let regions = match prev {
-        Some(p) => {
-            let mut lock = p.lock().await;
-            std::mem::swap(&mut cache.connection_history, &mut lock.connection_history);
-            Some(std::mem::take(&mut lock.ip_to_region))
+    if let Some(prev_cache) = prev {
+        let mut lock = prev_cache.lock().await;
+        std::mem::swap(&mut cache.connection_history, &mut lock.connection_history);
+
+        for server in servers.iter() {
+            let server_ip = server.socket_addr().ip();
+            let Some(cached_region) = lock.ip_to_region.remove(&server_ip) else {
+                continue;
+            };
+            cache.ip_to_region.insert(server_ip, cached_region);
         }
-        None => None,
-    };
+    }
 
     let client = reqwest::Client::builder()
         .timeout(tokio::time::Duration::from_secs(3))
@@ -156,24 +166,16 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
     while let Some(res) = tasks.join_next().await {
         match res {
             Ok(result) => match result {
-                Ok(server) => {
-                    let region = regions
-                        .as_ref()
-                        .and_then(|cache| cache.get(&server.source.socket_addr().ip()).copied());
-                    cache.push(server, region)
-                }
+                Ok(server) => cache.push(server),
                 Err(mut err) => {
                     error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
-                    let source = err.meta.to_valid_source();
                     let Sourced::Iw4(data) = err.meta else {
                         continue;
                     };
                     let Ok(ip) = data.server.ip.parse() else {
                         continue;
                     };
-                    if let Some(source) = source {
-                        cache.insert_ports(ip, &[data.server.port], source);
-                    }
+                    cache.insert_ports(ip, &[data.server.port], Source::Iw4Master);
                     cache
                         .host_to_connect
                         .insert(data.server.host_name, SocketAddr::new(ip, data.server.port));

@@ -334,14 +334,6 @@ pub(crate) enum Sourced {
 }
 
 impl Sourced {
-    pub(crate) fn to_valid_source(&self) -> Option<Source> {
-        match self {
-            Self::Hmw(_) => Some(Source::HmwMaster),
-            Self::Iw4(_) => Some(Source::Iw4Master),
-            Self::HmwCached(_) | Self::Iw4Cached(_) => None,
-        }
-    }
-
     fn try_from_hmw_master(ip_port: String) -> Option<Self> {
         let (ip, port) = match ip_port
             .rsplit_once(':')
@@ -726,7 +718,7 @@ async fn filter_server_list(
             while let Some(res) = tasks.join_next().await {
                 match res {
                     Ok(Ok(server)) => {
-                        cache.update_cache_with(&server, None);
+                        cache.update_cache_with(&server);
                         valid_servers.push(server)
                     }
                     Ok(Err(mut err)) => {
