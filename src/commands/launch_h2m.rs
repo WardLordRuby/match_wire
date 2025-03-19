@@ -145,7 +145,7 @@ impl HostName {
                     format!("Unexpected H2M console output found. ansi_stripped_input: '{stripped}' does not end in: '...'")
                 })?;
 
-            (host_name.to_string(), None)
+            (host_name, None)
         } else {
             let (pre, host_name) = stripped.split_once("} ").ok_or_else(|| {
                 format!("Unexpected HMW console output found. ansi_stripped_input: '{stripped}', does not contain: '}} '")
@@ -158,10 +158,10 @@ impl HostName {
                         .map_err(|err| format!("Failed to parse: {ip_str}, {err}"))
                 });
 
-            (host_name.to_string(), Some(ip))
+            (host_name, Some(ip))
         };
 
-        Ok(HostNameRequestMeta::new(host_name, socket_addr))
+        Ok(HostNameRequestMeta::new(host_name.to_string(), socket_addr))
     }
 
     async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, HostRequestErr> {
@@ -173,16 +173,19 @@ impl HostName {
             .expect("`Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
             .1
             .trim();
+
         let socket_addr = ip_str.parse::<SocketAddr>()?;
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
             reqwest::Client::new(),
         )
         .await?;
+
         let host_name = server_info
             .info
             .expect("always `Some` when `try_get_info` is `Ok`")
             .host_name;
+
         Ok(HostNameRequestMeta::new(host_name, Some(Ok(socket_addr))))
     }
 }
@@ -487,7 +490,6 @@ pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
     Ok((!result.is_empty()).then_some(result))
 }
 
-#[allow(clippy::identity_op)]
 pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     let wide_path = OsStr::new(path)
         .encode_wide()
@@ -515,7 +517,7 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
         return None;
     }
 
-    const VER_PATH: [wchar_t; 2] = ['\\' as u16, 0];
+    const VER_PATH: [wchar_t; 2] = utf16_array!['\\', 0];
     let mut version_info: *mut c_void = std::ptr::null_mut();
     let mut len = 0;
 
@@ -539,27 +541,7 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     // Safety: `VerQueryValueW` did not error so it is okay to cast do the supplied struct
     let info = unsafe { &*(version_info as *const VS_FIXEDFILEINFO) };
 
-    let major = (info.dwFileVersionMS >> 16) & 0xffff;
-    let minor = (info.dwFileVersionMS >> 0) & 0xffff;
-    let build = (info.dwFileVersionLS >> 16) & 0xffff;
-    let revision = (info.dwFileVersionLS >> 0) & 0xffff;
-
-    let trim_u16 = |num: u16| -> String {
-        if num == 0 {
-            "0".to_string()
-        } else {
-            num.to_string().trim_start_matches('0').to_string()
-        }
-    };
-
-    let version = format!(
-        "{}.{}{}{}",
-        major,
-        trim_u16(minor as u16),
-        trim_u16(build as u16),
-        trim_u16(revision as u16)
-    );
-    version.parse().ok()
+    parse_fixed_file_info(info)
 }
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i32 {
@@ -617,4 +599,28 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     }
 
     1
+}
+
+#[allow(clippy::identity_op)]
+fn parse_fixed_file_info(info: &VS_FIXEDFILEINFO) -> Option<f64> {
+    fn trim_u16(num: u16) -> String {
+        if num == 0 {
+            return num.to_string();
+        }
+        num.to_string().trim_start_matches('0').to_string()
+    }
+
+    let major = (info.dwFileVersionMS >> 16) & 0xffff;
+    let minor = (info.dwFileVersionMS >> 0) & 0xffff;
+    let build = (info.dwFileVersionLS >> 16) & 0xffff;
+    let revision = (info.dwFileVersionLS >> 0) & 0xffff;
+
+    let version = format!(
+        "{}.{}{}{}",
+        major,
+        trim_u16(minor as u16),
+        trim_u16(build as u16),
+        trim_u16(revision as u16)
+    );
+    version.parse().ok()
 }

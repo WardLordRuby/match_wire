@@ -571,7 +571,7 @@ async fn filter_server_list(
         SingularPlural(
             sources
                 .as_ref()
-                .map(|s| s.len())
+                .map(HashSet::len)
                 .unwrap_or(DEFAULT_SOURCES.len()),
             "server",
             "servers"
