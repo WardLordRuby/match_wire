@@ -60,7 +60,7 @@ impl From<std::io::Error> for Message {
 }
 
 impl Message {
-    pub fn log(&self) {
+    pub(crate) fn log(&self) {
         match self {
             Self::Str(_) => (),
             Self::Info(msg) => info!(name: LOG_ONLY, "{msg}"),
