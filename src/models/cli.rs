@@ -76,7 +76,7 @@ pub(crate) struct HistoryArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub(crate) struct Filters {
-    /// Specify the maximum number of servers added to favorites.json
+    /// Specify the maximum number of servers added to favourites.json
     /// {n}  [Note: H2M server-browser gets buggy after 100, this bug is fixed in HMW]
     /// {n}  [H2M Default: 100] [HMW Default: uncapped]
     #[arg(short, long)]
