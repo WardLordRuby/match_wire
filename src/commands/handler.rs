@@ -69,6 +69,16 @@ impl Message {
         }
     }
 
+    #[cfg(not(debug_assertions))]
+    pub(crate) fn record(&self) {
+        match self {
+            str @ Self::Str(_) => println!("{str}"),
+            Self::Info(msg) => info!("{msg}"),
+            Self::Warn(msg) => warn!("{msg}"),
+            Self::Err(msg) => error!("{msg}"),
+        }
+    }
+
     #[inline]
     pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
         Self::Str(value.into())

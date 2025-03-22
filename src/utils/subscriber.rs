@@ -40,10 +40,9 @@ where
         let meta = event.metadata();
         if meta.level() == &Level::ERROR && meta.name() == "PANIC" {
             ctx.field_format().format_fields(writer.by_ref(), event)?;
-            writeln!(writer)
-        } else {
-            self.inner.format_event(ctx, writer.by_ref(), event)
+            return writeln!(writer);
         }
+        self.inner.format_event(ctx, writer.by_ref(), event)
     }
 }
 
@@ -64,11 +63,10 @@ fn print_during_splash<F>(print: F) -> std::fmt::Result
 where
     F: FnOnce(Writer<'_>) -> std::fmt::Result,
 {
-    let mut msg_queue = crate::SPLASH_SCREEN_MSG_BUFFER
+    let mut event_buffer = crate::SPLASH_SCREEN_EVENT_BUFFER
         .lock()
         .expect("no one will panic with lock & lock uncontested");
-    print(Writer::new(&mut *msg_queue))?;
-    Ok(())
+    print(Writer::new(&mut event_buffer.from_subscriber))
 }
 
 #[cfg(not(debug_assertions))]

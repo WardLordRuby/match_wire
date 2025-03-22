@@ -86,8 +86,9 @@ pub(crate) const TERM_CLEAR_LINE: &str = "\r\x1B[J";
 pub(crate) static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
 
 #[cfg(not(debug_assertions))]
-pub(crate) static SPLASH_SCREEN_MSG_BUFFER: std::sync::LazyLock<std::sync::Mutex<String>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
+pub(crate) static SPLASH_SCREEN_EVENT_BUFFER: std::sync::LazyLock<
+    std::sync::Mutex<SplashScreenEvents>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(SplashScreenEvents::default()));
 
 pub(crate) static ENDPOINTS: OnceLock<Endpoints> = OnceLock::new();
 
@@ -96,6 +97,13 @@ macro_rules! new_io_error {
     ($kind:expr, $msg:expr) => {
         Err(std::io::Error::new($kind, $msg))
     };
+}
+
+#[cfg(not(debug_assertions))]
+#[derive(Default)]
+pub(crate) struct SplashScreenEvents {
+    pub(crate) pre_subscriber: Vec<Message>,
+    pub(crate) from_subscriber: String,
 }
 
 fn set_fallback_endpoints() -> AppDetails {
@@ -377,6 +385,7 @@ pub fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
 }
 
 pub fn print_help() {
+    #[cfg(windows)]
     if cursor::position().unwrap() != (0, 0) {
         println!()
     }
@@ -485,29 +494,38 @@ pub(crate) async fn leave_splash_screen(task: tokio::task::JoinHandle<io::Result
     #[cfg(not(debug_assertions))]
     {
         execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
-        SPLASH_SCREEN_VIS.store(false, std::sync::atomic::Ordering::Relaxed);
-        let mut buffer = loop {
-            match SPLASH_SCREEN_MSG_BUFFER.try_lock() {
-                Ok(buffer) => break buffer,
+        SPLASH_SCREEN_VIS.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let events = loop {
+            match SPLASH_SCREEN_EVENT_BUFFER.try_lock() {
+                Ok(mut buffer) => break std::mem::take(&mut *buffer),
                 Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
             }
         };
-        print!("{}", std::mem::take(&mut *buffer))
+
+        events
+            .pre_subscriber
+            .into_iter()
+            .for_each(|message| message.record());
+
+        print!("{}", events.from_subscriber)
     }
 }
 
-/// **Only** use for errors encountered before tracing subscriber has been initialized
+/// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
+/// event as our subscriber format layer takes care of fn call behind the scenes
 #[cfg(debug_assertions)]
 pub fn print_during_splash(message: Message) {
-    debug_assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
     println!("{message}");
 }
 
-/// **Only** use for errors encountered before tracing subscriber has been initialized
+/// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
+/// event as our subscriber format layer takes care of fn call behind the scenes
 #[cfg(not(debug_assertions))]
 pub fn print_during_splash(message: Message) {
-    let mut msg_queue = SPLASH_SCREEN_MSG_BUFFER.lock().expect("lock uncontested");
-    msg_queue.push_str(&format!("{message}\n"));
+    let mut event_buffer = SPLASH_SCREEN_EVENT_BUFFER.lock().expect("lock uncontested");
+    event_buffer.pre_subscriber.push(message);
 }
 
 pub async fn startup_cache_task(
