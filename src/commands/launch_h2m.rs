@@ -3,6 +3,7 @@ use crate::{
         filter::{try_get_info, GetInfoMetaData, Request, Sourced},
         handler::{CommandContext, Message},
     },
+    models::json_data::Endpoints,
     parse_hostname, strip_ansi_private_modes,
     utils::caching::Cache,
 };
@@ -178,6 +179,7 @@ impl HostName {
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
             reqwest::Client::new(),
+            Endpoints::server_info_endpoint(),
         )
         .await?;
 

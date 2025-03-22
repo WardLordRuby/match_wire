@@ -242,7 +242,6 @@ pub struct StartupData {
     pub cache_task: JoinHandle<StartupCacheContents>,
     pub splash_task: JoinHandle<io::Result<()>>,
     pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
-    pub version_task: JoinHandle<reqwest::Result<AppDetails>>,
     pub hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
 }
 
@@ -256,11 +255,11 @@ pub struct StartupCacheContents {
 impl CommandContext {
     pub async fn from(
         mut startup_data: StartupData,
+        app: AppDetails,
         term: Stdout,
     ) -> (ReplHandle, Self, (Receiver<Message>, Receiver<()>)) {
-        let (launch_res, app_ver_res, hmw_hash_res, cache_res) = tokio::join!(
+        let (launch_res, hmw_hash_res, cache_res) = tokio::join!(
             startup_data.launch_task,
-            startup_data.version_task,
             startup_data.hmw_hash_task,
             startup_data.cache_task
         );
@@ -280,22 +279,11 @@ impl CommandContext {
             }
         };
 
-        let app = if let Ok(Ok(app)) = app_ver_res {
-            if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
-                if app.ver_curr != latest {
-                    info!("{msg}")
-                }
+        if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
+            if app.ver_curr != latest {
+                info!("{msg}")
             }
-            app
-        } else {
-            let err = match app_ver_res {
-                Err(join_err) => join_err.to_string(),
-                Ok(Err(reqwest_err)) => reqwest_err.to_string(),
-                Ok(Ok(_)) => unreachable!("by happy path"),
-            };
-            error!("Could not get latest MatchWire version: {err}");
-            AppDetails::default()
-        };
+        }
 
         if let Ok(Ok(Ok(hash_latest))) = hmw_hash_res {
             if let Some(ref hash_curr) = startup_data.game.hash_curr {

@@ -1,6 +1,7 @@
-use crate::commands::launch_h2m::HostName;
+use crate::{commands::launch_h2m::HostName, ENDPOINTS};
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     str::FromStr,
@@ -111,9 +112,72 @@ where
 }
 
 #[derive(Deserialize, Debug)]
+pub(crate) struct StartupInfo {
+    pub(crate) version: Version,
+    pub(crate) endpoints: Endpoints,
+}
+
+#[derive(Deserialize, Debug)]
 pub(crate) struct Version {
     pub(crate) latest: String,
     pub(crate) message: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub(crate) struct Endpoints {
+    iw4_master_server: Cow<'static, str>,
+    hmw_master_server: Cow<'static, str>,
+    hmw_manifest: Cow<'static, str>,
+    hmw_download: Cow<'static, str>,
+    manifest_hash_path: Option<Cow<'static, str>>,
+    server_info_endpoint: Cow<'static, str>,
+}
+
+impl Default for Endpoints {
+    fn default() -> Self {
+        Self {
+            iw4_master_server: Cow::Borrowed("https://master.iw4.zip/instance"),
+            hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
+            hmw_manifest: Cow::Borrowed("https://price.horizonmw.org/manifest.json"),
+            hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
+            manifest_hash_path: None,
+            server_info_endpoint: Cow::Borrowed("/getInfo"),
+        }
+    }
+}
+
+impl Endpoints {
+    #[inline]
+    fn get() -> &'static Self {
+        ENDPOINTS
+            .get()
+            .expect("tried to access endpoints before startup process")
+    }
+
+    #[inline]
+    pub(crate) fn iw4_master_server() -> &'static str {
+        &Self::get().iw4_master_server
+    }
+    #[inline]
+    pub(crate) fn hmw_master_server() -> &'static str {
+        &Self::get().hmw_master_server
+    }
+    #[inline]
+    pub(crate) fn hmw_manifest() -> &'static str {
+        &Self::get().hmw_manifest
+    }
+    #[inline]
+    pub(crate) fn hmw_download() -> &'static str {
+        &Self::get().hmw_download
+    }
+    #[inline]
+    pub(crate) fn manifest_hash_path() -> Option<&'static str> {
+        Self::get().manifest_hash_path.as_deref()
+    }
+    #[inline]
+    pub(crate) fn server_info_endpoint() -> &'static str {
+        &Self::get().server_info_endpoint
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]

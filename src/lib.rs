@@ -23,7 +23,7 @@ use crate::{
     },
     models::{
         cli::Command,
-        json_data::{CacheFile, HmwManifest, Version},
+        json_data::{CacheFile, Endpoints, HmwManifest, StartupInfo},
     },
     utils::caching::{build_cache, Cache, ReadCacheErr},
 };
@@ -36,7 +36,7 @@ use std::{
     sync::{
         atomic::AtomicBool,
         mpsc::{self, TryRecvError},
-        Arc,
+        Arc, OnceLock,
     },
     time::Duration,
 };
@@ -45,6 +45,8 @@ use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
 use repl_oxide::ansi_code::{RED, RESET};
+use serde_json::{from_value, Value};
+use serde_json_path::JsonPath;
 use sha2::{Digest, Sha256};
 use tracing::error;
 
@@ -54,13 +56,12 @@ use crossterm::{execute, terminal};
 pub(crate) const MAIN_PROMPT: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
-pub(crate) const VERSION_URL: &str =
-    "https://gist.githubusercontent.com/WardLordRuby/a7b22837f3e9561f087a4b8a7ac2a905/raw/";
-const HMW_LATEST_URL: &str = "https://price.horizonmw.org/manifest.json";
+const STARTUP_INFO_URL: &str =
+    "https://gist.githubusercontent.com/WardLordRuby/15920ff68ae348933636a5c18bc51709/raw";
+
 const MOD_FILES_MODULE_NAME: &str = "mod";
 const HMW_DOWNLOAD_HINT: &str =
-    "HMW mod files are available to download for free through the Horizon MW launcher\n\
-    https://docs.horizonmw.org/download/";
+    "HMW mod files are available to download for free through the Horizon MW launcher";
 
 pub(crate) const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -88,6 +89,8 @@ pub(crate) static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
 pub(crate) static SPLASH_SCREEN_MSG_BUFFER: std::sync::LazyLock<std::sync::Mutex<String>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
 
+pub(crate) static ENDPOINTS: OnceLock<Endpoints> = OnceLock::new();
+
 #[macro_export]
 macro_rules! new_io_error {
     ($kind:expr, $msg:expr) => {
@@ -95,28 +98,82 @@ macro_rules! new_io_error {
     };
 }
 
-pub async fn get_latest_version() -> reqwest::Result<AppDetails> {
+fn set_fallback_endpoints() -> AppDetails {
+    ENDPOINTS
+        .set(Endpoints::default())
+        .expect("only called if failed to reach match_wire_remote_info.json");
+    AppDetails::default()
+}
+
+pub async fn set_endpoints() -> AppDetails {
     let client = reqwest::Client::new();
-    client
-        .get(VERSION_URL)
-        .timeout(Duration::from_secs(6))
+    let response = match client
+        .get(STARTUP_INFO_URL)
+        .timeout(Duration::from_secs(3))
         .send()
-        .await?
-        .json::<Version>()
         .await
-        .map(AppDetails::from)
+    {
+        Ok(data) => data,
+        Err(err) => {
+            print_during_splash(Message::error(format!(
+                "Could not reach MatchWire startup json: {err}"
+            )));
+            return set_fallback_endpoints();
+        }
+    };
+
+    match response.json::<StartupInfo>().await {
+        Ok(startup) => {
+            ENDPOINTS.set(startup.endpoints).expect("only valid set");
+            AppDetails::from(startup.version)
+        }
+        Err(err) => {
+            print_during_splash(Message::error(format!(
+                "Failed to parse MatchWire startup json: {err}"
+            )));
+            set_fallback_endpoints()
+        }
+    }
+}
+
+fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
+    let json_query = JsonPath::parse(path)
+        .map_err(|err| format!("Failed to parse JSONPath string: {path}, {err}"))?;
+    let value = json_query
+        .query(value)
+        .exactly_one()
+        .map_err(|err| format!("Failed to query hmw_manifest: {err}"))?;
+    match value {
+        Value::String(hash) => Ok(hash.clone()),
+        v => Err(format!(
+            "Incorrect JSONPath: {path}, expected `String` got, {v:?}"
+        )),
+    }
 }
 
 pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static str>> {
     let client = reqwest::Client::new();
-    let mut latest = client
-        .get(HMW_LATEST_URL)
+    let latest = client
+        .get(Endpoints::hmw_manifest())
         .timeout(Duration::from_secs(6))
         .send()
         .await?
-        .json::<HmwManifest>()
+        .json::<Value>()
         .await?;
-    Ok(latest
+
+    if let Some(json_path) = Endpoints::manifest_hash_path() {
+        match try_query_json_path(&latest, json_path) {
+            Ok(hash) => return Ok(Ok(hash)),
+            Err(err) => print_during_splash(Message::error(err)),
+        }
+    }
+
+    let mut hmw_manifest = match from_value::<HmwManifest>(latest) {
+        Ok(manifest) => manifest,
+        Err(_) => return Ok(Err("hmw manifest.json formatting has changed")),
+    };
+
+    Ok(hmw_manifest
         .modules
         .iter_mut()
         .find(|module| module.name == MOD_FILES_MODULE_NAME)
@@ -181,23 +238,27 @@ where
     }
 }
 
-pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> {
+fn hmw_download_hint() -> String {
+    format!("{HMW_DOWNLOAD_HINT}\n{}", Endpoints::hmw_download())
+}
+
+pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
     match does_dir_contain(exe_dir, Operation::Count, &REQUIRED_FILES)
         .expect("Failed to read contents of current dir")
     {
         OperationResult::Count((_, files)) => {
             if !files.contains(REQUIRED_FILES[0]) {
-                return Err(concat!(
+                return Err(Cow::Borrowed(concat!(
                     "Move ",
                     env!("CARGO_PKG_NAME"),
                     ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
-                ));
+                )));
             }
             if !files.contains(REQUIRED_FILES[5]) && !files.contains(REQUIRED_FILES[1]) {
-                return Err(concat!(
-                    "Mw2 Remastered mod files not found, ",
-                    HMW_DOWNLOAD_HINT
-                ));
+                return Err(Cow::Owned(format!(
+                    "Mw2 Remastered mod files not found, {}",
+                    hmw_download_hint()
+                )));
             }
             let found_game = if files.contains(REQUIRED_FILES[6]) {
                 REQUIRED_FILES[6]
@@ -206,7 +267,10 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, &'static str> 
             } else if files.contains(REQUIRED_FILES[4]) {
                 REQUIRED_FILES[4]
             } else {
-                return Err(concat!("Mod exe not found, ", HMW_DOWNLOAD_HINT));
+                return Err(Cow::Owned(format!(
+                    "Mod exe not found, {}",
+                    hmw_download_hint()
+                )));
             };
             Ok(exe_dir.join(found_game))
         }

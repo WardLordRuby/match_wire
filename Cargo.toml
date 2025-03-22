@@ -22,6 +22,7 @@ lto = true
 reqwest = { version = "0.12.8", features = ["json"] }
 serde = { version = "1.0.213", features = ["derive"] }
 serde_json = "1.0.131"
+serde_json_path = "0.7.2"
 clap = { version = "4.5.20", features = ["derive"] }
 tokio = { version = "1.41.0", features = ["macros", "signal"] }
 tokio-stream = "0.1.16"

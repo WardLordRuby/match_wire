@@ -4,7 +4,7 @@ use match_wire::{
         handler::{CommandContext, GameDetails, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
-    get_latest_hmw_hash, get_latest_version, print_during_splash, print_help, splash_screen,
+    get_latest_hmw_hash, print_during_splash, print_help, set_endpoints, splash_screen,
     startup_cache_task,
     utils::{
         caching::{read_cache, write_cache},
@@ -43,8 +43,10 @@ async fn main() {
     )
     .unwrap();
 
+    let appdata = set_endpoints().await;
+
     let (mut line_handle, mut command_context, receivers) = match app_startup() {
-        Ok(startup_data) => CommandContext::from(startup_data, term).await,
+        Ok(startup_data) => CommandContext::from(startup_data, appdata, term).await,
         Err(err) => {
             println!("{RED}{err}{RESET}");
             await_user_for_end();
@@ -141,7 +143,6 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
         GameDetails::default(&exe_dir)
     };
 
-    let version_task = tokio::spawn(get_latest_version());
     let hmw_hash_task = tokio::spawn(get_latest_hmw_hash());
 
     let splash_task = tokio::spawn(splash_screen());
@@ -182,7 +183,6 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
         cache_task: tokio::spawn(startup_cache_task(cache_res)),
         splash_task,
         launch_task,
-        version_task,
         hmw_hash_task,
     })
 }

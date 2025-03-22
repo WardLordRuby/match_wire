@@ -27,7 +27,6 @@ use std::{
     sync::Arc,
 };
 
-use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinSet};
@@ -35,11 +34,6 @@ use tracing::{error, info, instrument, trace, warn};
 
 const MASTER_LOCATION_URL: &str = "https://api.findip.net";
 
-const IW4_MASTER_URL: &str = "https://master.iw4.zip";
-const JSON_SERVER_ENDPOINT: &str = "/instance";
-const SERVER_GET_INFO_ENDPOINT: &str = "/getInfo";
-
-const HMW_MASTER_URL: &str = "https://ms.horizonmw.org/game-servers";
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
 
@@ -66,13 +60,18 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
 
 async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
     trace!("retrieving iw4 master server list");
-    const INSTANCE_URL: &str = concat!(IW4_MASTER_URL, JSON_SERVER_ENDPOINT);
-    reqwest::get(INSTANCE_URL).await?.json().await
+    reqwest::get(Endpoints::iw4_master_server())
+        .await?
+        .json()
+        .await
 }
 
 async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
     trace!("retrieving hmw master server list");
-    reqwest::get(HMW_MASTER_URL).await?.json().await
+    reqwest::get(Endpoints::hmw_master_server())
+        .await?
+        .json()
+        .await
 }
 
 #[instrument(name = "filter", level = "trace", skip_all)]
@@ -180,14 +179,14 @@ pub(crate) struct GetInfoMetaData {
 
 #[allow(dead_code)]
 impl GetInfoMetaData {
-    fn new(meta: Sourced) -> Self {
+    fn new(meta: Sourced, server_info_endpoint: &'static str) -> Self {
         GetInfoMetaData {
             msg: String::new(),
             display_url: false,
             display_source: false,
             display_socket_addr: false,
             retries: 0,
-            url: format!("http://{}{SERVER_GET_INFO_ENDPOINT}", meta.socket_addr()),
+            url: format!("http://{}{server_info_endpoint}", meta.socket_addr(),),
             meta,
         }
     }
@@ -286,9 +285,10 @@ pub(crate) enum Request {
 pub(crate) async fn try_get_info(
     from: Request,
     client: reqwest::Client,
+    server_info_endpoint: &'static str,
 ) -> Result<Server, GetInfoMetaData> {
     let meta_data = match from {
-        Request::New(meta) => GetInfoMetaData::new(meta),
+        Request::New(meta) => GetInfoMetaData::new(meta, server_info_endpoint),
         Request::Retry(mut err) => {
             err.retries += 1;
             err
@@ -463,12 +463,13 @@ pub(crate) async fn queue_info_requests(
     client: &Client,
 ) -> JoinSet<Result<Server, GetInfoMetaData>> {
     let mut dup = HashSet::new();
+    let server_info_endpoint = Endpoints::server_info_endpoint();
 
     JoinSet::from_iter(
         servers
             .into_iter()
             .filter(|server| !remove_duplicates || dup.insert(server.socket_addr()))
-            .map(|server| try_get_info(Request::New(server), client.clone())),
+            .map(|server| try_get_info(Request::New(server), client.clone(), server_info_endpoint)),
     )
 }
 
@@ -705,6 +706,7 @@ async fn filter_server_list(
         let mut used_backup_data = 0_usize;
         let mut sent_retires = false;
         let max_attempts = args.retry_max.unwrap_or(DEFAULT_INFO_RETRIES);
+        let server_info_endpoint = Endpoints::server_info_endpoint();
 
         let mut cache = cache.lock().await;
 
@@ -729,7 +731,8 @@ async fn filter_server_list(
                                     RETRY_TIME_SCALE * (err.retries + 1) as u64,
                                 ))
                                 .await;
-                                try_get_info(Request::Retry(err), client).await
+                                try_get_info(Request::Retry(err), client, server_info_endpoint)
+                                    .await
                             });
                         } else {
                             did_not_respond.add(&err.meta);
