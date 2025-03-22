@@ -20,6 +20,7 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Display,
+    future::Future,
     io::{self, Stdout},
     path::{Path, PathBuf},
     sync::{
@@ -458,18 +459,22 @@ impl CommandContext {
         }
     }
 
-    async fn try_send_cmd_from_hook<S: AsRef<str>>(
+    fn try_send_cmd_from_hook(
         &mut self,
-        command: S,
+        command: String,
         input_hook_uid: HookUID,
-    ) -> Result<Result<(), Cow<'static, str>>, CallbackErr> {
-        let rw_console_lock = self.check_h2m_connection().await.map_err(|err| {
-            CallbackErr::new(input_hook_uid, format!("Could not send command: {err}"))
-        })?;
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), CallbackErr>> + Send + '_>> {
+        Box::pin(async move {
+            let rw_console_lock = self.check_h2m_connection().await.map_err(|err| {
+                CallbackErr::new(input_hook_uid, format!("Could not send command: {err}"))
+            })?;
 
-        let game_console = rw_console_lock.read().await;
+            let game_console = rw_console_lock.read().await;
 
-        Ok(game_console.send_cmd(command))
+            game_console
+                .send_cmd(command)
+                .map_err(|err| CallbackErr::new(input_hook_uid, err))
+        })
     }
 
     pub(crate) async fn launch_handler(&mut self) -> io::Result<CommandHandle> {
@@ -696,17 +701,8 @@ impl CommandContext {
                 }) => {
                     if !handle.input().trim().is_empty() {
                         let cmd = handle.new_line()?;
-
                         let send_user_cmd = EventLoop::<CommandContext, _>::new_async_callback(
-                            move |_handle, context| {
-                                Box::pin(async move {
-                                    context
-                                        .try_send_cmd_from_hook(cmd, uid)
-                                        .await?
-                                        .unwrap_or_else(|err| error!("{err}"));
-                                    Ok(())
-                                })
-                            },
+                            move |_handle, context| context.try_send_cmd_from_hook(cmd, uid),
                         );
 
                         return HookedEvent::new(send_user_cmd, HookControl::Continue);
