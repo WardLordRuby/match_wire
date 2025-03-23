@@ -1,5 +1,5 @@
 [iw4m-server-master]: https://master.iw4.zip/servers#
-[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/download/v0.6.0-pre/match_wire.exe
+[latest-dl]: https://github.com/WardLordRuby/match_wire/releases/latest/download/match_wire.exe
 [nexus-link]: https://www.nexusmods.com/callofdutymodernwarfareremastered/mods/2
 [hmw-discord]: https://discord.com/invite/HorizonMW
 [hmw-launcher-dl]: https://docs.horizonmw.org/download/
@@ -141,9 +141,11 @@ Examples:
   Using reconnect with the connect argument or `-c` for short will connect you back to the specified entry in your history.  
 
 ## Console help
-The console command is an easy way to interact and view Mw2 Remastered's console window. Sending commands to the console works
+The `console` command is an easy way to interact and view Mw2 Remastered's console window. Sending commands to the console works
 just as it normally would, simply type the command and press enter to send. Pressing 'backspace' or 'ctrl + c' when the input
 line is empty will leave the game console and return back to MatchWire.  
+
+To re-print all game client logs from the current session you can add the argument `--all`.  
 
 ## Build from source
 If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 
