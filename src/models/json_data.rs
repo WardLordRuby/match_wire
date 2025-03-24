@@ -129,7 +129,7 @@ pub(crate) struct Endpoints {
     hmw_master_server: Cow<'static, str>,
     hmw_manifest: Cow<'static, str>,
     hmw_download: Cow<'static, str>,
-    manifest_hash_path: Option<Cow<'static, str>>,
+    manifest_hash_path: Option<String>,
     server_info_endpoint: Cow<'static, str>,
 }
 

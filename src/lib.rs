@@ -514,18 +514,18 @@ pub(crate) async fn leave_splash_screen(task: tokio::task::JoinHandle<io::Result
 
 /// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
 /// event as our subscriber format layer takes care of fn call behind the scenes
-#[cfg(debug_assertions)]
 pub fn print_during_splash(message: Message) {
-    assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
-    println!("{message}");
-}
+    #[cfg(debug_assertions)]
+    {
+        assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
+        println!("{message}");
+    }
 
-/// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
-/// event as our subscriber format layer takes care of fn call behind the scenes
-#[cfg(not(debug_assertions))]
-pub fn print_during_splash(message: Message) {
-    let mut event_buffer = SPLASH_SCREEN_EVENT_BUFFER.lock().expect("lock uncontested");
-    event_buffer.pre_subscriber.push(message);
+    #[cfg(not(debug_assertions))]
+    {
+        let mut event_buffer = SPLASH_SCREEN_EVENT_BUFFER.lock().expect("lock uncontested");
+        event_buffer.pre_subscriber.push(message);
+    }
 }
 
 pub async fn startup_cache_task(
