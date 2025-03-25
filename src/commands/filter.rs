@@ -1,5 +1,4 @@
 use crate::{
-    location_api_key::FIND_IP_NET_PRIVATE_KEY,
     make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Region, Source},
@@ -32,7 +31,8 @@ use reqwest::Client;
 use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info, instrument, trace, warn};
 
-const MASTER_LOCATION_URL: &str = "https://api.findip.net";
+const MASTER_LOCATION_URL: &str = "http://ip-api.com/json/";
+const REQUESTED_FIELDS: &str = "?fields=message,continentCode";
 
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
@@ -44,9 +44,9 @@ const RETRY_TIME_SCALE: u64 = 800; // ms
 const LOCAL_HOST: &str = "localhost";
 
 pub(crate) const GAME_ID: &str = "H2M";
-const NA_CONT_CODE: [[u8; 2]; 1] = [[b'N', b'A']];
-const EU_CONT_CODE: [[u8; 2]; 1] = [[b'E', b'U']];
-const APAC_CONT_CODES: [[u8; 2]; 3] = [[b'A', b'F'], [b'A', b'S'], [b'O', b'C']];
+const NA_CONT_CODE: [ContCode; 1] = [[b'N', b'A']];
+const EU_CONT_CODE: [ContCode; 1] = [[b'E', b'U']];
+const APAC_CONT_CODES: [ContCode; 3] = [[b'A', b'F'], [b'A', b'S'], [b'O', b'C']];
 
 fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
@@ -537,7 +537,7 @@ where
 }
 
 impl Region {
-    fn to_chars(self) -> &'static [[u8; 2]] {
+    fn to_bytes(self) -> &'static [ContCode] {
         match self {
             Region::Apac => &APAC_CONT_CODES,
             Region::EU => &EU_CONT_CODE,
@@ -546,11 +546,11 @@ impl Region {
     }
 }
 
-fn to_region_set(regions: &[Region]) -> HashSet<[u8; 2]> {
+fn to_cont_code_set(regions: &[Region]) -> HashSet<ContCode> {
     regions
         .iter()
         .copied()
-        .flat_map(Region::to_chars)
+        .flat_map(Region::to_bytes)
         .copied()
         .collect()
 }
@@ -584,7 +584,7 @@ async fn filter_server_list(
         None => get_sourced_servers(DEFAULT_SOURCES, Some(&cache)).await,
     }?;
 
-    let cache_modified = if let Some(regions) = args.region.as_deref().map(to_region_set) {
+    let cache_modified = if let Some(regions) = args.region.as_deref().map(to_cont_code_set) {
         spinner.update_message(format!(
             "Determining region of {}",
             DisplayServerCount(servers.len(), GREEN)
@@ -612,7 +612,7 @@ async fn filter_server_list(
                 tasks.spawn(async move {
                     try_location_lookup(&socket_addr.ip(), client)
                         .await
-                        .map(|location| (sourced_data, location.code))
+                        .map(|location| (sourced_data, location))
                 });
             } else {
                 check_again.push(sourced_data)
@@ -832,18 +832,18 @@ async fn filter_server_list(
 async fn try_location_lookup(
     ip: &IpAddr,
     client: reqwest::Client,
-) -> Result<Continent, Cow<'static, str>> {
-    let location_api_url = format!("{MASTER_LOCATION_URL}/{}{FIND_IP_NET_PRIVATE_KEY}", ip);
+) -> Result<ContCode, Cow<'static, str>> {
+    let location_api_url = format!("{MASTER_LOCATION_URL}{ip}{REQUESTED_FIELDS}");
 
     let api_response = client
-        .get(location_api_url.as_str())
+        .get(location_api_url)
         .send()
         .await
         .map_err(|err| format!("{}, ip: {ip}", err.without_url()))?;
 
-    match api_response.json::<ServerLocation>().await {
+    match api_response.json::<LocationApiResponse>().await {
         Ok(json) => {
-            if let Some(code) = json.continent {
+            if let Some(code) = json.cont_code {
                 return Ok(code);
             }
             Err(json

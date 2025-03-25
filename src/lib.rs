@@ -1,4 +1,3 @@
-pub mod location_api_key;
 pub mod commands {
     pub mod filter;
     pub mod handler;

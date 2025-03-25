@@ -150,5 +150,4 @@ To re-print all game client logs from the current session you can add the argume
 ## Build from source
 If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 
 1. Download or clone the source code  
-2. Follow the instructions in [location_api_key.rs.template](src/location_api_key.rs.template)
-3. Compile the project with `cargo build --release`
+2. Compile the project with `cargo build --release`

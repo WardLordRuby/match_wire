@@ -68,27 +68,24 @@ where
     string.parse::<T>().map_err(serde::de::Error::custom)
 }
 
+pub(crate) type ContCode = [u8; 2];
+
 #[derive(Deserialize, Debug)]
-pub(crate) struct ServerLocation {
-    pub(crate) continent: Option<Continent>,
-    #[serde(rename = "Message")]
+pub(crate) struct LocationApiResponse {
+    #[serde(rename = "continentCode")]
+    #[serde(deserialize_with = "deserialize_country_code")]
+    pub(crate) cont_code: Option<ContCode>,
     pub(crate) message: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
-pub(crate) struct Continent {
-    #[serde(deserialize_with = "deserialize_country_code")]
-    pub(crate) code: [u8; 2],
-}
-
 trait ContCodeDeserialize {
-    fn to_cont_code<'de, D>(self) -> Result<[u8; 2], D::Error>
+    fn to_cont_code<'de, D>(self) -> Result<ContCode, D::Error>
     where
         D: Deserializer<'de>;
 }
 
 impl ContCodeDeserialize for String {
-    fn to_cont_code<'de, D>(self) -> Result<[u8; 2], D::Error>
+    fn to_cont_code<'de, D>(self) -> Result<ContCode, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -104,11 +101,13 @@ impl ContCodeDeserialize for String {
     }
 }
 
-fn deserialize_country_code<'de, D>(deserializer: D) -> Result<[u8; 2], D::Error>
+fn deserialize_country_code<'de, D>(deserializer: D) -> Result<Option<ContCode>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    String::deserialize(deserializer)?.to_cont_code::<D>()
+    Option::<String>::deserialize(deserializer)?
+        .map(String::to_cont_code::<D>)
+        .transpose()
 }
 
 #[derive(Deserialize, Debug)]
@@ -200,13 +199,13 @@ pub struct ServerCache {
         deserialize_with = "deserialize_country_code_map",
         serialize_with = "serialize_country_code_map"
     )]
-    pub regions: HashMap<IpAddr, [u8; 2]>,
+    pub regions: HashMap<IpAddr, ContCode>,
     pub host_names: HashMap<String, SocketAddr>,
 }
 
 fn deserialize_country_code_map<'de, D>(
     deserializer: D,
-) -> Result<HashMap<IpAddr, [u8; 2]>, D::Error>
+) -> Result<HashMap<IpAddr, ContCode>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -219,7 +218,7 @@ where
 }
 
 fn serialize_country_code_map<S>(
-    map: &HashMap<IpAddr, [u8; 2]>,
+    map: &HashMap<IpAddr, ContCode>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -232,7 +231,7 @@ where
     }
     map_serializer.end()
 }
-pub(crate) struct ContCodeMap<'a>(pub &'a HashMap<IpAddr, [u8; 2]>);
+pub(crate) struct ContCodeMap<'a>(pub &'a HashMap<IpAddr, ContCode>);
 
 impl Serialize for ContCodeMap<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
