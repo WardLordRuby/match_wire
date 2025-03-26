@@ -64,7 +64,9 @@ const CONNECT_BYTES: [(u16, u16); 8] = utf16_array![pairs:
     ('t', 'T'),
     (' ', ' '),
 ];
-const ERROR_BYTES: [u16; 9] = utf16_array!['\x1b', '[', '3', '8', ';', '5', ';', '1', 'm'];
+const ERROR_BYTES_PRE_1_4: [u16; 9] = utf16_array!['\x1b', '[', '3', '8', ';', '5', ';', '1', 'm'];
+const ERROR_BYTES_NEW: [u16; 5] = utf16_array!['\x1b', '[', '3', '1', 'm'];
+const ERROR_BYTES: [&[u16]; 2] = [&ERROR_BYTES_NEW, &ERROR_BYTES_PRE_1_4];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
 const CARRIAGE_RETURN: u16 = '\r' as u16;
@@ -354,7 +356,9 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
                 }
 
                 let mut connect_kind = Connection::Browser;
-                if !wide_encode_buf.starts_with(&ERROR_BYTES)
+                if !ERROR_BYTES
+                    .iter()
+                    .any(|error_ansi_code| wide_encode_buf.starts_with(error_ansi_code))
                     && wide_encode_buf
                         .windows(connecting_bytes.len())
                         .any(|window| {
