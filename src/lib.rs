@@ -44,6 +44,7 @@ use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
 use repl_oxide::ansi_code::{RED, RESET};
+use reqwest::Client;
 use serde_json::{from_value, Value};
 use serde_json_path::JsonPath;
 use sha2::{Digest, Sha256};
@@ -112,8 +113,14 @@ fn set_fallback_endpoints() -> AppDetails {
     AppDetails::default()
 }
 
+pub(crate) fn client_with_timeout(secs: u64) -> Client {
+    Client::builder().timeout(Duration::from_secs(secs)).build().expect(
+        "TLS backend cannot be initialized, or the resolver cannot load the system configuration",
+    )
+}
+
 pub async fn set_endpoints() -> AppDetails {
-    let client = reqwest::Client::new();
+    let client = client_with_timeout(3);
     let response = match client
         .get(STARTUP_INFO_URL)
         .timeout(Duration::from_secs(3))
@@ -159,7 +166,7 @@ fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
 }
 
 pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static str>> {
-    let client = reqwest::Client::new();
+    let client = client_with_timeout(3);
     let latest = client
         .get(Endpoints::hmw_manifest())
         .timeout(Duration::from_secs(6))

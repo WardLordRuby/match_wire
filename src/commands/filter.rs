@@ -1,5 +1,5 @@
 use crate::{
-    make_slice_ascii_lowercase,
+    client_with_timeout, make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Region, Source},
         json_data::*,
@@ -58,17 +58,21 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     write!(into, "[{ips}]")
 }
 
-async fn get_iw4_master() -> reqwest::Result<Vec<HostData>> {
+async fn get_iw4_master(client: Client) -> reqwest::Result<Vec<HostData>> {
     trace!("retrieving iw4 master server list");
-    reqwest::get(Endpoints::iw4_master_server())
+    client
+        .get(Endpoints::iw4_master_server())
+        .send()
         .await?
         .json()
         .await
 }
 
-async fn get_hmw_master() -> reqwest::Result<Vec<String>> {
+async fn get_hmw_master(client: Client) -> reqwest::Result<Vec<String>> {
     trace!("retrieving hmw master server list");
-    reqwest::get(Endpoints::hmw_master_server())
+    client
+        .get(Endpoints::hmw_master_server())
+        .send()
         .await?
         .json()
         .await
@@ -284,7 +288,7 @@ pub(crate) enum Request {
 
 pub(crate) async fn try_get_info(
     from: Request,
-    client: reqwest::Client,
+    client: Client,
     server_info_endpoint: &'static str,
 ) -> Result<Server, GetInfoMetaData> {
     let meta_data = match from {
@@ -415,8 +419,11 @@ impl Source {
     }
 }
 
-async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<Sourced>> {
-    match get_iw4_master().await {
+async fn iw4_servers(
+    cache: Option<Arc<Mutex<Cache>>>,
+    client: Client,
+) -> reqwest::Result<Vec<Sourced>> {
+    match get_iw4_master(client).await {
         Ok(hosts) => Ok(hosts
             .into_iter()
             .filter_map(|mut host| {
@@ -442,8 +449,11 @@ async fn iw4_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<So
     }
 }
 
-async fn hmw_servers(cache: Option<Arc<Mutex<Cache>>>) -> reqwest::Result<Vec<Sourced>> {
-    match get_hmw_master().await {
+async fn hmw_servers(
+    cache: Option<Arc<Mutex<Cache>>>,
+    client: Client,
+) -> reqwest::Result<Vec<Sourced>> {
+    match get_hmw_master(client).await {
         Ok(list) => Ok(list
             .into_iter()
             .filter_map(Sourced::try_from_hmw_master)
@@ -500,16 +510,18 @@ impl Conversion for Vec<Sourced> {
 pub(crate) async fn get_sourced_servers<I>(
     sources: I,
     cache: Option<&Arc<Mutex<Cache>>>,
+    client: &Client,
 ) -> Result<Vec<Sourced>, &'static str>
 where
     I: IntoIterator<Item = Source>,
 {
     let mut tasks = JoinSet::from_iter(sources.into_iter().map(|source| {
         let cache = cache.map(Arc::clone);
+        let client = client.clone();
         async move {
             match source {
-                Source::HmwMaster => hmw_servers(cache).await,
-                Source::Iw4Master => iw4_servers(cache).await,
+                Source::HmwMaster => hmw_servers(cache, client).await,
+                Source::Iw4Master => iw4_servers(cache, client).await,
             }
         }
     }));
@@ -579,9 +591,11 @@ async fn filter_server_list(
         )
     ));
 
+    let client = client_with_timeout(3);
+
     let mut servers = match sources {
-        Some(user_sources) => get_sourced_servers(user_sources, Some(&cache)).await,
-        None => get_sourced_servers(DEFAULT_SOURCES, Some(&cache)).await,
+        Some(user_sources) => get_sourced_servers(user_sources, Some(&cache), &client).await,
+        None => get_sourced_servers(DEFAULT_SOURCES, Some(&cache), &client).await,
     }?;
 
     let cache_modified = if let Some(regions) = args.region.as_deref().map(to_cont_code_set) {
@@ -594,7 +608,6 @@ async fn filter_server_list(
         let mut tasks = JoinSet::new();
         let mut check_again = Vec::new();
         let mut new_lookups = HashSet::new();
-        let client = reqwest::Client::new();
 
         let mut cache = cache.lock().await;
 
@@ -692,11 +705,6 @@ async fn filter_server_list(
         || !args.include_unresponsive
     {
         let mut valid_servers = Vec::with_capacity(servers.len());
-
-        let client = reqwest::Client::builder()
-            .timeout(tokio::time::Duration::from_secs(3))
-            .build()
-            .unwrap();
 
         let mut tasks = queue_info_requests(servers, true, &client).await;
 
@@ -829,10 +837,7 @@ async fn filter_server_list(
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn try_location_lookup(
-    ip: &IpAddr,
-    client: reqwest::Client,
-) -> Result<ContCode, Cow<'static, str>> {
+async fn try_location_lookup(ip: &IpAddr, client: Client) -> Result<ContCode, Cow<'static, str>> {
     let location_api_url = format!("{MASTER_LOCATION_URL}{ip}{REQUESTED_FIELDS}");
 
     let api_response = client

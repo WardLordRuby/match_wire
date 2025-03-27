@@ -1,4 +1,5 @@
 use crate::{
+    client_with_timeout,
     commands::{
         filter::{try_get_info, GetInfoMetaData, Request, Sourced},
         handler::{CommandContext, Message},
@@ -180,7 +181,7 @@ impl HostName {
         let socket_addr = ip_str.parse::<SocketAddr>()?;
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
-            reqwest::Client::new(),
+            client_with_timeout(3),
             Endpoints::server_info_endpoint(),
         )
         .await?;

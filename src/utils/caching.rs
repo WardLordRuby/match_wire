@@ -1,4 +1,5 @@
 use crate::{
+    client_with_timeout,
     commands::{
         filter::{get_sourced_servers, queue_info_requests, Server, Sourced, DEFAULT_SOURCES},
         handler::CommandContext,
@@ -133,7 +134,9 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
         }
     };
 
-    let servers = match get_sourced_servers(DEFAULT_SOURCES, prev).await {
+    let client = client_with_timeout(3);
+
+    let servers = match get_sourced_servers(DEFAULT_SOURCES, prev, &client).await {
         Ok(servers) => servers,
         Err(err) => {
             finish_spinner();
@@ -155,11 +158,6 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
             cache.ip_to_region.insert(server_ip, cached_region);
         }
     }
-
-    let client = reqwest::Client::builder()
-        .timeout(tokio::time::Duration::from_secs(3))
-        .build()
-        .unwrap();
 
     let mut tasks = queue_info_requests(servers, false, &client).await;
 
