@@ -30,7 +30,10 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
     },
-    UI::WindowsAndMessaging::{EnumWindows, GetClassNameA, GetWindowTextW},
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible, ShowWindow, SW_HIDE,
+        WNDENUMPROC,
+    },
 };
 use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
 
@@ -47,10 +50,11 @@ macro_rules! utf16_array {
     };
 }
 
-const GAME_WINDOW_NAMES: [&str; 3] = ["h2m", "hmw", "horizonmw"];
-// console class = "ConsoleWindowClass" || "CASCADIA_HOSTING_WINDOW_CLASS"
-// game class = "H1" || splash screen class = "H2M Splash Screen"
-const GAME_WINDOW_CLASS_NAMES: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
+const WINDOW_NAMES_GAME: [&str; 3] = ["h2m", "hmw", "horizonmw"];
+// WINDOW_CLASS_NAMES_CONSOLE = ["ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"]
+// WINDOW_CLASS_NAME_GAME_CLIENT = "H1" | WINDOW_CLASS_NAME_GAME_SPLASH_SCREEN = "H2M Splash Screen"
+const WINDOW_CLASS_NAMES_GAME: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
+const WINDOW_CLASS_NAME_PSEUDO_CONSOLE: &str = "PseudoConsoleWindow";
 const JOIN_STR: &str = "Joining ";
 const JOIN_BYTES: [u16; 8] = utf16_array!['J', 'o', 'i', 'n', 'i', 'n', 'g', ' '];
 const CONNECTING_BYTES: [u16; 8] = utf16_array!['C', 'o', 'n', 'n', 'e', 'c', 't', 'i'];
@@ -463,9 +467,6 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
         agent_config: AgentConfig::WINPTY_FLAG_PLAIN_OUTPUT,
     };
 
-    // MARK: FIXME
-    // why does the pseudo terminal spawn with no cols or rows
-
     let mut conpty =
         PTY::new_with_backend(&pty_args, PTYBackend::ConPTY).map_err(LaunchError::SpawnErr)?;
 
@@ -476,13 +477,11 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     Ok(conpty)
 }
 
-pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
-    let mut result = "";
-
-    // Safety:
-    // - Safety guarantees in `enum_windows_callback` hold true
-    // - `lParam` is a controlled type by us
-    if unsafe { EnumWindows(Some(enum_windows_callback), &mut result as *mut _ as isize) } == 0 {
+// Caller must guarantee:
+// - If provided the EnumWindowsCallback contains no unchecked safety conditions
+// - The type of `lParam` is correctly referenced within the provided EnumWindowsCallback if provided
+unsafe fn enum_windows<T>(f: WNDENUMPROC, lparam: &mut T) -> Result<(), LaunchError> {
+    if EnumWindows(f, lparam as *mut _ as isize) == 0 {
         // Safety: Enum windows returned error (0), it must have set an Error code
         match unsafe { GetLastError() } {
             0 => (),
@@ -490,10 +489,66 @@ pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
                 return Err(LaunchError::WinApiErr((
                     "Windows api EnumWindows returned error",
                     err,
-                )));
+                )))
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn hide_pseudo_console() -> Result<bool, LaunchError> {
+    let mut result = false;
+
+    // Safety:
+    // - Safety guarantees in `pseudo_window_search` hold true
+    // - `lParam` is correctly referenced within `pseudo_window_search`
+    unsafe { enum_windows(Some(pseudo_window_search), &mut result) }?;
+
+    Ok(result)
+}
+
+unsafe extern "system" fn pseudo_window_search(hwnd: HWND, lparam: isize) -> i32 {
+    // Safety: `hwnd` is a valid pointer given by the `EnumWindows` windows api
+    if unsafe { IsWindowVisible(hwnd) } == 0 {
+        return 1;
+    }
+
+    let mut class_name = [0; 256];
+
+    // Safety:
+    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
+
+    if c_len <= 0 {
+        return 1;
+    }
+
+    let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
+
+    if class_name_str == WINDOW_CLASS_NAME_PSEUDO_CONSOLE {
+        // Safety
+        // - `hwnd` is a valid pointer given by the `EnumWindows` windows api
+        // - `SW_HIDE` is a flag provided by the windows api
+        unsafe { ShowWindow(hwnd, SW_HIDE) };
+
+        // Safety
+        // - we input `lparam` as a `*mut bool` making it safe to cast back to
+        // - memory is aligned since raw pointers will always be the same size as a `isize`
+        unsafe { *(lparam as *mut bool) = true }
+    }
+
+    1
+}
+
+pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
+    let mut result = "";
+
+    // Safety:
+    // - Safety guarantees in `game_window_search` hold true
+    // - `lParam` is correctly referenced within `game_window_search`
+    unsafe { enum_windows(Some(game_window_search), &mut result) }?;
+
     Ok((!result.is_empty()).then_some(result))
 }
 
@@ -551,7 +606,12 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     parse_fixed_file_info(info)
 }
 
-unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i32 {
+unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
+    // Safety: `hwnd` is a valid pointer given by the `EnumWindows` windows api
+    if unsafe { IsWindowVisible(hwnd) } == 0 {
+        return 1;
+    }
+
     let mut title: [wchar_t; 512] = [0; 512];
 
     // Safety:
@@ -566,7 +626,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
     let mut window_title = String::from_utf16_lossy(&title[..t_len as usize]);
     window_title.make_ascii_lowercase();
 
-    let Some(associated_game) = GAME_WINDOW_NAMES
+    let Some(associated_game) = WINDOW_NAMES_GAME
         .into_iter()
         .find(|&game_name| window_title.contains(game_name))
     else {
@@ -586,8 +646,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
 
     let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
 
-    // Check if the window class name indicates it is the game window or the game's splash screen
-    if GAME_WINDOW_CLASS_NAMES
+    if WINDOW_CLASS_NAMES_GAME
         .iter()
         .any(|&h2m_class| class_name_str == h2m_class)
     {

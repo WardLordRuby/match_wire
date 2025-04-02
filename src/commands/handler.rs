@@ -1,7 +1,9 @@
 use crate::{
     commands::{
         filter::build_favorites,
-        launch_h2m::{game_open, initialize_listener, launch_h2m_pseudo, LaunchError},
+        launch_h2m::{
+            game_open, hide_pseudo_console, initialize_listener, launch_h2m_pseudo, LaunchError,
+        },
     },
     exe_details, get_latest_hmw_hash, leave_splash_screen,
     models::{
@@ -522,6 +524,13 @@ impl CommandContext {
                 match handle.read().await.is_alive() {
                     Ok(true) => {
                         if attempt == 3 {
+                            match hide_pseudo_console() {
+                                Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
+                                Ok(false) => {
+                                    info!(name: LOG_ONLY, "Could not find Pseudo console window to hide")
+                                }
+                                Err(win_api_err) => error!(name: LOG_ONLY, "{win_api_err}"),
+                            }
                             break vec![Message::info(format!("Connected to {game_name} console"))];
                         }
                     }
