@@ -31,11 +31,11 @@ use std::{
     },
 };
 
-use clap::Parser;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use repl_oxide::{
     ansi_code::{GREEN, RED, RESET, YELLOW},
-    executor::{format_for_clap, CommandHandle as CmdHandle, Executor},
+    clap::try_parse_from,
+    executor::{CommandHandle as CmdHandle, Executor},
     input_hook::{CallbackErr, HookControl, HookStates, HookUID, HookedEvent, InputHook},
     repl_builder, EventLoop, Repl,
 };
@@ -228,7 +228,7 @@ impl Executor<Stdout> for CommandContext {
         _line_handle: &mut ReplHandle,
         user_tokens: Vec<String>,
     ) -> io::Result<CommandHandle> {
-        let command = match Command::try_parse_from(format_for_clap(&user_tokens)) {
+        let command = match try_parse_from(&user_tokens) {
             Ok(c) => c,
             Err(err) => return err.print().map(|_| CommandHandle::Processed),
         };
