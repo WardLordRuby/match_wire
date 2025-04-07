@@ -1,28 +1,24 @@
 use match_wire::{
     await_user_for_end, check_app_dir_exists,
     commands::{
-        handler::{CommandContext, GameDetails, Message, ReplHandle, StartupData},
+        handler::{CommandContext, Extras, GameDetails, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, print_during_splash, print_help, set_endpoints, splash_screen,
     startup_cache_task,
-    utils::{
-        caching::{read_cache, write_cache},
-        display::DisplayPanic,
-        subscriber::init_subscriber,
-    },
-    LOCAL_DATA, LOG_ONLY, SAVED_HISTORY_CAP,
+    utils::{caching::read_cache, display::DisplayPanic, subscriber::init_subscriber},
+    CRATE_NAME, LOCAL_DATA, LOG_ONLY, SAVED_HISTORY_CAP,
 };
 
 use std::{borrow::Cow, io, path::PathBuf};
 
-use crossterm::{cursor, event::EventStream, execute, terminal};
+use crossterm::{cursor, event::EventStream, execute, terminal::SetTitle};
 use repl_oxide::{
     ansi_code::{RED, RESET},
     executor::Executor,
     general_event_process,
 };
-use tokio::sync::mpsc::Receiver;
+use tokio::time::{interval, Duration};
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument, warn};
 
@@ -36,16 +32,11 @@ async fn main() {
 
     let mut term = std::io::stdout();
 
-    execute!(
-        term,
-        cursor::Hide,
-        terminal::SetTitle(env!("CARGO_PKG_NAME")),
-    )
-    .unwrap();
+    execute!(term, cursor::Hide, SetTitle(CRATE_NAME)).unwrap();
 
     let appdata = set_endpoints().await;
 
-    let (mut line_handle, mut command_context, receivers) = match app_startup() {
+    let (mut line_handle, mut command_context, extras) = match app_startup() {
         Ok(startup_data) => CommandContext::from(startup_data, appdata, term).await,
         Err(err) => {
             println!("{RED}{err}{RESET}");
@@ -56,7 +47,7 @@ async fn main() {
 
     print_help();
 
-    run_eval_print_loop(&mut line_handle, &mut command_context, receivers)
+    run_eval_print_loop(&mut line_handle, &mut command_context, extras)
         .await
         .unwrap_or_else(|err| error!("{err}"));
 
@@ -68,8 +59,9 @@ async fn main() {
 async fn run_eval_print_loop(
     line_handle: &mut ReplHandle,
     command_context: &mut CommandContext,
-    (mut message_rx, mut update_cache_rx): (Receiver<Message>, Receiver<()>),
+    (mut message_rx, hwnd): Extras,
 ) -> io::Result<()> {
+    let mut save_cache_interval = interval(Duration::from_secs(240));
     let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
     let mut reader = EventStream::new();
 
@@ -96,13 +88,20 @@ async fn run_eval_print_loop(
                 line_handle.println(msg)?
             }
 
-            Some(_) = update_cache_rx.recv() => {
-                if let Err(err) = write_cache(command_context, &line_handle.export_history(Some(SAVED_HISTORY_CAP))).await {
+            _ = save_cache_interval.tick() => {
+                if let Err(err) = command_context.save_cache_if_needed(line_handle).await {
                     line_handle.prep_for_background_msg()?;
-                    error!("{err}");
+                    error!("Could not save cache: {err}");
                 } else {
                     line_handle.set_uneventful();
-                };
+                }
+            }
+
+            _ = command_context.game_state_change.notified() => {
+                if let Err(err) = command_context.handle_game_state_change(line_handle, hwnd).await? {
+                    line_handle.prep_for_background_msg()?;
+                    error!("{err}");
+                }
             }
         }
     }

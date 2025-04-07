@@ -2,10 +2,11 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, ConsoleHistory, GameDetails},
-        launch_h2m::{game_open, LaunchError},
+        launch_h2m::{game_open, LaunchError, WinApiErr},
     },
     models::cli::Source,
     utils::caching::ReadCacheErr,
+    CRATE_NAME, CRATE_VER,
 };
 
 use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
@@ -34,7 +35,7 @@ const SOURCE_IW4_CACHED: &str = server_type!(cached, DISP_NAME_IW4);
 pub(crate) struct ConnectionHelp;
 
 fn connection_help() -> Cow<'static, str> {
-    if let Some(game_name) = game_open().unwrap_or_else(LaunchError::resolve_to_closed) {
+    if let Some(game_name) = game_open().unwrap_or_else(WinApiErr::resolve_to_closed) {
         Cow::Owned(format!(
             "Close {game_name} and use command `{YELLOW}launch{RESET}` to establish valid connection"
         ))
@@ -253,12 +254,18 @@ impl Display for UnresponsiveCounter {
     }
 }
 
+impl Display for WinApiErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} code: {}", self.msg, self.code)
+    }
+}
+
 impl Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::GameRunning(found_game) => write!(f, "{found_game} is already running"),
             Self::SpawnErr(err) => write!(f, "{}", err.to_string_lossy()),
-            Self::WinApiErr((msg, code)) => write!(f, "{msg} code: {code}"),
+            Self::WinApiErr(err) => write!(f, "{err}"),
         }
     }
 }
@@ -315,7 +322,7 @@ impl Display for GameDetails {
 impl Display for AppDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let color = if let Some(ref latest) = self.ver_latest {
-            if self.ver_curr == latest {
+            if CRATE_VER == latest {
                 GREEN
             } else {
                 YELLOW
@@ -323,12 +330,7 @@ impl Display for AppDetails {
         } else {
             RESET
         };
-        write!(
-            f,
-            "{}.exe {color}v{}{RESET}",
-            env!("CARGO_PKG_NAME"),
-            self.ver_curr
-        )?;
+        write!(f, "{CRATE_NAME}.exe {color}v{CRATE_VER}{RESET}")?;
         if let Some(ref msg) = self.update_msg {
             if color == YELLOW {
                 write!(f, "\n{msg}")?;

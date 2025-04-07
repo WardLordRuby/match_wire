@@ -11,7 +11,8 @@ use crate::{
         cli::Source,
         json_data::{CacheFile, ContCodeMap},
     },
-    new_io_error, Operation, OperationResult, Spinner, CACHED_DATA, LOG_ONLY, SPLASH_SCREEN_VIS,
+    new_io_error, Operation, OperationResult, Spinner, CACHED_DATA, CRATE_VER, LOG_ONLY,
+    SPLASH_SCREEN_VIS,
 };
 
 use std::{
@@ -266,7 +267,7 @@ pub async fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io
         serde_json::to_writer_pretty(
             file,
             &serde_json::json!({
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": CRATE_VER,
                 "created": cache.created,
                 "connection_history": if cache.connection_history.len() > HISTORY_MAX {
                     &cache.connection_history[cache.connection_history.len() - HISTORY_MAX..]

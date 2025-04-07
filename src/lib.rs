@@ -53,7 +53,10 @@ use tracing::error;
 #[cfg(not(debug_assertions))]
 use crossterm::{execute, terminal};
 
-pub(crate) const MAIN_PROMPT: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
+pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+pub const CRATE_VER: &str = env!("CARGO_PKG_VERSION");
+
+pub(crate) const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
 const STARTUP_INFO_URL: &str =
@@ -264,7 +267,7 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, s
             if !files.contains(REQUIRED_FILES[0]) {
                 return Err(Cow::Borrowed(concat!(
                     "Move ",
-                    env!("CARGO_PKG_NAME"),
+                    CRATE_NAME,
                     ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
                 )));
             }
@@ -344,14 +347,13 @@ pub fn await_user_for_end() {
 /// Validates local/app_dir exists and modifies input if valid
 pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     const PREV_NAME: &str = "h2m_favorites";
-    let app_name = env!("CARGO_PKG_NAME");
     let local_dir = local.clone();
 
-    match does_dir_contain(local, Operation::Count, &[app_name, PREV_NAME]) {
+    match does_dir_contain(local, Operation::Count, &[CRATE_NAME, PREV_NAME]) {
         Ok(OperationResult::Count((_, files))) => {
-            local.push(app_name);
+            local.push(CRATE_NAME);
 
-            if !files.contains(app_name) {
+            if !files.contains(CRATE_NAME) {
                 std::fs::create_dir(&local)?;
             }
 

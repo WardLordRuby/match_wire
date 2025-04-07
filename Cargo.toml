@@ -29,7 +29,7 @@ tokio-stream = "0.1.16"
 tracing = { version = "0.1.40", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
-crossterm = { version = "0.28.1", features = ["event-stream"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 winpty-rs = "0.4.0"
 windows-sys = { version = "0.59.0", features = ["Win32_Storage", "Win32_Storage_FileSystem", "Win32_UI" , "Win32_UI_WindowsAndMessaging"] }
 regex = "1.11.1"

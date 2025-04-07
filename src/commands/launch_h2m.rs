@@ -7,6 +7,7 @@ use crate::{
     models::json_data::Endpoints,
     parse_hostname, strip_ansi_private_modes,
     utils::caching::Cache,
+    CRATE_NAME,
 };
 
 use std::{
@@ -31,7 +32,8 @@ use windows_sys::Win32::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
     },
     UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameA, GetWindowTextW, IsWindowVisible, ShowWindow, SW_HIDE,
+        DrawMenuBar, EnableMenuItem, EnumWindows, GetClassNameA, GetSystemMenu, GetWindowTextW,
+        IsWindowVisible, ShowWindow, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, SC_CLOSE, SW_HIDE,
         WNDENUMPROC,
     },
 };
@@ -301,6 +303,7 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
     let cache_needs_update = context.cache_needs_update();
     let forward_logs_arc = context.forward_logs();
     let msg_sender_arc = context.msg_sender();
+    let game_state_change = context.game_state_change();
     let version = context.game_version().unwrap_or(1.0);
     let game_name = context.game_name();
 
@@ -430,6 +433,7 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
             Message::warn(format!("No longer reading {game_name} console output")),
         )
         .await;
+        game_state_change.notify_one();
     });
     Ok(())
 }
@@ -437,10 +441,27 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
 pub enum LaunchError {
     GameRunning(&'static str),
     SpawnErr(OsString),
-    WinApiErr((&'static str, u32)),
+    WinApiErr(WinApiErr),
 }
 
-impl LaunchError {
+pub struct WinApiErr {
+    pub(crate) msg: &'static str,
+    pub(crate) code: u32,
+}
+
+impl From<WinApiErr> for LaunchError {
+    fn from(err: WinApiErr) -> Self {
+        LaunchError::WinApiErr(err)
+    }
+}
+
+impl WinApiErr {
+    fn new(msg: &'static str, code: u32) -> Self {
+        Self { msg, code }
+    }
+}
+
+impl WinApiErr {
     pub(crate) fn resolve_to_closed(self) -> Option<&'static str> {
         error!("{self}");
         None
@@ -453,8 +474,6 @@ impl LaunchError {
 }
 
 pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
-    // MARK: FIXME
-    // can we figure out a way to never inherit pseudo process name
     if let Some(game_name) = game_open()? {
         return Err(LaunchError::GameRunning(game_name));
     }
@@ -477,26 +496,111 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     Ok(conpty)
 }
 
-// Caller must guarantee:
-// - If provided the EnumWindowsCallback contains no unchecked safety conditions
-// - The type of `lParam` is correctly referenced within the provided EnumWindowsCallback if provided
-unsafe fn enum_windows<T>(f: WNDENUMPROC, lparam: &mut T) -> Result<(), LaunchError> {
+/// Caller must guarantee:
+/// - If provided the EnumWindowsCallback contains no unchecked safety conditions
+/// - The type of `lParam` is correctly referenced within the provided EnumWindowsCallback if provided
+unsafe fn enum_windows<T>(f: WNDENUMPROC, lparam: &mut T) -> Result<(), WinApiErr> {
     if EnumWindows(f, lparam as *mut _ as isize) == 0 {
         // Safety: Enum windows returned error (0), it must have set an Error code
-        match unsafe { GetLastError() } {
-            0 => (),
-            err => {
-                return Err(LaunchError::WinApiErr((
-                    "Windows api EnumWindows returned error",
-                    err,
-                )))
-            }
+        if let Some(err) = get_last_win_err() {
+            return Err(WinApiErr::new(
+                "Windows api EnumWindows returned error",
+                err,
+            ));
         }
     }
     Ok(())
 }
 
-pub(crate) fn hide_pseudo_console() -> Result<bool, LaunchError> {
+/// Caller must guarantee that this is only ever called if the windows api returned an error
+unsafe fn get_last_win_err() -> Option<u32> {
+    match unsafe { GetLastError() } {
+        0 => None,
+        err => Some(err),
+    }
+}
+
+/// Caller must guarantee: `hwnd` is a valid `HWND` pointer
+pub(crate) unsafe fn toggle_close_state(can_close: &mut bool, hwnd: HWND) -> Result<(), WinApiErr> {
+    let state = if *can_close { MF_GRAYED } else { MF_ENABLED };
+
+    // Safety:
+    // Caller provided a valid `hwnd`
+    // - `brevert` set to 0 always returns a valid menu pointer
+    let menu = unsafe { GetSystemMenu(hwnd, 0) };
+
+    assert_ne!(
+        // Safety:
+        // - `menu` is a valid pointer see above
+        // - The rest of the args are all found in the `windows_sys` crate
+        unsafe { EnableMenuItem(menu, SC_CLOSE, MF_BYCOMMAND | state) },
+        -1,
+        "Menu item does not exist"
+    );
+
+    // Safety: Caller provided a valid `hwnd`
+    if unsafe { DrawMenuBar(hwnd) } == 0 {
+        // Safety: `DrawMenuBar` returned an error(0)
+        if let Some(err) = unsafe { get_last_win_err() } {
+            return Err(WinApiErr::new(
+                "Windows api DrawMenuBar returned error",
+                err,
+            ));
+        }
+    }
+
+    *can_close = !*can_close;
+    Ok(())
+}
+
+/// Caller must guarantee: The terminal window title is set to the crate name
+pub(crate) fn get_console_hwnd() -> Result<HWND, WinApiErr> {
+    let mut result = None;
+
+    // Safety:
+    // - Safety guarantees in `pseudo_window_search` hold true
+    // - `lParam` is correctly referenced within `pseudo_window_search`
+    unsafe { enum_windows(Some(self_window_search), &mut result) }?;
+
+    Ok(result.expect("process cant run without console window open"))
+}
+
+unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
+    // Safety: `hwnd` is a valid pointer given by the `EnumWindows` windows api
+    if unsafe { IsWindowVisible(hwnd) } == 0 {
+        return 1;
+    }
+
+    let mut title: [wchar_t; 512] = [0; 512];
+
+    // Safety:
+    // - `title` is the expected `u16` byte buffer
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
+
+    if t_len <= 0 {
+        return 1;
+    }
+
+    let window_title = String::from_utf16_lossy(&title[..t_len as usize]);
+
+    if window_title == CRATE_NAME {
+        // Safety
+        // - we input `lparam` as a `*mut Option<HWND>` making it safe to cast back to
+        // - memory is aligned since raw pointers will always be the same size as a `isize`
+        let result = unsafe { &mut *(lparam as *mut Option<HWND>) };
+
+        if result.is_some() {
+            return 1;
+        }
+
+        *result = Some(hwnd);
+    }
+
+    1
+}
+
+pub(crate) fn hide_pseudo_console() -> Result<bool, WinApiErr> {
     let mut result = false;
 
     // Safety:
@@ -541,15 +645,76 @@ unsafe extern "system" fn pseudo_window_search(hwnd: HWND, lparam: isize) -> i32
     1
 }
 
-pub(crate) fn game_open() -> Result<Option<&'static str>, LaunchError> {
-    let mut result = "";
+pub(crate) fn game_open() -> Result<Option<&'static str>, WinApiErr> {
+    let mut result = None;
 
     // Safety:
     // - Safety guarantees in `game_window_search` hold true
     // - `lParam` is correctly referenced within `game_window_search`
     unsafe { enum_windows(Some(game_window_search), &mut result) }?;
 
-    Ok((!result.is_empty()).then_some(result))
+    Ok(result)
+}
+
+unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
+    // Safety: `hwnd` is a valid pointer given by the `EnumWindows` windows api
+    if unsafe { IsWindowVisible(hwnd) } == 0 {
+        return 1;
+    }
+
+    let mut title: [wchar_t; 512] = [0; 512];
+
+    // Safety:
+    // - `title` is the expected `u16` byte buffer
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
+
+    if t_len <= 0 {
+        return 1;
+    }
+
+    let mut window_title = String::from_utf16_lossy(&title[..t_len as usize]);
+    window_title.make_ascii_lowercase();
+
+    let Some(associated_game) = WINDOW_NAMES_GAME
+        .into_iter()
+        .find(|&game_name| window_title.contains(game_name))
+    else {
+        return 1;
+    };
+
+    let mut class_name = [0; 256];
+
+    // Safety:
+    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
+
+    if c_len <= 0 {
+        return 1;
+    }
+
+    let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
+
+    if WINDOW_CLASS_NAMES_GAME
+        .iter()
+        .any(|&h2m_class| class_name_str == h2m_class)
+    {
+        // Safety:
+        // - We input `lparam` as a `*mut Option<&'static str>` casted to `isize`
+        // - We can assign `associated_game` since we know it is a static value
+        // - memory `lparam` points to lives for longer than `EnumWindows`
+        // - memory is aligned since raw pointers will always be the same size as a `isize`
+        let res = unsafe { &mut *(lparam as *mut Option<&str>) };
+
+        if res.is_some() {
+            return 1;
+        }
+
+        *res = Some(associated_game);
+    }
+
+    1
 }
 
 pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
@@ -604,67 +769,6 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     let info = unsafe { &*(version_info as *const VS_FIXEDFILEINFO) };
 
     parse_fixed_file_info(info)
-}
-
-unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
-    // Safety: `hwnd` is a valid pointer given by the `EnumWindows` windows api
-    if unsafe { IsWindowVisible(hwnd) } == 0 {
-        return 1;
-    }
-
-    let mut title: [wchar_t; 512] = [0; 512];
-
-    // Safety:
-    // - `title` is the expected `u16` byte buffer
-    // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
-
-    if t_len <= 0 {
-        return 1;
-    }
-
-    let mut window_title = String::from_utf16_lossy(&title[..t_len as usize]);
-    window_title.make_ascii_lowercase();
-
-    let Some(associated_game) = WINDOW_NAMES_GAME
-        .into_iter()
-        .find(|&game_name| window_title.contains(game_name))
-    else {
-        return 1;
-    };
-
-    let mut class_name = [0; 256];
-
-    // Safety:
-    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
-    // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
-
-    if c_len <= 0 {
-        return 1;
-    }
-
-    let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
-
-    if WINDOW_CLASS_NAMES_GAME
-        .iter()
-        .any(|&h2m_class| class_name_str == h2m_class)
-    {
-        // Safety:
-        // - We input `lparam` as a `*mut &'static str` casted to `isize`
-        // - We can assign `associated_game` since we know it is a static value
-        // - memory `lparam` points to lives for longer than `EnumWindows`
-        // - memory is aligned since raw pointers will always be the same size as a `isize`
-        let res = unsafe { &mut *(lparam as *mut &str) };
-
-        if !res.is_empty() {
-            return 1;
-        }
-
-        *res = associated_game;
-    }
-
-    1
 }
 
 #[allow(clippy::identity_op)]
