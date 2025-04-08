@@ -7,7 +7,7 @@ use crate::{
     models::json_data::Endpoints,
     parse_hostname, strip_ansi_private_modes,
     utils::caching::Cache,
-    CRATE_NAME,
+    CRATE_NAME, LOG_ONLY,
 };
 
 use std::{
@@ -25,7 +25,7 @@ use core::str;
 use repl_oxide::strip_ansi;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc::Sender, Mutex};
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HWND},
     Storage::FileSystem::{
@@ -53,7 +53,8 @@ macro_rules! utf16_array {
 }
 
 const WINDOW_NAMES_GAME: [&str; 3] = ["h2m", "hmw", "horizonmw"];
-// WINDOW_CLASS_NAMES_CONSOLE = ["ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"]
+const WINDOW_CLASS_NAME_WIN11_TERMINAL: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
+const WINDOW_CLASS_NAME_WIN_CONSOLE_HOST: &str = "ConsoleWindowClass";
 // WINDOW_CLASS_NAME_GAME_CLIENT = "H1" | WINDOW_CLASS_NAME_GAME_SPLASH_SCREEN = "H2M Splash Screen"
 const WINDOW_CLASS_NAMES_GAME: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
 const WINDOW_CLASS_NAME_PSEUDO_CONSOLE: &str = "PseudoConsoleWindow";
@@ -554,7 +555,7 @@ pub(crate) unsafe fn toggle_close_state(can_close: &mut bool, hwnd: HWND) -> Res
 }
 
 /// Caller must guarantee: The terminal window title is set to the crate name
-pub(crate) fn get_console_hwnd() -> Result<HWND, WinApiErr> {
+pub(crate) fn get_console_hwnd() -> Result<Option<HWND>, WinApiErr> {
     let mut result = None;
 
     // Safety:
@@ -562,7 +563,7 @@ pub(crate) fn get_console_hwnd() -> Result<HWND, WinApiErr> {
     // - `lParam` is correctly referenced within `pseudo_window_search`
     unsafe { enum_windows(Some(self_window_search), &mut result) }?;
 
-    Ok(result.expect("process cant run without console window open"))
+    Ok(result)
 }
 
 unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
@@ -594,7 +595,28 @@ unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
             return 1;
         }
 
-        *result = Some(hwnd);
+        let mut class_name = [0; 256];
+
+        // Safety:
+        // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
+        // - `nMaxCount` is a `c_int` that is expected to be `i32`
+        let c_len =
+            unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
+
+        if c_len <= 0 {
+            return 1;
+        }
+
+        match str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default() {
+            class if class == WINDOW_CLASS_NAME_WIN_CONSOLE_HOST => *result = Some(hwnd),
+            class if class == WINDOW_CLASS_NAME_WIN11_TERMINAL => {
+                info!(name: LOG_ONLY,
+                    "Can not disable menu items on the windows 11 terminal during gameplay,\
+                    to enable this feature set windows default terminal to 'windows console host' in developer settings."
+                )
+            }
+            class => error!(name: LOG_ONLY, "Found unexpected windows terminal class: {class}"),
+        }
     }
 
     1

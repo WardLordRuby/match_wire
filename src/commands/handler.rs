@@ -351,7 +351,9 @@ impl CommandContext {
             h2m_console_history: Arc::new(Mutex::new(ConsoleHistory::default())),
         };
 
-        let hwnd = get_console_hwnd().map_err(|err| error!("{err}")).ok();
+        let hwnd = get_console_hwnd()
+            .map_err(|err| error!("{err}"))
+            .unwrap_or_default();
 
         if ctx.pty_handle.is_some() {
             ctx.listener_routine()
