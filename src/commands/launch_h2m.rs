@@ -25,7 +25,7 @@ use core::str;
 use repl_oxide::strip_ansi;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc::Sender, Mutex};
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HWND},
     Storage::FileSystem::{
@@ -365,9 +365,9 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
                 }
 
                 let mut connect_kind = Connection::Browser;
-                if !ERROR_BYTES
+                if ERROR_BYTES
                     .iter()
-                    .any(|error_ansi_code| wide_encode_buf.starts_with(error_ansi_code))
+                    .all(|error_ansi_code| !wide_encode_buf.starts_with(error_ansi_code))
                     && wide_encode_buf
                         .windows(connecting_bytes.len())
                         .any(|window| {
@@ -446,7 +446,7 @@ pub enum LaunchError {
 }
 
 pub struct WinApiErr {
-    pub(crate) msg: &'static str,
+    pub(crate) msg: String,
     pub(crate) code: u32,
 }
 
@@ -457,12 +457,18 @@ impl From<WinApiErr> for LaunchError {
 }
 
 impl WinApiErr {
-    fn new(msg: &'static str, code: u32) -> Self {
-        Self { msg, code }
+    /// Caller must guarantee that this is only ever called if the windows api returned an error
+    unsafe fn get_last_win_err(from_api_call: &'static str) -> Self {
+        let (code, validity) = match unsafe { GetLastError() } {
+            0 => (0, "an unknown error"),
+            err => (err, "error"),
+        };
+        Self {
+            msg: format!("Windows api {from_api_call} returned {validity}"),
+            code,
+        }
     }
-}
 
-impl WinApiErr {
     pub(crate) fn resolve_to_closed(self) -> Option<&'static str> {
         error!("{self}");
         None
@@ -483,7 +489,7 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
         cols: 250,
         rows: 50,
         mouse_mode: MouseMode::WINPTY_MOUSE_MODE_NONE,
-        timeout: 20000,
+        timeout: 25000,
         agent_config: AgentConfig::WINPTY_FLAG_PLAIN_OUTPUT,
     };
 
@@ -497,28 +503,55 @@ pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     Ok(conpty)
 }
 
+/// Caller must guarantee: `hwnd` is a valid pointer
+unsafe fn class_name_a_matches<F>(hwnd: HWND, f: F) -> Result<bool, String>
+where
+    F: FnOnce(&str) -> bool,
+{
+    const BUFF_A_LEN: usize = 256;
+    let mut class_name = [0; BUFF_A_LEN];
+
+    // Safety:
+    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), BUFF_A_LEN as i32) };
+
+    if c_len == 0 {
+        // Safety: `GetClassNameA` always returns an error when it's result is 0
+        return Err(unsafe { WinApiErr::get_last_win_err("GetClassNameA") }.to_string());
+    }
+
+    Ok(f(
+        str::from_utf8(&class_name[..c_len as usize]).map_err(|err| err.to_string())?
+    ))
+}
+
+/// Caller must guarantee: `hwnd` is a valid pointer
+unsafe fn get_window_text_w(hwnd: HWND) -> String {
+    const BUFF_W_LEN: usize = 512;
+    let mut title: [wchar_t; BUFF_W_LEN] = [0; BUFF_W_LEN];
+
+    // Safety:
+    // - `title` is the expected `u16` (wchar_t) byte buffer
+    // - `nMaxCount` is a `c_int` that is expected to be `i32`
+    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), BUFF_W_LEN as i32) };
+
+    if t_len <= 0 {
+        return String::new();
+    }
+
+    String::from_utf16_lossy(&title[..t_len as usize])
+}
+
 /// Caller must guarantee:
 /// - If provided the EnumWindowsCallback contains no unchecked safety conditions
 /// - The type of `lParam` is correctly referenced within the provided EnumWindowsCallback if provided
 unsafe fn enum_windows<T>(f: WNDENUMPROC, lparam: &mut T) -> Result<(), WinApiErr> {
     if EnumWindows(f, lparam as *mut _ as isize) == 0 {
         // Safety: Enum windows returned error (0), it must have set an Error code
-        if let Some(err) = get_last_win_err() {
-            return Err(WinApiErr::new(
-                "Windows api EnumWindows returned error",
-                err,
-            ));
-        }
+        return Err(unsafe { WinApiErr::get_last_win_err("EnumWindows") });
     }
     Ok(())
-}
-
-/// Caller must guarantee that this is only ever called if the windows api returned an error
-unsafe fn get_last_win_err() -> Option<u32> {
-    match unsafe { GetLastError() } {
-        0 => None,
-        err => Some(err),
-    }
 }
 
 /// Caller must guarantee: `hwnd` is a valid `HWND` pointer
@@ -542,12 +575,7 @@ pub(crate) unsafe fn toggle_close_state(can_close: &mut bool, hwnd: HWND) -> Res
     // Safety: Caller provided a valid `hwnd`
     if unsafe { DrawMenuBar(hwnd) } == 0 {
         // Safety: `DrawMenuBar` returned an error(0)
-        if let Some(err) = unsafe { get_last_win_err() } {
-            return Err(WinApiErr::new(
-                "Windows api DrawMenuBar returned error",
-                err,
-            ));
-        }
+        return Err(unsafe { WinApiErr::get_last_win_err("DrawMenuBar") });
     }
 
     *can_close = !*can_close;
@@ -572,18 +600,8 @@ unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
         return 1;
     }
 
-    let mut title: [wchar_t; 512] = [0; 512];
-
-    // Safety:
-    // - `title` is the expected `u16` byte buffer
-    // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
-
-    if t_len <= 0 {
-        return 1;
-    }
-
-    let window_title = String::from_utf16_lossy(&title[..t_len as usize]);
+    // Safety: `hwnd` is a valid pointer
+    let window_title = get_window_text_w(hwnd);
 
     if window_title == CRATE_NAME {
         // Safety
@@ -595,28 +613,30 @@ unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
             return 1;
         }
 
-        let mut class_name = [0; 256];
-
-        // Safety:
-        // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
-        // - `nMaxCount` is a `c_int` that is expected to be `i32`
-        let c_len =
-            unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
-
-        if c_len <= 0 {
-            return 1;
+        // Safety: `hwnd` is a valid pointer
+        if unsafe {
+            class_name_a_matches(hwnd, |class| {
+                match class {
+                    WINDOW_CLASS_NAME_WIN_CONSOLE_HOST => return true,
+                    WINDOW_CLASS_NAME_WIN11_TERMINAL => {
+                        info!(name: LOG_ONLY,
+                            "Can not disable menu items on the windows 11 terminal during gameplay,\
+                            to enable this feature set windows default terminal to 'windows console\
+                            host' in developer settings."
+                        )
+                    }
+                    class => {
+                        warn!(name: LOG_ONLY, "Found unexpected windows terminal class: {class}")
+                    }
+                }
+                false
+            })
         }
-
-        match str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default() {
-            class if class == WINDOW_CLASS_NAME_WIN_CONSOLE_HOST => *result = Some(hwnd),
-            class if class == WINDOW_CLASS_NAME_WIN11_TERMINAL => {
-                info!(name: LOG_ONLY,
-                    "Can not disable menu items on the windows 11 terminal during gameplay,\
-                    to enable this feature set windows default terminal to 'windows console host' in developer settings."
-                )
-            }
-            class => error!(name: LOG_ONLY, "Found unexpected windows terminal class: {class}"),
-        }
+        .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+        .unwrap_or_default()
+        {
+            *result = Some(hwnd)
+        };
     }
 
     1
@@ -639,20 +659,15 @@ unsafe extern "system" fn pseudo_window_search(hwnd: HWND, lparam: isize) -> i32
         return 1;
     }
 
-    let mut class_name = [0; 256];
-
-    // Safety:
-    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
-    // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
-
-    if c_len <= 0 {
-        return 1;
+    // Safety: `hwnd` is a valid pointer
+    if unsafe {
+        class_name_a_matches(hwnd, |class| {
+            class == WINDOW_CLASS_NAME_PSEUDO_CONSOLE && get_window_text_w(hwnd).is_empty()
+        })
     }
-
-    let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
-
-    if class_name_str == WINDOW_CLASS_NAME_PSEUDO_CONSOLE {
+    .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+    .unwrap_or_default()
+    {
         // Safety
         // - `hwnd` is a valid pointer given by the `EnumWindows` windows api
         // - `SW_HIDE` is a flag provided by the windows api
@@ -684,18 +699,7 @@ unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
         return 1;
     }
 
-    let mut title: [wchar_t; 512] = [0; 512];
-
-    // Safety:
-    // - `title` is the expected `u16` byte buffer
-    // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let t_len = unsafe { GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32) };
-
-    if t_len <= 0 {
-        return 1;
-    }
-
-    let mut window_title = String::from_utf16_lossy(&title[..t_len as usize]);
+    let mut window_title = get_window_text_w(hwnd);
     window_title.make_ascii_lowercase();
 
     let Some(associated_game) = WINDOW_NAMES_GAME
@@ -705,22 +709,16 @@ unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
         return 1;
     };
 
-    let mut class_name = [0; 256];
-
-    // Safety:
-    // - `lpClassName`: Unicode is not defined so C type `LPSTR` is used, Windows type def for `CHAR` rust equivalent `u8`
-    // - `nMaxCount` is a `c_int` that is expected to be `i32`
-    let c_len = unsafe { GetClassNameA(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
-
-    if c_len <= 0 {
-        return 1;
+    // Safety: `hwnd` is a valid pointer
+    if unsafe {
+        class_name_a_matches(hwnd, |class| {
+            WINDOW_CLASS_NAMES_GAME
+                .iter()
+                .any(|&h2m_class| class == h2m_class)
+        })
     }
-
-    let class_name_str = str::from_utf8(&class_name[..c_len as usize]).unwrap_or_default();
-
-    if WINDOW_CLASS_NAMES_GAME
-        .iter()
-        .any(|&h2m_class| class_name_str == h2m_class)
+    .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+    .unwrap_or_default()
     {
         // Safety:
         // - We input `lparam` as a `*mut Option<&'static str>` casted to `isize`
