@@ -71,15 +71,28 @@ pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
 
 pub const SAVED_HISTORY_CAP: usize = 20;
 
-pub(crate) const REQUIRED_FILES: [&str; 7] = [
-    "h1_mp64_ship.exe",
-    "h2m-mod",
-    "players2",
-    "h2m-mod.exe",
-    "h2m-revived.exe",
-    "hmw-mod",
-    "hmw-mod.exe",
-];
+pub(crate) mod files {
+    pub(crate) const GAME_ENTRIES: [&str; 7] = [
+        "h1_mp64_ship.exe",
+        "h2m-mod",
+        "players2",
+        "h2m-mod.exe",
+        "h2m-revived.exe",
+        "hmw-mod",
+        "hmw-mod.exe",
+    ];
+
+    pub(crate) const FNAME_MWR: &str = GAME_ENTRIES[0];
+
+    pub(crate) const FNAME_HMW: &str = GAME_ENTRIES[6];
+    pub(crate) const DIR_NAME_HMW: &str = GAME_ENTRIES[5];
+
+    pub(crate) const FNAME_H2M_1: &str = GAME_ENTRIES[3];
+    pub(crate) const FNAME_H2M_2: &str = GAME_ENTRIES[4];
+    pub(crate) const DIR_NAME_H2M: &str = GAME_ENTRIES[1];
+}
+
+use files::*;
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
@@ -194,7 +207,7 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static st
         .modules
         .iter_mut()
         .find(|module| module.name == MOD_FILES_MODULE_NAME)
-        .and_then(|module| module.files_with_hashes.remove(REQUIRED_FILES[6]))
+        .and_then(|module| module.files_with_hashes.remove(FNAME_HMW))
         .ok_or("hmw manifest.json formatting has changed"))
 }
 
@@ -260,29 +273,29 @@ fn hmw_download_hint() -> String {
 }
 
 pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
-    match does_dir_contain(exe_dir, Operation::Count, &REQUIRED_FILES)
+    match does_dir_contain(exe_dir, Operation::Count, &GAME_ENTRIES)
         .expect("Failed to read contents of current dir")
     {
         OperationResult::Count((_, files)) => {
-            if !files.contains(REQUIRED_FILES[0]) {
+            if !files.contains(FNAME_MWR) {
                 return Err(Cow::Borrowed(concat!(
                     "Move ",
                     CRATE_NAME,
                     ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
                 )));
             }
-            if !files.contains(REQUIRED_FILES[5]) && !files.contains(REQUIRED_FILES[1]) {
+            if !files.contains(DIR_NAME_HMW) && !files.contains(DIR_NAME_H2M) {
                 return Err(Cow::Owned(format!(
                     "Mw2 Remastered mod files not found, {}",
                     hmw_download_hint()
                 )));
             }
-            let found_game = if files.contains(REQUIRED_FILES[6]) {
-                REQUIRED_FILES[6]
-            } else if files.contains(REQUIRED_FILES[3]) {
-                REQUIRED_FILES[3]
-            } else if files.contains(REQUIRED_FILES[4]) {
-                REQUIRED_FILES[4]
+            let found_game = if files.contains(FNAME_HMW) {
+                FNAME_HMW
+            } else if files.contains(FNAME_H2M_1) {
+                FNAME_H2M_1
+            } else if files.contains(FNAME_H2M_2) {
+                FNAME_H2M_2
             } else {
                 return Err(Cow::Owned(format!(
                     "Mod exe not found, {}",

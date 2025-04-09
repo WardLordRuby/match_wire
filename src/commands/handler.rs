@@ -6,7 +6,9 @@ use crate::{
             launch_h2m_pseudo, toggle_close_state, LaunchError, WinApiErr,
         },
     },
-    exe_details, get_latest_hmw_hash, leave_splash_screen,
+    exe_details,
+    files::*,
+    get_latest_hmw_hash, leave_splash_screen,
     models::{
         cli::{CacheCmd, Command, Filters},
         json_data::Version,
@@ -16,7 +18,7 @@ use crate::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_H2M, DISP_NAME_HMW},
     },
-    Spinner, CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, REQUIRED_FILES, SAVED_HISTORY_CAP,
+    Spinner, CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, SAVED_HISTORY_CAP,
 };
 
 use std::{
@@ -136,17 +138,15 @@ impl GameDetails {
             .to_string_lossy();
 
         match file_name.as_ref() {
-            n if n == REQUIRED_FILES[6] || n == REQUIRED_FILES[5] => Cow::Borrowed(DISP_NAME_HMW),
-            n if n == REQUIRED_FILES[3] || n == REQUIRED_FILES[1] || n == REQUIRED_FILES[4] => {
-                Cow::Borrowed(DISP_NAME_H2M)
-            }
+            FNAME_HMW => Cow::Borrowed(DISP_NAME_HMW),
+            FNAME_H2M_1 | FNAME_H2M_2 => Cow::Borrowed(DISP_NAME_H2M),
             _ => Cow::Owned(file_name.into_owned()),
         }
     }
 
     pub fn default(exe_dir: &Path) -> Self {
         GameDetails {
-            path: exe_dir.join(REQUIRED_FILES[6]),
+            path: exe_dir.join(FNAME_HMW),
             game_name: Cow::Borrowed(DISP_NAME_HMW),
             version: None,
             hash_curr: None,
