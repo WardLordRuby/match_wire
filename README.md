@@ -54,9 +54,9 @@ work fine on older versions of windows, and _should_ work on linux when you comp
 
 ## Usage
 Launch match_wire.exe once it is inside your game directory and it will automatically start Mw2 Remastered for you. The terminal
-window will provide you a place to enter commands. MatchWire includes a command auto-complete feature, just use the tab key to
-walk through available commands and command options. Pressing 'ctrl + c' will clear the current line or if line current line is
-empty it will close MatchWire. Note that closing MatchWire will also close Mw2 Remastered.  
+window will provide you a place to enter commands. MatchWire includes a command auto-complete feature, just use the <kbd>Tab</kbd>
+key to walk through available commands and command options. Pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> will clear the current line or
+if line current line is empty it will close MatchWire. Note that closing MatchWire will also close Mw2 Remastered.  
 
 ### Commands
 | Commands                     | Alias     | Description                                                                     |
@@ -142,8 +142,8 @@ Examples:
 
 ## Console help
 The `console` command is an easy way to interact and view Mw2 Remastered's console window. Sending commands to the console works
-just as it normally would, simply type the command and press enter to send. Pressing 'backspace' or 'ctrl + c' when the input
-line is empty will leave the game console and return back to MatchWire.  
+just as it normally would, simply type the command and press enter to send. Pressing <kbd>Backspace</kbd> or <kbd>Ctrl</kbd> +
+<kbd>C</kbd> when the input line is empty will leave the game console and return back to MatchWire.  
 
 To re-print all game client logs from the current session you can add the argument `--all`.  
 
