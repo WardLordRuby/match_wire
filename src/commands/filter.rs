@@ -115,20 +115,30 @@ pub(crate) async fn build_favorites(
         )
     }
 
-    let (mut servers, update_cache) = filter_server_list(args, cache, limit, &spinner)
+    let mut filter = filter_server_list(args, cache, limit, &spinner)
         .await
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
-    println!(
-        "{TERM_CLEAR_LINE}{} match the parameters in the current query",
-        DisplayServerCount(servers.len(), GREEN)
-    );
-
-    if servers.len() > limit {
-        servers.sort_unstable_by_key(|server| server.info.as_ref().map_or(0, |info| info.clients));
+    if filter.duplicates != 0 {
+        println!(
+            "{TERM_CLEAR_LINE}{YELLOW}{}{RESET} duplicate {} not included",
+            filter.duplicates,
+            SingularPlural(filter.duplicates, "server was", "servers were")
+        );
     }
 
-    for server in servers.iter().rev() {
+    println!(
+        "{TERM_CLEAR_LINE}{} match the parameters in the current query",
+        DisplayServerCount(filter.servers.len(), GREEN)
+    );
+
+    if filter.servers.len() > limit {
+        filter
+            .servers
+            .sort_unstable_by_key(|server| server.info.as_ref().map_or(0, |info| info.clients));
+    }
+
+    for server in filter.servers.iter().rev() {
         ips.push_str(&format!("\"{}\",", server.source.socket_addr()));
         ip_collected += 1;
         if ip_collected == limit {
@@ -144,7 +154,8 @@ pub(crate) async fn build_favorites(
         "{GREEN}{FAVORITES} updated with {}{RESET}",
         DisplayCountOf(ip_collected, "entry", "entries")
     );
-    Ok(update_cache)
+
+    Ok(filter.modified_cache)
 }
 
 pub(crate) struct Server {
@@ -484,11 +495,11 @@ pub(crate) async fn queue_info_requests(
 }
 
 trait Conversion {
-    fn to_server(self, limit: usize) -> Vec<Server>;
+    fn to_server(self, limit: usize) -> (usize, Vec<Server>);
 }
 
 impl Conversion for Vec<Sourced> {
-    fn to_server(self, limit: usize) -> Vec<Server> {
+    fn to_server(self, limit: usize) -> (usize, Vec<Server>) {
         let no_info = |source: Sourced| -> Server { Server { source, info: None } };
         let with_info = |source: Sourced| -> Server {
             if let Sourced::Iw4(meta) = source {
@@ -503,7 +514,14 @@ impl Conversion for Vec<Sourced> {
         } else {
             with_info
         };
-        self.into_iter().map(operation).collect()
+        let start = self.len();
+        let mut ip_set = HashSet::with_capacity(self.len());
+        let out = self
+            .into_iter()
+            .map(operation)
+            .filter(|server| ip_set.insert(server.source.socket_addr()))
+            .collect::<Vec<_>>();
+        ((start - out.len()), out)
     }
 }
 
@@ -567,13 +585,19 @@ fn to_cont_code_set(regions: &[Region]) -> HashSet<ContCode> {
         .collect()
 }
 
+struct FilterData {
+    servers: Vec<Server>,
+    duplicates: usize,
+    modified_cache: bool,
+}
+
 #[instrument(level = "trace", skip_all)]
 async fn filter_server_list(
     mut args: Filters,
     cache: Arc<Mutex<Cache>>,
     limit: usize,
     spinner: &Spinner,
-) -> Result<(Vec<Server>, bool), &'static str> {
+) -> Result<FilterData, &'static str> {
     let sources = args
         .source
         .as_deref()
@@ -598,7 +622,7 @@ async fn filter_server_list(
         None => get_sourced_servers(DEFAULT_SOURCES, Some(&cache), &client).await,
     }?;
 
-    let cache_modified = if let Some(regions) = args.region.as_deref().map(to_cont_code_set) {
+    let modified_cache = if let Some(regions) = args.region.as_deref().map(to_cont_code_set) {
         spinner.update_message(format!(
             "Determining region of {}",
             DisplayServerCount(servers.len(), GREEN)
@@ -696,7 +720,7 @@ async fn filter_server_list(
         false
     };
 
-    let servers = if args.excludes.is_some()
+    let (duplicates, servers) = if args.excludes.is_some()
         || args.includes.is_some()
         || args.player_min.is_some()
         || args.team_size_max.is_some()
@@ -706,7 +730,11 @@ async fn filter_server_list(
     {
         let mut valid_servers = Vec::with_capacity(servers.len());
 
-        let mut tasks = queue_info_requests(servers, true, &client).await;
+        let (duplicates, mut tasks) = {
+            let start = servers.len();
+            let tasks = queue_info_requests(servers, true, &client).await;
+            ((start - tasks.len()), tasks)
+        };
 
         let use_backup_server_info =
             !args.with_bots && !args.without_bots && args.include_unresponsive;
@@ -728,6 +756,7 @@ async fn filter_server_list(
             while let Some(res) = tasks.join_next().await {
                 match res {
                     Ok(Ok(server)) => {
+                        // Untracked cache modification
                         cache.update_cache_with(&server);
                         valid_servers.push(server)
                     }
@@ -828,12 +857,16 @@ async fn filter_server_list(
                 }
             }
         }
-        valid_servers
+        (duplicates, valid_servers)
     } else {
         servers.to_server(limit)
     };
 
-    Ok((servers, cache_modified))
+    Ok(FilterData {
+        servers,
+        duplicates,
+        modified_cache,
+    })
 }
 
 #[instrument(level = "trace", skip_all)]

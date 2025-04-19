@@ -451,7 +451,7 @@ impl Spinner {
     pub(crate) fn update_message(&self, message: String) {
         self.sender
             .send(message)
-            .unwrap_or_else(|err| println!("{}...", err.0))
+            .unwrap_or_else(|err| println!("{TERM_CLEAR_LINE}{}...", err.0))
     }
 
     pub(crate) fn finish(self) {

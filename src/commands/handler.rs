@@ -567,19 +567,18 @@ impl CommandContext {
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
                 match handle.read().await.is_alive() {
-                    Ok(true) => {
-                        if attempt == 3 {
-                            match hide_pseudo_console() {
-                                Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
-                                Ok(false) => {
-                                    info!(name: LOG_ONLY, "Could not find Pseudo console window to hide")
-                                }
-                                Err(win_api_err) => error!(name: LOG_ONLY, "{win_api_err}"),
+                    Ok(true) if attempt == 3 => {
+                        match hide_pseudo_console() {
+                            Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
+                            Ok(false) => {
+                                info!(name: LOG_ONLY, "Could not find Pseudo console window to hide")
                             }
-                            game_state_change.notify_one();
-                            break vec![Message::info(format!("Connected to {game_name} console"))];
+                            Err(win_api_err) => error!(name: LOG_ONLY, "{win_api_err}"),
                         }
+                        game_state_change.notify_one();
+                        break vec![Message::info(format!("Connected to {game_name} console"))];
                     }
+                    Ok(true) => attempt += 1,
                     Ok(false) => {
                         break vec![
                             Message::error(format!(
@@ -590,7 +589,6 @@ impl CommandContext {
                     }
                     Err(err) => break vec![Message::error(err.to_string_lossy().to_string())],
                 }
-                attempt += 1;
             };
 
             for msg in messages {
