@@ -20,7 +20,7 @@ use std::{
     collections::HashSet,
     fmt::Display,
     fs::File,
-    io::{self, ErrorKind, Write},
+    io::{self, Write},
     net::{AddrParseError, IpAddr, SocketAddr, ToSocketAddrs},
     path::Path,
     sync::Arc,
@@ -88,16 +88,14 @@ pub(crate) async fn build_favorites(
     let mut ip_collected = 0;
     let mut ips = String::new();
 
-    let favorites_path = curr_dir.join(format!("{FAVORITES_LOC}/{FAVORITES}"));
-    let mut favorites_json = match File::create(&favorites_path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == ErrorKind::NotFound => {
-            std::fs::create_dir(curr_dir.join(FAVORITES_LOC))?;
-            info!("\"players2\" folder is missing, a new one was created");
-            File::create(favorites_path)?
-        }
-        Err(err) => return Err(err),
-    };
+    let mut favorites_path = curr_dir.join(FAVORITES_LOC);
+    if !favorites_path.exists() {
+        std::fs::create_dir(&favorites_path)?;
+        info!("\"players2\" folder is missing, a new one was created");
+    }
+
+    favorites_path.push(FAVORITES);
+    let mut favorites_json = File::create(&favorites_path)?;
 
     let spinner = Spinner::new(String::new());
 
@@ -115,7 +113,7 @@ pub(crate) async fn build_favorites(
         )
     }
 
-    let mut filter = filter_server_list(args, cache, limit, &spinner)
+    let mut filter = filter_server_list(args, cache, &spinner)
         .await
         .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
@@ -495,33 +493,26 @@ pub(crate) async fn queue_info_requests(
 }
 
 trait Conversion {
-    fn to_server(self, limit: usize) -> (usize, Vec<Server>);
+    fn to_server(self) -> (usize, Vec<Server>);
 }
 
 impl Conversion for Vec<Sourced> {
-    fn to_server(self, limit: usize) -> (usize, Vec<Server>) {
-        let no_info = |source: Sourced| -> Server { Server { source, info: None } };
-        let with_info = |source: Sourced| -> Server {
-            if let Sourced::Iw4(meta) = source {
-                Server::from(meta)
-            } else {
-                Server { source, info: None }
-            }
-        };
-
-        let operation = if self.len() <= limit {
-            no_info
-        } else {
-            with_info
-        };
-        let start = self.len();
+    fn to_server(self) -> (usize, Vec<Server>) {
+        let start_len = self.len();
         let mut ip_set = HashSet::with_capacity(self.len());
         let out = self
             .into_iter()
-            .map(operation)
-            .filter(|server| ip_set.insert(server.source.socket_addr()))
+            .filter(|source| ip_set.insert(source.socket_addr()))
+            .map(|source| {
+                if let Sourced::Iw4(meta) = source {
+                    Server::from(meta)
+                } else {
+                    Server { source, info: None }
+                }
+            })
             .collect::<Vec<_>>();
-        ((start - out.len()), out)
+
+        (start_len - out.len(), out)
     }
 }
 
@@ -595,7 +586,6 @@ struct FilterData {
 async fn filter_server_list(
     mut args: Filters,
     cache: Arc<Mutex<Cache>>,
-    limit: usize,
     spinner: &Spinner,
 ) -> Result<FilterData, &'static str> {
     let sources = args
@@ -859,7 +849,7 @@ async fn filter_server_list(
         }
         (duplicates, valid_servers)
     } else {
-        servers.to_server(limit)
+        servers.to_server()
     };
 
     Ok(FilterData {
