@@ -135,7 +135,7 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
         }
     };
 
-    let client = client_with_timeout(3);
+    let client = client_with_timeout(5);
 
     let servers = match get_sourced_servers(DEFAULT_SOURCES, prev, &client).await {
         Ok(servers) => servers,

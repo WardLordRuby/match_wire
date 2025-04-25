@@ -605,7 +605,7 @@ async fn filter_server_list(
         )
     ));
 
-    let client = client_with_timeout(3);
+    let client = client_with_timeout(5);
 
     let mut servers = match sources {
         Some(user_sources) => get_sourced_servers(user_sources, Some(&cache), &client).await,

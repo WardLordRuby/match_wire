@@ -136,13 +136,8 @@ pub(crate) fn client_with_timeout(secs: u64) -> Client {
 }
 
 pub async fn set_endpoints() -> AppDetails {
-    let client = client_with_timeout(3);
-    let response = match client
-        .get(STARTUP_INFO_URL)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-    {
+    let client = client_with_timeout(5);
+    let response = match client.get(STARTUP_INFO_URL).send().await {
         Ok(data) => data,
         Err(err) => {
             print_during_splash(Message::error(format!(
@@ -182,10 +177,9 @@ fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
 }
 
 pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static str>> {
-    let client = client_with_timeout(3);
+    let client = client_with_timeout(6);
     let latest = client
         .get(Endpoints::hmw_manifest())
-        .timeout(Duration::from_secs(6))
         .send()
         .await?
         .json::<Value>()

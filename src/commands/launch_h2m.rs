@@ -188,7 +188,7 @@ impl HostName {
         let socket_addr = ip_str.parse::<SocketAddr>()?;
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
-            client_with_timeout(3),
+            client_with_timeout(5),
             Endpoints::server_info_endpoint(),
         )
         .await?;
