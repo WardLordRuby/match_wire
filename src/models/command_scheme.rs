@@ -1,17 +1,11 @@
 use super::cli::{REGION_LEN, SOURCE_LEN};
+use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
 
 use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKind};
 
-pub const COMPLETION: CommandScheme = init_command_scheme();
-
 // MARK: IMPROVE
 // HARD: this ideally would be done by a proc-macro
-const fn init_command_scheme() -> CommandScheme {
-    CommandScheme::new(
-        RecData::command_set(Some(&COMMANDS_ALIAS), Some(&COMMAND_RECS), false),
-        &COMMAND_INNER,
-    )
-}
+pub const COMPLETION: CommandScheme = init_command_scheme();
 
 const COMMAND_RECS: [&str; 12] = [
     "filter",
@@ -28,6 +22,15 @@ const COMMAND_RECS: [&str; 12] = [
     "localenv",
 ];
 const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 9), (5, 10), (6, 11)];
+
+const fn init_command_scheme() -> CommandScheme {
+    CommandScheme::new(
+        RecData::new(RecKind::Command)
+            .with_recommendations(&COMMAND_RECS)
+            .with_alias(&COMMANDS_ALIAS),
+        COMMAND_INNER,
+    )
+}
 
 const FILTER_RECS: [&str; 11] = [
     "limit",
@@ -52,6 +55,57 @@ const FILTER_SHORT: [(usize, &str); 7] = [
     (6, "e"),
 ];
 
+const RECONNECT_RECS: [&str; 2] = ["history", "connect"];
+const RECONNECT_SHORT: [(usize, &str); 2] = [(0, "H"), (1, "c")];
+
+const CACHE_RECS: [&str; 3] = ["reset", "update", "clear"];
+const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
+
+const CONSOLE_RECS: [&str; 1] = ["all"];
+
+const COMMAND_INNER: &[InnerScheme; 9] = &[
+    // filter
+    InnerScheme::new(
+        RecData::new(RecKind::argument_with_no_required_inputs())
+            .with_parent(Parent::Root)
+            .with_recommendations(&FILTER_RECS)
+            .with_short(&FILTER_SHORT),
+        Some(FILTER_INNER),
+    ),
+    // reconnect
+    InnerScheme::new(
+        RecData::new(RecKind::argument_with_no_required_inputs())
+            .with_parent(Parent::Root)
+            .with_recommendations(&RECONNECT_RECS)
+            .with_short(&RECONNECT_SHORT),
+        Some(RECONNECT_INNER),
+    ),
+    // launch
+    InnerScheme::end(Parent::Root),
+    // cache
+    InnerScheme::new(
+        RecData::new(RecKind::value_with_num_args(1))
+            .with_parent(Parent::Root)
+            .with_recommendations(&CACHE_RECS)
+            .with_alias(&CACHE_ALIAS),
+        None,
+    ),
+    // console
+    InnerScheme::new(
+        RecData::new(RecKind::argument_with_no_required_inputs())
+            .with_parent(Parent::Root)
+            .with_recommendations(&CONSOLE_RECS),
+        Some(CONSOLE_INNER),
+    ), // game-dir
+    InnerScheme::end(Parent::Root),
+    // local-env
+    InnerScheme::end(Parent::Root),
+    // quit
+    InnerScheme::end(Parent::Root),
+    // version
+    InnerScheme::end(Parent::Root),
+];
+
 const FILTER_REGIONS: [&str; 8] = [
     "na",
     "eu",
@@ -63,159 +117,83 @@ const FILTER_REGIONS: [&str; 8] = [
     "asiapacific",
 ];
 const FILTER_REGIONS_ALIAS: [(usize, usize); 5] = [(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)];
-
 const FILTER_SOURCE_RECS: [&str; 4] = ["iw4-master", "hmw-master", "iw4", "hmw"];
 const FILTER_SOURCE_ALIAS: [(usize, usize); 2] = [(0, 2), (1, 3)];
 
-const RECONNECT_RECS: [&str; 2] = ["history", "connect"];
-const RECONNECT_SHORT: [(usize, &str); 2] = [(0, "H"), (1, "c")];
+fn search_term_parser(value: &str) -> bool {
+    !value.starts_with('-')
+}
 
-const CACHE_RECS: [&str; 3] = ["reset", "update", "clear"];
-const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
+fn is_unsigned(value: &str) -> bool {
+    value.parse::<usize>().is_ok()
+}
 
-const CONSOLE_RECS: [&str; 1] = ["all"];
+fn u8_bounds(value: &str, valid: impl Fn(u8) -> bool) -> bool {
+    value.parse::<u8>().is_ok_and(valid)
+}
 
-const COMMAND_INNER: [InnerScheme; 9] = [
-    // filter
-    InnerScheme::new(
-        RecData::new(
-            Parent::Root,
-            None,
-            Some(&FILTER_SHORT),
-            Some(&FILTER_RECS),
-            RecKind::argument_with_no_required_inputs(),
-            false,
-        ),
-        Some(&FILTER_INNER),
-    ),
-    // reconnect
-    InnerScheme::new(
-        RecData::new(
-            Parent::Root,
-            None,
-            Some(&RECONNECT_SHORT),
-            Some(&RECONNECT_RECS),
-            RecKind::argument_with_no_required_inputs(),
-            false,
-        ),
-        Some(&RECONNECT_INNER),
-    ),
-    // launch
-    InnerScheme::end(Parent::Root),
-    // cache
-    InnerScheme::new(
-        RecData::new(
-            Parent::Root,
-            Some(&CACHE_ALIAS),
-            None,
-            Some(&CACHE_RECS),
-            RecKind::value_with_num_args(1),
-            false,
-        ),
-        None,
-    ),
-    // console
-    InnerScheme::new(
-        RecData::new(
-            Parent::Root,
-            None,
-            None,
-            Some(&CONSOLE_RECS),
-            RecKind::argument_with_no_required_inputs(),
-            false,
-        ),
-        Some(&CONSOLE_INNER),
-    ), // game-dir
-    InnerScheme::end(Parent::Root),
-    // local-env
-    InnerScheme::end(Parent::Root),
-    // quit
-    InnerScheme::end(Parent::Root),
-    // version
-    InnerScheme::end(Parent::Root),
-];
-
-const FILTER_INNER: [InnerScheme; 11] = [
+const FILTER_INNER: &[InnerScheme; 11] = &[
     // limit
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[0]),
-        RecKind::user_defined_with_num_args(1),
-        false,
-    ),
+    InnerScheme::user_defined(1)
+        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parsing_rule(is_unsigned),
     // player-min
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[0]),
-        RecKind::user_defined_with_num_args(1),
-        false,
-    ),
+    InnerScheme::user_defined(1)
+        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parsing_rule(|value| u8_bounds(value, |v| v <= H2M_MAX_CLIENT_NUM as u8)),
     // team-size-max
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[0]),
-        RecKind::user_defined_with_num_args(1),
-        false,
-    ),
+    InnerScheme::user_defined(1)
+        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parsing_rule(|value| {
+            u8_bounds(value, |v| (1..=H2M_MAX_TEAM_SIZE as u8).contains(&v))
+        }),
     // region
     InnerScheme::new(
-        RecData::new(
-            Parent::Entry(COMMAND_RECS[0]),
-            Some(&FILTER_REGIONS_ALIAS),
-            None,
-            Some(&FILTER_REGIONS),
-            RecKind::value_with_num_args(REGION_LEN),
-            false,
-        ),
+        RecData::new(RecKind::value_with_num_args(REGION_LEN))
+            .with_parent(Parent::Entry(COMMAND_RECS[0]))
+            .with_recommendations(&FILTER_REGIONS)
+            .with_alias(&FILTER_REGIONS_ALIAS),
         None,
     ),
     // source
     InnerScheme::new(
-        RecData::new(
-            Parent::Entry(COMMAND_RECS[0]),
-            Some(&FILTER_SOURCE_ALIAS),
-            None,
-            Some(&FILTER_SOURCE_RECS),
-            RecKind::value_with_num_args(SOURCE_LEN),
-            false,
-        ),
+        RecData::new(RecKind::value_with_num_args(SOURCE_LEN))
+            .with_parent(Parent::Entry(COMMAND_RECS[0]))
+            .with_recommendations(&FILTER_SOURCE_RECS)
+            .with_alias(&FILTER_SOURCE_ALIAS),
         None,
     ),
     // includes
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[0]),
-        RecKind::user_defined_with_num_args(usize::MAX),
-        false,
-    ),
+    InnerScheme::user_defined(usize::MAX)
+        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parsing_rule(search_term_parser),
     // excludes
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[0]),
-        RecKind::user_defined_with_num_args(usize::MAX),
-        false,
-    ),
+    InnerScheme::user_defined(usize::MAX)
+        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parsing_rule(search_term_parser),
     // with-bots
-    InnerScheme::flag(Parent::Entry(COMMAND_RECS[0]), false),
+    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
     // without-bots
-    InnerScheme::flag(Parent::Entry(COMMAND_RECS[0]), false),
+    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
     // include-unresponsive
-    InnerScheme::flag(Parent::Entry(COMMAND_RECS[0]), false),
+    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
     // retry-max
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[0]),
-        RecKind::user_defined_with_num_args(1),
-        false,
-    ),
+    InnerScheme::user_defined(1)
+        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parsing_rule(is_unsigned),
 ];
 
-const RECONNECT_INNER: [InnerScheme; 2] = [
+const RECONNECT_INNER: &[InnerScheme; 2] = &[
     // history
     InnerScheme::end(Parent::Entry(COMMAND_RECS[1])),
     // connect
-    InnerScheme::empty_with(
-        Parent::Entry(COMMAND_RECS[1]),
-        RecKind::user_defined_with_num_args(1),
-        true,
-    ),
+    InnerScheme::user_defined(1)
+        .with_parent(Parent::Entry(COMMAND_RECS[1]))
+        .with_parsing_rule(|value| u8_bounds(value, |v| (1..=HISTORY_MAX as u8).contains(&v)))
+        .set_end(),
 ];
 
-const CONSOLE_INNER: [InnerScheme; 1] = [
+const CONSOLE_INNER: &[InnerScheme; 1] = &[
     // all
     InnerScheme::end(Parent::Entry(COMMAND_RECS[4])),
 ];
