@@ -52,6 +52,7 @@ use tokio::{
         Mutex, Notify, RwLock, RwLockReadGuard,
     },
     task::JoinHandle,
+    time::Duration,
 };
 use tracing::{error, info, warn};
 use windows_sys::Win32::Foundation::HWND;
@@ -390,19 +391,18 @@ impl CommandContext {
     pub(crate) async fn check_h2m_connection(
         &mut self,
     ) -> Result<Arc<RwLock<PTY>>, Cow<'static, str>> {
-        let Some(ref lock) = self.pty_handle else {
-            return Err(Cow::Borrowed("No Pseudoconsole set"));
+        let Some(lock) = &self.pty_handle else {
+            return Err(Cow::Borrowed("No connection to H2M is active"));
         };
         let handle = lock.read().await;
-        match handle.is_alive() {
-            Ok(true) => Ok(Arc::clone(lock)),
-            Ok(false) => Err(Cow::Borrowed("No connection to H2M is active")),
-            Err(err) => {
-                drop(handle);
-                self.pty_handle = None;
-                Err(Cow::Owned(err.to_string_lossy().to_string()))
-            }
-        }
+        let err = match handle.is_alive() {
+            Ok(true) => return Ok(Arc::clone(lock)),
+            Ok(false) => Cow::Borrowed("No connection to H2M is active"),
+            Err(err) => Cow::Owned(err.to_string_lossy().to_string()),
+        };
+        drop(handle);
+        self.pty_handle = None;
+        Err(err)
     }
     #[inline]
     pub(crate) fn local_dir(&self) -> Option<&Path> {
@@ -461,7 +461,7 @@ impl CommandContext {
         match game_console.send_cmd("quit") {
             Ok(()) => {
                 info!(name: LOG_ONLY, "{}'s console accepted quit command", self.game_name());
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
             Err(err) => error!(name: LOG_ONLY, "{err}"),
         }
@@ -562,7 +562,7 @@ impl CommandContext {
         let game_name = self.game_name();
         let game_state_change = self.game_state_change();
         tokio::spawn(async move {
-            const SLEEP: tokio::time::Duration = tokio::time::Duration::from_millis(4500);
+            const SLEEP: Duration = Duration::from_millis(4500);
             let mut attempt = 1;
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
@@ -684,7 +684,7 @@ impl CommandContext {
                 );
 
                 console.reset_start_i();
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 print!("{}", DisplayLogs(&console));
             } else {
                 println!(
@@ -780,7 +780,7 @@ impl CommandContext {
             let spinner = Spinner::new(format!("Waiting for {} to close", self.game_name()));
 
             while self.check_h2m_connection().await.is_ok() {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                tokio::task::yield_now().await;
             }
 
             spinner.finish();
