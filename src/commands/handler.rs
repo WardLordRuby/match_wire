@@ -13,7 +13,7 @@ use crate::{
         cli::{CacheCmd, Command, Filters},
         json_data::Version,
     },
-    print_during_splash,
+    open_dir, print_during_splash,
     utils::{
         caching::{build_cache, write_cache, Cache},
         display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_H2M, DISP_NAME_HMW},
@@ -245,8 +245,8 @@ impl Executor<Stdout> for CommandContext {
             Command::Launch => self.launch_handler().await,
             Command::Cache { option } => self.modify_cache(option).await,
             Command::Console { all } => self.open_game_console(all).await,
-            Command::GameDir => open_dir(self.game.path.parent()),
-            Command::LocalEnv => open_dir(self.local_dir.as_deref()),
+            Command::GameDir => self.try_open_game_dir(),
+            Command::LocalEnv => self.try_open_local_dir(),
             Command::Version => self.print_version().await,
             Command::Quit => self.quit().await,
         }
@@ -435,6 +435,23 @@ impl CommandContext {
     #[inline]
     fn init_pty(&mut self, pty: PTY) {
         self.pty_handle = Some(Arc::new(RwLock::new(pty)))
+    }
+
+    fn try_open_game_dir(&self) -> io::Result<CommandHandle> {
+        self.game.path.parent().map(open_dir).unwrap_or_else(|| {
+            error!(
+                "Game path: {}, has no valid parent",
+                self.game.path.display()
+            );
+        });
+        Ok(CommandHandle::Processed)
+    }
+
+    fn try_open_local_dir(&self) -> io::Result<CommandHandle> {
+        self.local_dir.as_deref().map(open_dir).unwrap_or_else(|| {
+            error!("Failed to find local environment directory on startup");
+        });
+        Ok(CommandHandle::Processed)
     }
 
     pub async fn graceful_shutdown(&mut self, cmd_history: &[String]) {
@@ -850,15 +867,4 @@ impl CommandSender for RwLockReadGuard<'_, PTY> {
             Err(err) => Err(Cow::Owned(err.to_string_lossy().to_string())),
         }
     }
-}
-
-fn open_dir(path: Option<&Path>) -> io::Result<CommandHandle> {
-    if let Some(dir) = path {
-        if let Err(err) = std::process::Command::new("explorer").arg(dir).spawn() {
-            error!("{err}")
-        };
-    } else {
-        error!("Could not find local dir");
-    }
-    Ok(CommandHandle::Processed)
 }

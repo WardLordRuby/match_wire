@@ -205,6 +205,12 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static st
         .ok_or("hmw manifest.json formatting has changed"))
 }
 
+pub(crate) fn open_dir(path: &Path) {
+    if let Err(err) = std::process::Command::new("explorer").arg(path).spawn() {
+        error!("{err}")
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) enum Operation {
     All,
@@ -482,9 +488,9 @@ pub async fn splash_screen() -> io::Result<()> {
         let (width, height) = terminal::size()?;
 
         let start_y = height.saturating_sub(SPLASH_TEXT.len() as u16) / 2;
+        let start_x = width.saturating_sub(SPLASH_TEXT[0].len() as u16) / 2;
 
         for (i, &line) in SPLASH_TEXT.iter().enumerate() {
-            let start_x = width.saturating_sub(line.chars().count() as u16) / 2;
             execute!(stdout, BeginSynchronizedUpdate)?;
 
             queue!(
