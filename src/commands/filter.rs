@@ -58,26 +58,6 @@ fn serialize_json(into: &mut std::fs::File, from: String) -> io::Result<()> {
     write!(into, "[{ips}]")
 }
 
-async fn get_iw4_master(client: Client) -> reqwest::Result<Vec<HostData>> {
-    trace!("retrieving iw4 master server list");
-    client
-        .get(Endpoints::iw4_master_server())
-        .send()
-        .await?
-        .json()
-        .await
-}
-
-async fn get_hmw_master(client: Client) -> reqwest::Result<Vec<String>> {
-    trace!("retrieving hmw master server list");
-    client
-        .get(Endpoints::hmw_master_server())
-        .send()
-        .await?
-        .json()
-        .await
-}
-
 #[instrument(name = "filter", level = "trace", skip_all)]
 pub(crate) async fn build_favorites(
     curr_dir: &Path,
@@ -347,36 +327,6 @@ pub(crate) enum Sourced {
 }
 
 impl Sourced {
-    fn try_from_hmw_master(ip_port: String) -> Option<Self> {
-        let (ip, port) = match ip_port
-            .rsplit_once(':')
-            .map(|(ip, port)| (ip.parse().map_err(|err| (err, ip)), port.parse::<u16>()))
-        {
-            Some((Ok(ip), Ok(port))) => (ip, port),
-            Some((Ok(_), Err(err))) => {
-                error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: failed to parse port in: {ip_port}, {err}");
-                return None;
-            }
-            Some((Err((err, ip_str)), Ok(port))) => {
-                let Some(ip) = try_resolve_from_str(ip_str) else {
-                    error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: failed to parse ip address in: {ip_port}, {err}");
-                    return None;
-                };
-                trace!("Found socket address of: {ip}, from: {ip_str}");
-                (ip, port)
-            }
-            Some((Err(_), Err(_))) => {
-                error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: invalid string: {ip_port}");
-                return None;
-            }
-            None => {
-                error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: address was not formatted with a port: {ip_port}");
-                return None;
-            }
-        };
-        Some(Sourced::Hmw(SocketAddr::new(ip, port)))
-    }
-
     pub(crate) fn socket_addr(&self) -> SocketAddr {
         match self {
             Sourced::Hmw(addr) | Sourced::HmwCached(addr) | Sourced::Iw4Cached(addr) => *addr,
@@ -393,10 +343,101 @@ impl Source {
         }
     }
 
+    async fn iw4_servers(client: Client) -> reqwest::Result<Vec<Sourced>> {
+        trace!("retrieving iw4 master server list");
+        client
+            .get(Endpoints::iw4_master_server())
+            .send()
+            .await?
+            .json::<Vec<HostData>>()
+            .await
+            .map(|hosts| {
+                hosts
+                    .into_iter()
+                    .filter_map(|mut host| {
+                        host.servers.retain(|server| server.game == GAME_ID);
+                        (!host.servers.is_empty()).then_some(host)
+                    })
+                    .flat_map(|host| {
+                        host.servers
+                            .into_iter()
+                            .filter_map(|server| {
+                                HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
+                                    .map(Sourced::Iw4)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            })
+    }
+
+    async fn hmw_servers(client: Client) -> reqwest::Result<Vec<Sourced>> {
+        fn try_from_hmw_master(ip_port: String) -> Option<Sourced> {
+            let (ip, port) = match ip_port
+                .rsplit_once(':')
+                .map(|(ip, port)| (ip.parse().map_err(|err| (err, ip)), port.parse::<u16>()))
+            {
+                Some((Ok(ip), Ok(port))) => (ip, port),
+                Some((Ok(_), Err(err))) => {
+                    error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: failed to parse port in: {ip_port}, {err}");
+                    return None;
+                }
+                Some((Err((err, ip_str)), Ok(port))) => {
+                    let Some(ip) = try_resolve_from_str(ip_str) else {
+                        error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: failed to parse ip address in: {ip_port}, {err}");
+                        return None;
+                    };
+                    trace!("Found socket address of: {ip}, from: {ip_str}");
+                    (ip, port)
+                }
+                Some((Err(_), Err(_))) => {
+                    error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: invalid string: {ip_port}");
+                    return None;
+                }
+                None => {
+                    error!(name: LOG_ONLY, "Unexpected {SOURCE_HMW} formatting: address was not formatted with a port: {ip_port}");
+                    return None;
+                }
+            };
+            Some(Sourced::Hmw(SocketAddr::new(ip, port)))
+        }
+
+        trace!("retrieving hmw master server list");
+        client
+            .get(Endpoints::hmw_master_server())
+            .send()
+            .await?
+            .json::<Vec<String>>()
+            .await
+            .map(|list| list.into_iter().filter_map(try_from_hmw_master).collect())
+    }
+
+    async fn try_get_sourced_servers(
+        self,
+        cache: Option<Arc<Mutex<Cache>>>,
+        client: Client,
+    ) -> reqwest::Result<Vec<Sourced>> {
+        let sourced_res = match self {
+            Source::HmwMaster => Self::hmw_servers(client).await,
+            Source::Iw4Master => Self::iw4_servers(client).await,
+        };
+
+        let Err(err) = sourced_res else {
+            return sourced_res;
+        };
+
+        if let Some(backup) = self.try_get_cached_servers(cache).await {
+            error!("Could not fetch {self} servers");
+            error!(name: LOG_ONLY, "{err}");
+            warn!("{}", DisplayCachedServerUse(self, backup.len()));
+            return Ok(backup);
+        }
+        Err(err)
+    }
+
     async fn try_get_cached_servers(
         self,
         cache: Option<Arc<Mutex<Cache>>>,
-        err: &reqwest::Error,
     ) -> Option<Vec<Sourced>> {
         let cache = cache?;
         let cached = {
@@ -420,59 +461,7 @@ impl Source {
         if cached.is_empty() {
             return None;
         }
-
-        error!("Could not fetch {self} servers");
-        error!(name: LOG_ONLY, "{err}");
-        warn!("{}", DisplayCachedServerUse(self, cached.len()));
         Some(cached)
-    }
-}
-
-async fn iw4_servers(
-    cache: Option<Arc<Mutex<Cache>>>,
-    client: Client,
-) -> reqwest::Result<Vec<Sourced>> {
-    match get_iw4_master(client).await {
-        Ok(hosts) => Ok(hosts
-            .into_iter()
-            .filter_map(|mut host| {
-                host.servers.retain(|server| server.game == GAME_ID);
-                (!host.servers.is_empty()).then_some(host)
-            })
-            .flat_map(|host| {
-                host.servers
-                    .into_iter()
-                    .filter_map(|server| {
-                        HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
-                            .map(Sourced::Iw4)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()),
-        Err(err) => {
-            if let Some(backup) = Source::Iw4Master.try_get_cached_servers(cache, &err).await {
-                return Ok(backup);
-            }
-            Err(err)
-        }
-    }
-}
-
-async fn hmw_servers(
-    cache: Option<Arc<Mutex<Cache>>>,
-    client: Client,
-) -> reqwest::Result<Vec<Sourced>> {
-    match get_hmw_master(client).await {
-        Ok(list) => Ok(list
-            .into_iter()
-            .filter_map(Sourced::try_from_hmw_master)
-            .collect()),
-        Err(err) => {
-            if let Some(backup) = Source::HmwMaster.try_get_cached_servers(cache, &err).await {
-                return Ok(backup);
-            }
-            Err(err)
-        }
     }
 }
 
@@ -492,28 +481,22 @@ pub(crate) async fn queue_info_requests(
     )
 }
 
-trait Conversion {
-    fn to_server(self) -> (usize, Vec<Server>);
-}
+fn servers_from(sourced: Vec<Sourced>) -> (usize, Vec<Server>) {
+    let start_len = sourced.len();
+    let mut ip_set = HashSet::with_capacity(sourced.len());
+    let out = sourced
+        .into_iter()
+        .filter(|source| ip_set.insert(source.socket_addr()))
+        .map(|source| {
+            if let Sourced::Iw4(meta) = source {
+                Server::from(meta)
+            } else {
+                Server { source, info: None }
+            }
+        })
+        .collect::<Vec<_>>();
 
-impl Conversion for Vec<Sourced> {
-    fn to_server(self) -> (usize, Vec<Server>) {
-        let start_len = self.len();
-        let mut ip_set = HashSet::with_capacity(self.len());
-        let out = self
-            .into_iter()
-            .filter(|source| ip_set.insert(source.socket_addr()))
-            .map(|source| {
-                if let Sourced::Iw4(meta) = source {
-                    Server::from(meta)
-                } else {
-                    Server { source, info: None }
-                }
-            })
-            .collect::<Vec<_>>();
-
-        (start_len - out.len(), out)
-    }
+    (start_len - out.len(), out)
 }
 
 pub(crate) async fn get_sourced_servers<I>(
@@ -524,16 +507,11 @@ pub(crate) async fn get_sourced_servers<I>(
 where
     I: IntoIterator<Item = Source>,
 {
-    let mut tasks = JoinSet::from_iter(sources.into_iter().map(|source| {
-        let cache = cache.map(Arc::clone);
-        let client = client.clone();
-        async move {
-            match source {
-                Source::HmwMaster => hmw_servers(cache, client).await,
-                Source::Iw4Master => iw4_servers(cache, client).await,
-            }
-        }
-    }));
+    let mut tasks = JoinSet::from_iter(
+        sources
+            .into_iter()
+            .map(|source| source.try_get_sourced_servers(cache.map(Arc::clone), client.clone())),
+    );
 
     let mut servers = Vec::new();
 
@@ -607,7 +585,7 @@ async fn filter_server_list(
 
     let client = client_with_timeout(5);
 
-    let mut servers = match sources {
+    let mut sourced_servers = match sources {
         Some(user_sources) => get_sourced_servers(user_sources, Some(&cache), &client).await,
         None => get_sourced_servers(DEFAULT_SOURCES, Some(&cache), &client).await,
     }?;
@@ -615,7 +593,7 @@ async fn filter_server_list(
     let modified_cache = if let Some(regions) = args.region.as_deref().map(to_cont_code_set) {
         spinner.update_message(format!(
             "Determining region of {}",
-            DisplayServerCount(servers.len(), GREEN)
+            DisplayServerCount(sourced_servers.len(), GREEN)
         ));
 
         let mut valid_regions = Vec::new();
@@ -625,7 +603,7 @@ async fn filter_server_list(
 
         let mut cache = cache.lock().await;
 
-        for sourced_data in servers {
+        for sourced_data in sourced_servers {
             let socket_addr = sourced_data.socket_addr();
             if let Some(cached_region) = cache.ip_to_region.get(&socket_addr.ip()) {
                 if regions.contains(cached_region) {
@@ -704,7 +682,7 @@ async fn filter_server_list(
             ),
         );
 
-        servers = valid_regions;
+        sourced_servers = valid_regions;
         !new_lookups.is_empty()
     } else {
         false
@@ -718,11 +696,11 @@ async fn filter_server_list(
         || args.without_bots
         || !args.include_unresponsive
     {
-        let mut valid_servers = Vec::with_capacity(servers.len());
+        let mut valid_servers = Vec::with_capacity(sourced_servers.len());
 
         let (duplicates, mut tasks) = {
-            let start = servers.len();
-            let tasks = queue_info_requests(servers, true, &client).await;
+            let start = sourced_servers.len();
+            let tasks = queue_info_requests(sourced_servers, true, &client).await;
             ((start - tasks.len()), tasks)
         };
 
@@ -849,7 +827,7 @@ async fn filter_server_list(
         }
         (duplicates, valid_servers)
     } else {
-        servers.to_server()
+        servers_from(sourced_servers)
     };
 
     Ok(FilterData {
