@@ -323,15 +323,15 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         'task: loop {
             tokio::time::sleep(PROCESS_INTERVAL).await;
-            let handle = rw_console_lock.read().await;
-            if !matches!(handle.is_alive(), Ok(true)) {
+            let console_handle = rw_console_lock.read().await;
+            if !matches!(console_handle.is_alive(), Ok(true)) {
                 break;
             }
 
             let start_time = tokio::time::Instant::now();
 
             while start_time.elapsed() < PROCESS_INTERVAL {
-                match handle.read(BUFFER_SIZE, false) {
+                match console_handle.read(BUFFER_SIZE, false) {
                     Ok(os_string) => {
                         if os_string.is_empty() {
                             break;
@@ -355,8 +355,10 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
                 continue;
             }
 
+            drop(console_handle);
+
             let mut wide_encode_buf = Vec::new();
-            let mut console = console_history_arc.lock().await;
+            let mut history = console_history_arc.lock().await;
 
             'byte_iter: for byte in buffer.encode_wide() {
                 if byte != CARRIAGE_RETURN && byte != NEW_LINE {
@@ -411,19 +413,19 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
                             continue 'byte_iter;
                         }
                     }
-                    console.history.push(line.into_owned());
+                    history.history.push(line.into_owned());
                 }
 
                 wide_encode_buf.clear();
             }
 
-            let last = console.last.load(Ordering::Relaxed);
-            if forward_logs_arc.load(Ordering::Acquire) && last < console.history.len() {
-                let msg = console.history[last..].join("\n");
+            let last = history.last.load(Ordering::Relaxed);
+            if forward_logs_arc.load(Ordering::Acquire) && last < history.history.len() {
+                let msg = history.history[last..].join("\n");
                 if msg_sender_arc.send(Message::str(msg)).await.is_err() {
                     forward_logs_arc.store(false, Ordering::SeqCst);
                 } else {
-                    console.last.store(console.history.len(), Ordering::SeqCst);
+                    history.last.store(history.history.len(), Ordering::SeqCst);
                 }
             }
 
