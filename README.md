@@ -44,7 +44,7 @@ give users an unfair advantage over other players.
 
 ## Compatibility
 MatchWire is only _fully_ supported on Windows 10 version 1809 (October 2018) and later. The server scraper feature set will
-work fine on older versions of windows, and _should_ work on linux when you compile from source (untested)
+work fine on older versions of windows.
 
 ## Installation
 1. Locate / Install Modern Warfare Remastered (2017)
@@ -75,19 +75,21 @@ if line current line is empty it will close MatchWire. Note that closing MatchWi
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
 
 ## Filter help
-| Options                        | Arguments      | Short | Description                                                          |
-| ------------------------------ | -------------- | ----- | -------------------------------------------------------------------- |
-| `--limit <LIMIT>`[^1]          | Number         | `-l`  | Specify the maximum number of servers added to favourites.json       |
-| `--player-min <PLAYER_MIN>`    | Number         | `-p`  | Specify a minimum number of players a server must have [Default: 0]  |
-| `--with-bots`                  | -              | -     | Server _must_ contain bot players                                    |
-| `--without-bots`               | -              | -     | Server can _not_ contain bot players                                 |
-| `--include-unresponsive`       | -              | -     | Include servers that do not respond to a 'getInfo' request           |
-| `--region <REGION>...`         | [na, eu, apac] | `-r`  | Specify region(s) server _must_ be located in [Default: include all] |
-| `--source <SOURCE>...`         | [iw4, hmw]     | `-s`  | Specify source(s) to populate from [Default: include all]            |
-| `--includes <INCLUDES>...`[^2] | String(s)      | `-i`  | Server name _must_ contain any 1 of the given term(s)                |
-| `--excludes <EXCLUDES>...`[^2] | String(s)      | `-e`  | Server name _must not_ contain any 1 of the given term(s)            |
-| `--retry-max <RETRY_MAX>`      | Number         | -     | Specify a maximum number of 'getInfo' retries [Default: 3]           |
-| `--help`                       | -              | `-h`  | Print help                                                           |
+| Options                           | Arguments      | Short | Description                                                          |
+| --------------------------------- | -------------- | ----- | -------------------------------------------------------------------- |
+| `--limit <LIMIT>`[^1]             | Number         | `-l`  | Specify the maximum number of servers added to favourites.json       |
+| `--player-min <MIN_PLAYERS>`      | Number         | `-p`  | Specify a minimum number of players a server must have [Default: 0]  |
+| `--team-size-max <MAX_TEAM_SIZE>` | Number         | `-t`  | Specify a maximum number of players a team can have [Default: 9]     |
+| `--with-bots`                     | -              | -     | Server _must_ contain bot players                                    |
+| `--without-bots`                  | -              | -     | Server can _not_ contain bot players                                 |
+| `--include-unresponsive`          | -              | -     | Include servers that do not respond to a 'getInfo' request           |
+| `--region <REGION>...`            | [na, eu, apac] | `-r`  | Specify region(s) server _must_ be located in [Default: include all] |
+| `--source <SOURCE>...`            | [iw4, hmw]     | `-s`  | Specify source(s) to populate from [Default: include all]            |
+| `--includes <INCLUDES>...`[^2]    | String(s)      | `-i`  | Server name _must_ contain any 1 of the given term(s)                |
+| `--excludes <EXCLUDES>...`[^2]    | String(s)      | `-e`  | Server name _must not_ contain any 1 of the given term(s)            |
+| `--retry-max <RETRY_MAX>`         | Number         | -     | Specify a maximum number of 'getInfo' retries [Default: 3]           |
+| `--stats`                         | -              | `-S`  | Display statistics about the servers found in the current filter     |
+| `--help`                          | -              | `-h`  | Print help                                                           |
 
 [^1]: The default server limit for **H2M users** is set to 100. Limiting favourites.json will fix the 'join random servers' bug
   when trying to connect via the in game server browser. On **Horizon MW** this issue is fixed and no limit is applied to the
