@@ -55,6 +55,35 @@ use tokio::{
 use tracing::{error, info, warn};
 use winptyrs::PTY;
 
+pub(crate) enum CmdErr {
+    Critical(io::Error),
+    Command,
+}
+
+impl From<io::Error> for CmdErr {
+    fn from(err: io::Error) -> Self {
+        Self::Critical(err)
+    }
+}
+
+impl CmdErr {
+    pub(crate) fn transpose<T>(res: Result<T, Self>) -> io::Result<Option<T>> {
+        match res {
+            Ok(t) => Ok(Some(t)),
+            Err(CmdErr::Command) => Ok(None),
+            Err(CmdErr::Critical(err)) => Err(err),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! command_err {
+    ($($arg:tt)*) => {{
+        tracing::error!($($arg)*);
+        CmdErr::Command
+    }};
+}
+
 pub enum Message {
     Str(Cow<'static, str>),
     Info(Cow<'static, str>),
@@ -257,7 +286,8 @@ impl Executor<Stdout> for CommandContext {
 
         match command {
             Command::Filter { args } => self.new_favorites_with(line_handle, args).await,
-            Command::Last => Self::display_servers(line_handle),
+            Command::Last => global_state::LastServerStats::display(line_handle)
+                .map(|_| CommandHandle::Processed),
             Command::Reconnect { args } => self.reconnect(line_handle, args),
             Command::Launch => self.launch_handler(),
             Command::Cache { option } => self.modify_cache(option).await,
@@ -546,28 +576,23 @@ impl CommandContext {
 
     async fn new_favorites_with(
         &self,
-        repl: &mut Repl<CommandContext, Stdout>,
+        repl: &mut ReplHandle,
         args: Option<Filters>,
     ) -> io::Result<CommandHandle> {
         let exe_dir = self.game.path.parent().expect("has parent");
 
-        let new_entries_found = build_favorites(
+        let build_res = build_favorites(
             repl,
             exe_dir,
             args.unwrap_or_default(),
             self.game.version.unwrap_or(1.0),
         )
-        .await
-        .map_err(display::error)
-        .unwrap_or_default();
+        .await;
 
-        global_state::UpdateCache::and_modify(|curr| curr || new_entries_found);
+        if let Some(cache_modified) = CmdErr::transpose(build_res)? {
+            global_state::UpdateCache::and_modify(|curr| curr || cache_modified);
+        }
 
-        Ok(CommandHandle::Processed)
-    }
-
-    fn display_servers(repl: &mut Repl<CommandContext, Stdout>) -> io::Result<CommandHandle> {
-        global_state::LastServerStats::display(repl.terminal_size());
         Ok(CommandHandle::Processed)
     }
 

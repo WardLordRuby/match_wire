@@ -1,16 +1,22 @@
 use crate::{
     commands::{
-        filter::{Sourced, UnresponsiveCounter},
-        handler::{AppDetails, GameDetails},
+        filter::{
+            strategies::{
+                DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, MIN_FILTER_COLS,
+            },
+            Server, Sourced, UnresponsiveCounter,
+        },
+        handler::{AppDetails, GameDetails, ReplHandle},
         launch_h2m::{game_open, LaunchError, WinApiErr},
     },
     global_state,
     models::cli::Source,
+    try_fit_table,
     utils::caching::ReadCacheErr,
     CRATE_NAME, CRATE_VER, LOG_ONLY,
 };
 
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, io};
 
 use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
@@ -21,6 +27,8 @@ pub(crate) const DISP_NAME_HMW: &str = "HMW";
 pub(crate) const DISP_NAME_H2M: &str = "H2M";
 
 const DISP_NAME_IW4: &str = "Iw4";
+
+pub(crate) const TABLE_PADDING: u16 = 5;
 
 macro_rules! server_type {
     (master, $name:expr) => {
@@ -111,6 +119,22 @@ pub fn warning<E: Display>(warning: E) {
 /// _Only_ logs the given `err`
 pub fn log_error<E: Display>(err: E) {
     tracing::error!(name: LOG_ONLY, "{err}")
+}
+
+pub(crate) fn stats(
+    repl: &mut ReplHandle,
+    source: &[DisplaySourceStatsInner],
+    filter: &[Server],
+) -> io::Result<()> {
+    let (cols, rows) = repl.terminal_size();
+    let width = (cols.saturating_sub(TABLE_PADDING) as usize).max(MIN_FILTER_COLS);
+    try_fit_table(repl, (cols, rows), width)?;
+
+    println!();
+    println!("{}", DisplaySourceStats(source));
+    println!("{}", DisplayFilterStats(filter, width));
+
+    Ok(())
 }
 
 pub(crate) struct ConnectionHelp;

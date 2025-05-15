@@ -1,27 +1,19 @@
 use crate::{
     commands::{
-        handler::{CommandContext, CommandHandle, CommandSender},
+        handler::{CmdErr, CommandContext, CommandHandle, CommandSender, ReplHandle},
         launch_h2m::HostName,
     },
     models::cli::HistoryArgs,
+    try_fit_table,
     utils::{
         display::{BoxBottom, BoxTop, ConnectionHelp, DisplayHistoryErr, Line, Space},
         global_state::{self, PtyAccessErr},
     },
 };
 
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    fmt::Display,
-    io::{self, Stdout},
-    net::SocketAddr,
-};
+use std::{borrow::Cow, collections::HashMap, fmt::Display, io, net::SocketAddr};
 
-use repl_oxide::{
-    ansi_code::{RESET, YELLOW},
-    Repl,
-};
+use repl_oxide::ansi_code::{RESET, YELLOW};
 use tracing::{error, info};
 
 pub const HISTORY_MAX: usize = 6;
@@ -46,7 +38,7 @@ impl Display for DisplayHistory<'_> {
 }
 
 fn display_history(
-    repl: &mut Repl<CommandContext, Stdout>,
+    repl: &mut ReplHandle,
     history: &[HostName],
     host_to_connect: &HashMap<String, SocketAddr>,
 ) -> io::Result<()> {
@@ -74,12 +66,8 @@ fn display_history(
         );
 
     let width = (max_host_len + max_connect_len + 6).max(32);
-    let min_terminal_cols = width as u16 + 5;
 
-    let (columns, rows) = repl.terminal_size();
-    if columns < min_terminal_cols {
-        repl.set_terminal_size((min_terminal_cols, rows))?;
-    }
+    try_fit_table(repl, repl.terminal_size(), width)?;
 
     println!("{}", DisplayHistory(&set, width));
     Ok(())
@@ -88,46 +76,45 @@ fn display_history(
 impl CommandContext {
     pub(crate) fn reconnect(
         &mut self,
-        repl: &mut Repl<Self, Stdout>,
+        repl: &mut ReplHandle,
         args: HistoryArgs,
     ) -> io::Result<CommandHandle> {
         let ip_port = match global_state::Cache::with_borrow(|cache| {
             if cache.connection_history.is_empty() {
                 info!("No joined servers in history, connect to a server to add it to history");
-                return Err(Ok(()));
+                return Err(CmdErr::Command);
             }
 
             if args.history {
-                return Err(display_history(
-                    repl,
-                    &cache.connection_history,
-                    &cache.host_to_connect,
-                ));
+                display_history(repl, &cache.connection_history, &cache.host_to_connect)?;
+                return Ok(None);
             }
 
             let target_i = if let Some(num) = args.connect.filter(|&i| i > 1).map(usize::from) {
                 if num > cache.connection_history.len() {
                     error!("{}", DisplayHistoryErr(cache.connection_history.len()));
-                    return Err(Ok(()));
+                    return Err(CmdErr::Command);
                 }
                 cache.connection_history.len() - num
             } else {
                 cache.connection_history.len() - 1
             };
 
-            cache
+            match cache
                 .host_to_connect
                 .get(&cache.connection_history[target_i].raw)
-                .ok_or_else(|| {
+            {
+                Some(&addr) => Ok(Some(addr)),
+                None => {
                     error!("Could not find server in cache");
                     println!("use command '{YELLOW}cache{RESET} update' to attempt to locate missing server");
-                    Ok(())
-                })
-                .copied()
+                    Err(CmdErr::Command)
+                }
+            }
         }) {
-            Ok(addr) => addr,
-            Err(Err(err)) => return Err(err),
-            Err(Ok(_)) => return Ok(CommandHandle::Processed),
+            Ok(Some(addr)) => addr,
+            Ok(None) | Err(CmdErr::Command) => return Ok(CommandHandle::Processed),
+            Err(CmdErr::Critical(err)) => return Err(err),
         };
 
         if let Err(err) =

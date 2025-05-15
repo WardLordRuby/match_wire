@@ -18,7 +18,7 @@ pub mod utils {
 
 use crate::{
     commands::{
-        handler::{Message, StartupCacheContents},
+        handler::{Message, ReplHandle, StartupCacheContents},
         launch_h2m::get_exe_version,
     },
     models::{
@@ -27,6 +27,7 @@ use crate::{
     },
     utils::{
         caching::{build_cache, read_cache, ReadCacheErr},
+        display::{self, TABLE_PADDING},
         global_state,
         subscriber::init_subscriber,
     },
@@ -96,7 +97,6 @@ pub(crate) mod files {
 }
 
 use files::*;
-use utils::display;
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
@@ -594,4 +594,18 @@ pub async fn startup_cache_task(
         command_history: cmd_history.unwrap_or_default(),
         modified: build_cache().await.map_err(display::error).is_ok(),
     }
+}
+
+pub(crate) fn try_fit_table(
+    repl: &mut ReplHandle,
+    (cols, rows): (u16, u16),
+    desired: usize,
+) -> io::Result<()> {
+    let min_terminal_cols = desired as u16 + TABLE_PADDING;
+
+    if cols < min_terminal_cols {
+        repl.set_terminal_size((min_terminal_cols, rows))?;
+    }
+
+    Ok(())
 }

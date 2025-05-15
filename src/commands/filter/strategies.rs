@@ -1,11 +1,13 @@
+use reqwest::Client;
+
 use super::{
     ops::*, Addressable, FilterData, HostMeta, Server, Sourced, DEFAULT_SOURCES, GAME_ID, H2M_ID,
     HMW_ID,
 };
 use crate::{
-    client_with_timeout,
-    commands::handler::CommandContext,
-    display::{BoxBottom, BoxTop, Line, Space},
+    client_with_timeout, command_err,
+    commands::handler::{CmdErr, ReplHandle},
+    display::{self, BoxBottom, BoxTop, Line, Space},
     models::{
         cli::{Filters, Source},
         json_data::{GetInfo, HostData, ServerInfo},
@@ -19,15 +21,25 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::Display,
-    io::Stdout,
+    io,
     net::SocketAddr,
 };
 
-use repl_oxide::Repl;
+const MIN_HOST_NAME_LEN: usize = 18;
+const FILTER_HEADER_LEN: usize = 107;
+pub(crate) const MIN_FILTER_COLS: usize = FILTER_HEADER_LEN + MIN_HOST_NAME_LEN;
 
 pub(crate) trait FilterStrategy:
     Default + Sized + Send + IntoIterator<Item = Sourced> + 'static
 {
+    async fn new(sources: Option<HashSet<Source>>, client: &Client) -> Result<Self, CmdErr> {
+        match sources {
+            Some(user_sources) => get_sourced_servers::<_, Self>(user_sources, client).await,
+            None => get_sourced_servers::<_, Self>(DEFAULT_SOURCES, client).await,
+        }
+        .map_err(|err| command_err!("{err}"))
+    }
+
     fn append(&mut self, other: &mut Self);
     fn is_empty(&self) -> bool;
     fn server_ct(&self) -> usize;
@@ -35,11 +47,11 @@ pub(crate) trait FilterStrategy:
     fn hmw_master_map(servers: Vec<String>) -> Self;
     fn from_cached(cached: Vec<Sourced>) -> Self;
     async fn execute(
-        repl: &mut Repl<CommandContext, Stdout>,
+        repl: &mut ReplHandle,
         args: Filters,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
-    ) -> Result<FilterData, &'static str>;
+    ) -> Result<FilterData, CmdErr>;
 }
 
 #[derive(Default)]
@@ -106,17 +118,14 @@ impl FilterStrategy for FastStrategy {
     }
 
     async fn execute(
-        _repl: &mut Repl<CommandContext, Stdout>,
+        _repl: &mut ReplHandle,
         mut args: Filters,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
-    ) -> Result<FilterData, &'static str> {
+    ) -> Result<FilterData, CmdErr> {
         let client = client_with_timeout(5);
 
-        let mut sourced_servers = match sources {
-            Some(user_sources) => get_sourced_servers::<_, Self>(user_sources, &client).await,
-            None => get_sourced_servers::<_, Self>(DEFAULT_SOURCES, &client).await,
-        }?;
+        let mut sourced_servers = Self::new(sources, &client).await?;
 
         let modified_cache = if let Some(regions) = args.regions() {
             filter_via_region(&mut sourced_servers.0, &regions, &client, &spinner).await
@@ -318,17 +327,14 @@ impl FilterStrategy for StatTrackStrategy {
     }
 
     async fn execute(
-        repl: &mut Repl<CommandContext, Stdout>,
+        repl: &mut ReplHandle,
         mut args: Filters,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
-    ) -> Result<FilterData, &'static str> {
+    ) -> Result<FilterData, CmdErr> {
         let client = client_with_timeout(5);
 
-        let mut stat_track = match sources {
-            Some(user_sources) => get_sourced_servers::<_, Self>(user_sources, &client).await,
-            None => get_sourced_servers::<_, Self>(DEFAULT_SOURCES, &client).await,
-        }?;
+        let mut stat_track = Self::new(sources, &client).await?;
 
         let (duplicates, requests) = queue_info_requests(
             // MARK: TODO
@@ -375,8 +381,7 @@ impl FilterStrategy for StatTrackStrategy {
 
         spinner.finish();
 
-        println!();
-        display_stats(source_stats, servers, repl.terminal_size());
+        process_stats(repl, source_stats, servers)?;
 
         Ok(FilterData {
             servers: out,
@@ -487,11 +492,11 @@ impl StatTrackStrategy {
     }
 }
 
-fn display_stats(
+fn process_stats(
+    repl: &mut ReplHandle,
     source: Vec<DisplaySourceStatsInner>,
     mut filter: Vec<Server>,
-    (cols, _rows): (u16, u16),
-) {
+) -> io::Result<()> {
     global_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
         for server in filter.iter_mut() {
             if let Some(&display_name) = map_ids.get(server.info.map_name.as_ref()) {
@@ -503,10 +508,11 @@ fn display_stats(
         }
     });
 
-    println!("{}", DisplaySourceStats(&source));
-    println!("{}", DisplayFilterStats(&filter, cols));
+    display::stats(repl, &source, &filter)?;
 
     global_state::LastServerStats::set(source, filter);
+
+    Ok(())
 }
 
 fn count_digits(mut n: usize) -> usize {
@@ -605,20 +611,17 @@ fn player_disp_len(players: u8, bots: u8, max: u8) -> usize {
 }
 
 /// `(Filtered data, width)`
-pub(crate) struct DisplayFilterStats<'a>(pub(crate) &'a [Server], pub(crate) u16);
+pub(crate) struct DisplayFilterStats<'a>(pub(crate) &'a [Server], pub(crate) usize);
 
 impl Display for DisplayFilterStats<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        const MIN_NAME_LEN: usize = 18;
-        const HEADER_LEN: usize = 107;
         const MODE_WIDTH: usize = 16;
         const MAP_PLAYERS_WIDTH: usize = 28;
         const PASS_WIDTH: usize = 6;
         const VERSION_WIDTH: usize = 9;
         const REGION_WIDTH: usize = 37;
-        const MIN_COLS: usize = HEADER_LEN + MIN_NAME_LEN;
 
-        let width = (self.1.saturating_sub(5) as usize).max(MIN_COLS);
+        let width = self.1;
         let (ips, max_addr_len) = self.0.iter().fold(
             (Vec::with_capacity(self.0.len()), 0),
             |(mut lens, acc), server| {
@@ -627,7 +630,7 @@ impl Display for DisplayFilterStats<'_> {
                 (lens, acc.max(ip.len()))
             },
         );
-        let max_host_len = width - HEADER_LEN + 2 + (REGION_WIDTH - (max_addr_len + 13));
+        let max_host_len = width - FILTER_HEADER_LEN + 2 + (REGION_WIDTH - (max_addr_len + 13));
 
         writeln!(f, " {}", BoxTop(Some("Servers"), width))?;
         writeln!(

@@ -4,7 +4,8 @@ pub(crate) mod strategies;
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 
 use crate::{
-    commands::handler::CommandContext,
+    command_err,
+    commands::handler::{CmdErr, ReplHandle},
     models::{
         cli::{Filters, Region, Source},
         json_data::{ContCode, GetInfo, LocationApiResponse, ServerInfo},
@@ -18,16 +19,13 @@ use std::{
     collections::HashSet,
     fmt::Display,
     fs::File,
-    io::{self, Stdout, Write},
+    io::{self, Write},
     net::{AddrParseError, IpAddr, SocketAddr, ToSocketAddrs},
     path::Path,
     time::Duration,
 };
 
-use repl_oxide::{
-    ansi_code::{GREEN, RESET, YELLOW},
-    Repl,
-};
+use repl_oxide::ansi_code::{GREEN, RESET, YELLOW};
 use reqwest::Client;
 use tracing::{error, info, instrument, trace, warn};
 
@@ -65,22 +63,25 @@ fn serialize_json(f: &mut std::fs::File, from: String) -> io::Result<()> {
 
 #[instrument(name = "filter", level = "trace", skip_all)]
 pub(crate) async fn build_favorites(
-    repl: &mut Repl<CommandContext, Stdout>,
+    repl: &mut ReplHandle,
     curr_dir: &Path,
     args: Filters,
     version: f64,
-) -> io::Result<bool> {
+) -> Result<bool, CmdErr> {
     let mut ip_collected = 0;
     let mut ips = String::new();
 
     let mut favorites_path = curr_dir.join(FAVORITES_LOC);
     if !favorites_path.exists() {
-        std::fs::create_dir(&favorites_path)?;
+        std::fs::create_dir(&favorites_path).map_err(|err| {
+            command_err!("Could not create missing {FAVORITES_LOC} directory, err: {err}")
+        })?;
         info!("\"players2\" folder is missing, a new one was created");
     }
 
     favorites_path.push(FAVORITES);
-    let mut favorites_json = File::create(&favorites_path)?;
+    let mut favorites_json = File::create(&favorites_path)
+        .map_err(|err| command_err!("Could not create {FAVORITES}, err: {err}"))?;
 
     let spinner = Spinner::new(String::new());
 
@@ -98,9 +99,7 @@ pub(crate) async fn build_favorites(
         )
     }
 
-    let mut filter = filter_server_list(repl, args, spinner)
-        .await
-        .map_err(io::Error::other)?;
+    let mut filter = filter_server_list(repl, args, spinner).await?;
 
     if filter.duplicates != 0 {
         println!(
@@ -127,7 +126,8 @@ pub(crate) async fn build_favorites(
         }
     }
 
-    serialize_json(&mut favorites_json, ips)?;
+    serialize_json(&mut favorites_json, ips)
+        .map_err(|err| command_err!("Could not write to {FAVORITES}, err: {err}"))?;
 
     println!(
         "{GREEN}{FAVORITES} updated with {}{RESET}",
@@ -187,10 +187,10 @@ impl Filters {
 
 #[instrument(level = "trace", skip_all)]
 async fn filter_server_list(
-    repl: &mut Repl<CommandContext, Stdout>,
+    repl: &mut ReplHandle,
     args: Filters,
     spinner: Spinner,
-) -> Result<FilterData, &'static str> {
+) -> Result<FilterData, CmdErr> {
     let sources = args
         .source
         .as_deref()

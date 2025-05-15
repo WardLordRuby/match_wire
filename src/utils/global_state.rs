@@ -2,13 +2,10 @@ use crate::{
     client_with_timeout,
     commands::{
         filter::{
-            strategies::{
-                DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, GAME_TYPE_IDS,
-                MAP_IDS,
-            },
+            strategies::{DisplaySourceStatsInner, GAME_TYPE_IDS, MAP_IDS},
             Server,
         },
-        handler::{AppDetails, CommandSender, Message},
+        handler::{AppDetails, CommandSender, Message, ReplHandle},
         launch_h2m::{game_open, HostName, WinApiErr},
     },
     models::json_data::CacheFile,
@@ -22,6 +19,7 @@ use std::{
     cell::{Cell, OnceCell, RefCell},
     collections::HashMap,
     fmt::Display,
+    io,
     net::{IpAddr, SocketAddr},
     thread::LocalKey,
     time::SystemTime,
@@ -406,26 +404,22 @@ impl PtyHandle {
 pub(crate) struct LastServerStats;
 
 impl LastServerStats {
-    pub(crate) fn display((cols, _rows): (u16, u16)) {
-        Self::with_borrow(|source, filter| {
+    pub(crate) fn display(repl: &mut ReplHandle) -> io::Result<()> {
+        LAST_SERVER_STATS.with_borrow(|(source, filter)| {
             if source.is_empty() {
                 println!(
                     "{YELLOW}No previous filter data in memory, \
                     run a filter command using '--stats' to store{RESET}"
                 );
-                return;
+                return Ok(());
             }
 
-            println!("{}", DisplaySourceStats(source));
-            println!("{}", DisplayFilterStats(filter, cols));
+            display::stats(repl, source, filter)
         })
     }
 
     pub(crate) fn set(source: Vec<DisplaySourceStatsInner>, filter: Vec<Server>) {
         LAST_SERVER_STATS.set((source, filter));
-    }
-    fn with_borrow<R>(f: impl FnOnce(&[DisplaySourceStatsInner], &[Server]) -> R) -> R {
-        LAST_SERVER_STATS.with_borrow(|(source, filter)| f(source, filter))
     }
 }
 
