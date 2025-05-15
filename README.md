@@ -58,10 +58,14 @@ window will provide you a place to enter commands. MatchWire includes a command 
 key to walk through available commands and command options. Pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> will clear the current line or
 if line current line is empty it will close MatchWire. Note that closing MatchWire will also close Mw2 Remastered.  
 
+MatchWire can be launched from the command line with the '--no-launch' argument to opt out of the automatic launch of Horizon
+Modern Warfare.  
+
 ### Commands
 | Commands                     | Alias     | Description                                                                     |
 | ---------------------------- | --------- | ------------------------------------------------------------------------------- |
 | [filter](#filter-help)       | Filter    | Create a new favourites.json using various filter options                       |
+| last                         | Last      | Displays the results from the last filter command that included '--stats'       |
 | [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)                 |
 | launch                       | Launch    | Launch Mw2 Remastered (reconnect only works if the game is spawned by this app) |
 | cache                        | Cache     | Update / Reset cache (useful if reconnect can not find server name in cache)    |
@@ -110,7 +114,12 @@ Examples:
   filter --region na --player-min 2
   ```
   This query will filter all Mw2 Remastered servers to only include servers hosted in North America and have a minimum number of
-  connected players of 2, then save the filtered results to your favourites.json.  
+  connected players of 2, then save the filtered results to your favourites.json.
+  ```
+  filter --region eu --source iw4-master --stats
+  ```
+  This query will display stats about the iw4-master server, and a server browser that contains only EU servers. Useful if the
+  HMW master server ever goes down or fails to respond.
 
 #### Tips
 - After running the filter command make sure to have Filter Servers set to Favorites and Refresh to load the new favorite list
