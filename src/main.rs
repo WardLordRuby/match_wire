@@ -1,16 +1,18 @@
 use match_wire::{
-    await_user_for_end, check_app_dir_exists,
+    await_user_for_end,
     commands::{
-        handler::{CommandContext, Extras, GameDetails, Message, ReplHandle, StartupData},
+        handler::{CommandContext, GameDetails, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
-    get_latest_hmw_hash, print_during_splash, print_help, set_endpoints, splash_screen,
-    startup_cache_task,
-    utils::{caching::read_cache, display::DisplayPanic, subscriber::init_subscriber},
-    CRATE_NAME, LOCAL_DATA, LOG_ONLY, SAVED_HISTORY_CAP,
+    get_latest_hmw_hash, print_help, splash_screen, startup_cache_task, try_init_logger,
+    utils::{
+        display::{self, DisplayPanic},
+        global_state,
+    },
+    LoggerRes, CRATE_NAME, LOG_ONLY, SAVED_HISTORY_CAP,
 };
 
-use std::{borrow::Cow, io, path::PathBuf};
+use std::{borrow::Cow, io};
 
 use crossterm::{cursor, event::EventStream, execute, terminal::SetTitle};
 use repl_oxide::{
@@ -18,9 +20,12 @@ use repl_oxide::{
     executor::Executor,
     general_event_process,
 };
-use tokio::time::{interval, Duration};
+use tokio::{
+    sync::mpsc::Receiver,
+    time::{interval, Duration},
+};
 use tokio_stream::StreamExt;
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -31,12 +36,12 @@ async fn main() {
     }));
 
     let mut term = std::io::stdout();
-
     execute!(term, cursor::Hide, SetTitle(CRATE_NAME)).unwrap();
 
-    let appdata = set_endpoints().await;
+    let logger_res = try_init_logger();
+    let appdata = global_state::Endpoints::init().await;
 
-    let (mut line_handle, mut command_context, extras) = match app_startup() {
+    let (mut line_handle, mut command_context, message_rx) = match app_startup(logger_res) {
         Ok(startup_data) => CommandContext::from(startup_data, appdata, term).await,
         Err(err) => {
             println!("{RED}{err}{RESET}");
@@ -47,19 +52,17 @@ async fn main() {
 
     print_help();
 
-    run_eval_print_loop(&mut line_handle, &mut command_context, extras)
+    run_eval_print_loop(&mut line_handle, &mut command_context, message_rx)
         .await
-        .unwrap_or_else(|err| error!("{err}"));
+        .unwrap_or_else(display::error);
 
-    command_context
-        .graceful_shutdown(&line_handle.export_history(Some(SAVED_HISTORY_CAP)))
-        .await;
+    command_context.graceful_shutdown(&line_handle.export_history(Some(SAVED_HISTORY_CAP)))
 }
 
 async fn run_eval_print_loop(
     line_handle: &mut ReplHandle,
     command_context: &mut CommandContext,
-    (mut message_rx, hwnd): Extras,
+    mut message_rx: Receiver<Message>,
 ) -> io::Result<()> {
     let mut save_cache_interval = interval(Duration::from_secs(240));
     let mut close_listener = tokio::signal::windows::ctrl_close().unwrap();
@@ -89,7 +92,7 @@ async fn run_eval_print_loop(
             }
 
             _ = save_cache_interval.tick() => {
-                if let Err(err) = command_context.save_cache_if_needed(line_handle).await {
+                if let Err(err) = command_context.save_cache_if_needed(line_handle) {
                     line_handle.prep_for_background_msg()?;
                     error!("Could not save cache: {err}");
                 } else {
@@ -98,7 +101,7 @@ async fn run_eval_print_loop(
             }
 
             _ = command_context.game_state_change.notified() => {
-                if let Err(err) = command_context.handle_game_state_change(line_handle, hwnd).await? {
+                if let Err(err) = command_context.handle_game_state_change(line_handle)? {
                     line_handle.prep_for_background_msg()?;
                     error!("{err}");
                 }
@@ -109,42 +112,11 @@ async fn run_eval_print_loop(
 }
 
 #[instrument(level = "trace", skip_all)]
-fn app_startup() -> Result<StartupData, Cow<'static, str>> {
-    let exe_dir =
-        std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
+fn app_startup((local_dir, cache_res): LoggerRes) -> Result<StartupData, Cow<'static, str>> {
+    let (game, no_launch) = GameDetails::get()?;
 
-    let no_launch = {
-        #[cfg(not(debug_assertions))]
-        {
-            use clap::Parser;
-            match_wire::models::cli::Cli::parse().no_launch
-        }
-
-        #[cfg(debug_assertions)]
-        true
-    };
-
-    let game = {
-        #[cfg(not(debug_assertions))]
-        match match_wire::contains_required_files(&exe_dir) {
-            Ok(game_exe_path) => {
-                let (version, hash) = match_wire::exe_details(&game_exe_path);
-                GameDetails::new(game_exe_path, version, hash)
-            }
-            Err(err) if no_launch => {
-                print_during_splash(Message::error(err));
-                GameDetails::default(&exe_dir)
-            }
-            Err(err) => return Err(err.into()),
-        }
-
-        #[cfg(debug_assertions)]
-        GameDetails::default(&exe_dir)
-    };
-
+    let splash_task = tokio::spawn(splash_screen::enter());
     let hmw_hash_task = tokio::spawn(get_latest_hmw_hash());
-
-    let splash_task = tokio::spawn(splash_screen());
 
     let launch_task = tokio::spawn({
         let game_exe_path = game.path.clone();
@@ -157,24 +129,6 @@ fn app_startup() -> Result<StartupData, Cow<'static, str>> {
             Some(launch_h2m_pseudo(&game_exe_path))
         }
     });
-
-    let mut local_dir = std::env::var_os(LOCAL_DATA).map(PathBuf::from);
-    let mut cache_res = None;
-    if let Some(ref mut dir) = local_dir {
-        if let Err(err) = check_app_dir_exists(dir) {
-            print_during_splash(Message::error(err.to_string()));
-        } else {
-            init_subscriber(dir)
-                .unwrap_or_else(|err| print_during_splash(Message::error(err.to_string())));
-            info!(name: LOG_ONLY, "App startup");
-            cache_res = Some(read_cache(dir));
-        }
-    } else {
-        print_during_splash(Message::error("Could not find %appdata%/local"));
-
-        #[cfg(debug_assertions)]
-        init_subscriber(std::path::Path::new("")).unwrap();
-    }
 
     Ok(StartupData {
         local_dir,

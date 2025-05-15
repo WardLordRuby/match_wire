@@ -59,17 +59,6 @@ impl<E> ColoredFormatter<E> {
 }
 
 #[cfg(not(debug_assertions))]
-fn print_during_splash<F>(print: F) -> std::fmt::Result
-where
-    F: FnOnce(Writer<'_>) -> std::fmt::Result,
-{
-    let mut event_buffer = crate::SPLASH_SCREEN_EVENT_BUFFER
-        .lock()
-        .expect("no one will panic with lock & lock uncontested");
-    print(Writer::new(&mut event_buffer.from_subscriber))
-}
-
-#[cfg(not(debug_assertions))]
 impl<S, N, E> FormatEvent<S, N> for ColoredFormatter<E>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -82,7 +71,7 @@ where
         writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        use crate::TERM_CLEAR_LINE;
+        use crate::{splash_screen, TERM_CLEAR_LINE};
         use repl_oxide::ansi_code::{BLUE, GREEN, MAGENTA, RED, RESET, YELLOW};
 
         let line_color = match *event.metadata().level() {
@@ -99,8 +88,8 @@ where
             write!(writer, "{RESET}")
         };
 
-        if crate::SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::Acquire) {
-            return print_during_splash(print);
+        if splash_screen::is_visible() {
+            return splash_screen::push_formatter(print);
         }
         print(writer)
     }

@@ -1,12 +1,14 @@
 use crate::{
     client_with_timeout,
     commands::{
-        filter::{try_get_info, GetInfoMetaData, Request, Sourced},
+        filter::{try_get_info, Addressable, GetInfoMetaData, Request, Sourced},
         handler::{CommandContext, Message},
     },
-    models::json_data::Endpoints,
     parse_hostname, strip_ansi_private_modes,
-    utils::caching::Cache,
+    utils::{
+        display,
+        global_state::{self, ThreadCopyState},
+    },
     CRATE_NAME, LOG_ONLY,
 };
 
@@ -15,17 +17,13 @@ use std::{
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
 };
 
 use core::str;
 use repl_oxide::strip_ansi;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc::Sender, Mutex};
-use tracing::{error, info, trace, warn};
+use tokio::sync::mpsc::Sender;
+use tracing::{error, info, warn};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HWND},
     Storage::FileSystem::{
@@ -72,9 +70,11 @@ const CONNECT_BYTES: [(u16, u16); 8] = utf16_array![pairs:
     ('t', 'T'),
     (' ', ' '),
 ];
-const ERROR_BYTES_PRE_1_4: [u16; 9] = utf16_array!['\x1b', '[', '3', '8', ';', '5', ';', '1', 'm'];
-const ERROR_BYTES_NEW: [u16; 5] = utf16_array!['\x1b', '[', '3', '1', 'm'];
-const ERROR_BYTES: [&[u16]; 2] = [&ERROR_BYTES_NEW, &ERROR_BYTES_PRE_1_4];
+
+const _: () =
+    assert!(JOIN_BYTES.len() == CONNECTING_BYTES.len() && JOIN_BYTES.len() == CONNECT_BYTES.len());
+
+const ANSI_CODE_START: [u16; 2] = utf16_array!['\x1b', '['];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
 const CARRIAGE_RETURN: u16 = '\r' as u16;
@@ -136,9 +136,12 @@ impl From<AddrParseError> for HostRequestErr {
 }
 
 impl From<GetInfoMetaData> for HostRequestErr {
-    fn from(mut value: GetInfoMetaData) -> Self {
+    fn from(value: GetInfoMetaData) -> Self {
         // meta data discarded since the caller doesn't use it / avoids triggering large enum variant size diff
-        HostRequestErr::RequestErr(value.with_socket_addr().to_string())
+        HostRequestErr::RequestErr(format!(
+            "Server at: {}, did not respond to a 'getInfo' request",
+            value.meta.socket_addr()
+        ))
     }
 }
 
@@ -189,16 +192,14 @@ impl HostName {
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
             client_with_timeout(5),
-            Endpoints::server_info_endpoint(),
+            global_state::Endpoints::server_info_endpoint(),
         )
         .await?;
 
-        let host_name = server_info
-            .info
-            .expect("always `Some` when `try_get_info` is `Ok`")
-            .host_name;
-
-        Ok(HostNameRequestMeta::new(host_name, Some(Ok(socket_addr))))
+        Ok(HostNameRequestMeta::new(
+            server_info.info.host_name,
+            Some(Ok(socket_addr)),
+        ))
     }
 }
 
@@ -208,101 +209,74 @@ enum Connection {
 }
 
 async fn add_to_history(
-    cache_arc: &Arc<Mutex<Cache>>,
-    update_cache: &Arc<AtomicBool>,
     background_msg: &Sender<Message>,
     wide_encode: &[u16],
     kind: Connection,
     version: f64,
 ) {
-    async fn cache_insert(
-        cache_arc: &Arc<Mutex<Cache>>,
-        update_cache: &Arc<AtomicBool>,
-        host_name_meta: HostNameRequestMeta,
-    ) {
-        let mut cache = cache_arc.lock().await;
-        let mut modified = true;
-        if let Some(Ok(ip)) = host_name_meta.socket_addr {
-            cache
-                .host_to_connect
-                .entry(host_name_meta.host_name.raw.clone())
-                .and_modify(|cache_ip| {
-                    if *cache_ip == ip {
-                        modified = false;
-                    } else {
-                        *cache_ip = ip
-                    }
-                })
-                .or_insert(ip);
-        }
-        if let Some(index) = cache
-            .connection_history
-            .iter()
-            .position(|prev| prev.raw == host_name_meta.host_name.raw)
-        {
-            let history_last = cache.connection_history.len() - 1;
-            if index != history_last {
-                let entry = cache.connection_history.remove(index);
-                cache.connection_history.push(entry);
-                modified = true;
+    fn cache_insert(host_name_meta: HostNameRequestMeta) {
+        global_state::Cache::with_borrow_mut(|cache| {
+            let mut modified = true;
+            if let Some(Ok(ip)) = host_name_meta.socket_addr {
+                cache
+                    .host_to_connect
+                    .entry(host_name_meta.host_name.raw.clone())
+                    .and_modify(|cache_ip| {
+                        if *cache_ip == ip {
+                            modified = false;
+                        } else {
+                            *cache_ip = ip
+                        }
+                    })
+                    .or_insert(ip);
             }
-        } else {
-            cache.connection_history.push(host_name_meta.host_name);
-            modified = true
-        };
-        if modified {
-            update_cache.store(true, Ordering::Relaxed);
-        }
+            if let Some(index) = cache
+                .connection_history
+                .iter()
+                .position(|prev| prev.raw == host_name_meta.host_name.raw)
+            {
+                let history_last = cache.connection_history.len() - 1;
+                if index != history_last {
+                    let entry = cache.connection_history.remove(index);
+                    cache.connection_history.push(entry);
+                    modified = true;
+                }
+            } else {
+                cache.connection_history.push(host_name_meta.host_name);
+                modified = true
+            };
+            global_state::UpdateCache::and_modify(|curr| curr || modified);
+        });
     }
 
-    match kind {
-        Connection::Browser => {
-            let meta = match HostName::from_browser(wide_encode, version) {
-                Ok(mut data) => {
-                    if let Some(Err(ref mut err)) = data.socket_addr {
-                        send_msg_over(background_msg, Message::error(std::mem::take(err))).await;
-                    }
-                    data
+    let res = match kind {
+        Connection::Browser => match HostName::from_browser(wide_encode, version) {
+            Ok(mut data) => {
+                if let Some(Err(ref mut err)) = data.socket_addr {
+                    send_msg_over(background_msg, Message::error(std::mem::take(err))).await;
                 }
-                Err(err) => {
-                    send_msg_over(background_msg, Message::error(err)).await;
-                    return;
-                }
-            };
-            cache_insert(cache_arc, update_cache, meta).await;
+                Ok(data)
+            }
+            Err(err) => Err(err),
+        },
+        Connection::Direct => match HostName::from_request(wide_encode).await {
+            Ok(data) => Ok(data),
+            Err(HostRequestErr::AddrParseErr(err)) => Err(err.to_string()),
+            Err(HostRequestErr::RequestErr(err)) => Err(err),
+        },
+    };
+    match res {
+        Ok(meta) => {
+            info!(name: LOG_ONLY, "Connected to {}", meta.host_name.parsed);
+            cache_insert(meta);
         }
-        Connection::Direct => {
-            let cache_arc = Arc::clone(cache_arc);
-            let update_cache = Arc::clone(update_cache);
-            let background_msg = background_msg.clone();
-            let wide_encode = wide_encode.to_vec();
-            tokio::spawn(async move {
-                let meta = match HostName::from_request(&wide_encode).await {
-                    Ok(data) => data,
-                    Err(request_err) => {
-                        match request_err {
-                            // NOTE: disregard `AddrParseErr` because of partial read of pseudo console input bug
-                            HostRequestErr::AddrParseErr(err) => trace!("{err}"),
-                            HostRequestErr::RequestErr(err) => {
-                                send_msg_over(&background_msg, Message::error(err)).await;
-                            }
-                        }
-                        return;
-                    }
-                };
-                cache_insert(&cache_arc, &update_cache, meta).await;
-            });
-        }
+        Err(err) => send_msg_over(background_msg, Message::error(err)).await,
     }
 }
 
-pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
-    let rw_console_lock = context.check_h2m_connection().await?;
+pub fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
+    global_state::PtyHandle::check_connection()?;
 
-    let console_history_arc = context.h2m_console_history();
-    let cache_arc = context.cache();
-    let cache_needs_update = context.cache_needs_update();
-    let forward_logs_arc = context.forward_logs();
     let msg_sender_arc = context.msg_sender();
     let game_state_change = context.game_state_change();
     let version = context.game_version().unwrap_or(1.0);
@@ -317,48 +291,43 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
             CONNECTING_BYTES
         };
 
-        const BUFFER_SIZE: u32 = 16384; // 16 KB
+        /// 16 KB
+        const BUFFER_SIZE: u32 = 16384;
         const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         'task: loop {
             tokio::time::sleep(PROCESS_INTERVAL).await;
-            let console_handle = rw_console_lock.read().await;
-            if !matches!(console_handle.is_alive(), Ok(true)) {
-                break;
-            }
 
             let start_time = tokio::time::Instant::now();
 
             while start_time.elapsed() < PROCESS_INTERVAL {
-                match console_handle.read(BUFFER_SIZE, false) {
-                    Ok(os_string) => {
-                        if os_string.is_empty() {
-                            break;
-                        }
-                        buffer.push(os_string);
-                    }
+                match global_state::PtyHandle::try_if_alive(|console_handle| {
+                    console_handle
+                        .read(BUFFER_SIZE, false)
+                        .map(|os_string| {
+                            if os_string.is_empty() {
+                                return true;
+                            }
+                            buffer.push(os_string);
+                            false
+                        })
+                        .map_err(|err| err.to_string_lossy().to_string().into())
+                }) {
+                    Ok(true) => break,
+                    Ok(false) => tokio::task::yield_now().await,
                     Err(err) => {
-                        send_msg_over(
-                            &msg_sender_arc,
-                            Message::error(err.to_string_lossy().to_string()),
-                        )
-                        .await;
+                        send_msg_over(&msg_sender_arc, Message::error(err)).await;
                         break 'task;
                     }
                 }
-
-                tokio::task::yield_now().await;
             }
 
             if buffer.is_empty() {
                 continue;
             }
 
-            drop(console_handle);
-
             let mut wide_encode_buf = Vec::new();
-            let mut history = console_history_arc.lock().await;
 
             'byte_iter: for byte in buffer.encode_wide() {
                 if byte != CARRIAGE_RETURN && byte != NEW_LINE {
@@ -367,25 +336,18 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
                 }
 
                 let mut connect_kind = Connection::Browser;
-                if ERROR_BYTES
-                    .iter()
-                    .all(|error_ansi_code| !wide_encode_buf.starts_with(error_ansi_code))
-                    && wide_encode_buf
-                        .windows(connecting_bytes.len())
-                        .any(|window| {
-                            window == connecting_bytes
-                                || case_insensitive_cmp_direct(window, &mut connect_kind)
-                        })
-                {
-                    add_to_history(
-                        &cache_arc,
-                        &cache_needs_update,
-                        &msg_sender_arc,
-                        &wide_encode_buf,
-                        connect_kind,
-                        version,
-                    )
-                    .await;
+                if !wide_encode_buf.starts_with(&ANSI_CODE_START) && {
+                    if wide_encode_buf.starts_with(&[']' as u16]) {
+                        wide_encode_buf[1..]
+                            .windows(connecting_bytes.len())
+                            .any(|window| case_insensitive_cmp_direct(window, &mut connect_kind))
+                    } else {
+                        wide_encode_buf
+                            .windows(connecting_bytes.len())
+                            .any(|window| window == connecting_bytes)
+                    }
+                } {
+                    add_to_history(&msg_sender_arc, &wide_encode_buf, connect_kind, version).await;
                 }
 
                 let cur = String::from_utf16_lossy(&wide_encode_buf);
@@ -413,19 +375,17 @@ pub async fn initialize_listener(context: &mut CommandContext) -> Result<(), Str
                             continue 'byte_iter;
                         }
                     }
-                    history.history.push(line.into_owned());
+                    global_state::ConsoleHistory::push(line.into_owned());
                 }
 
                 wide_encode_buf.clear();
             }
 
-            let last = history.last.load(Ordering::Relaxed);
-            if forward_logs_arc.load(Ordering::Acquire) && last < history.history.len() {
-                let msg = history.history[last..].join("\n");
-                if msg_sender_arc.send(Message::str(msg)).await.is_err() {
-                    forward_logs_arc.store(false, Ordering::SeqCst);
+            if let Some(msg_concat) = global_state::ConsoleHistory::concat_new() {
+                if msg_sender_arc.send(Message::str(msg_concat)).await.is_err() {
+                    global_state::ForwardLogs::set(false);
                 } else {
-                    history.last.store(history.history.len(), Ordering::SeqCst);
+                    global_state::ConsoleHistory::with_borrow_mut(|history| history.displayed());
                 }
             }
 
@@ -634,7 +594,7 @@ unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
                 false
             })
         }
-        .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+        .map_err(display::log_error)
         .unwrap_or_default()
         {
             *result = Some(hwnd)
@@ -667,7 +627,7 @@ unsafe extern "system" fn pseudo_window_search(hwnd: HWND, lparam: isize) -> i32
             class == WINDOW_CLASS_NAME_PSEUDO_CONSOLE && get_window_text_w(hwnd).is_empty()
         })
     }
-    .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+    .map_err(display::log_error)
     .unwrap_or_default()
     {
         // Safety
@@ -719,7 +679,7 @@ unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
                 .any(|&h2m_class| class == h2m_class)
         })
     }
-    .map_err(|err| error!(name: LOG_ONLY, "{err}"))
+    .map_err(display::log_error)
     .unwrap_or_default()
     {
         // Safety:

@@ -1,22 +1,26 @@
 use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
-        handler::{AppDetails, ConsoleHistory, GameDetails},
+        handler::{AppDetails, GameDetails},
         launch_h2m::{game_open, LaunchError, WinApiErr},
     },
+    global_state,
     models::cli::Source,
     utils::caching::ReadCacheErr,
-    CRATE_NAME, CRATE_VER,
+    CRATE_NAME, CRATE_VER, LOG_ONLY,
 };
 
-use std::{borrow::Cow, fmt::Display, sync::atomic::Ordering};
+use std::{borrow::Cow, fmt::Display};
 
 use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 
 pub(crate) const DISP_NAME_HMW: &str = "HMW";
+
+#[cfg(not(debug_assertions))]
 pub(crate) const DISP_NAME_H2M: &str = "H2M";
-const DISP_NAME_IW4: &str = "Iw4m";
+
+const DISP_NAME_IW4: &str = "Iw4";
 
 macro_rules! server_type {
     (master, $name:expr) => {
@@ -31,6 +35,83 @@ pub(crate) const SOURCE_HMW: &str = server_type!(master, DISP_NAME_HMW);
 const SOURCE_HMW_CACHED: &str = server_type!(cached, DISP_NAME_HMW);
 const SOURCE_IW4: &str = server_type!(master, DISP_NAME_IW4);
 const SOURCE_IW4_CACHED: &str = server_type!(cached, DISP_NAME_IW4);
+
+const PRIME: [usize; 4] = [2, 3, 5, 7];
+const MAX_PRODUCT: usize = 42;
+
+macro_rules! write_div_str {
+    ($f:expr, $c:literal, $width:expr) => {
+        if let Some(max_div) = calc_max_div($width) {
+            #[cfg(debug_assertions)]
+            const _C: char = $c;
+
+            const TWO: &str = concat!($c, $c);
+            const THREE: &str = concat!(TWO, $c);
+            const FIVE: &str = concat!(THREE, TWO);
+            const SEVEN: &str = concat!(FIVE, TWO);
+            const FOURTEEN: &str = concat!(SEVEN, SEVEN);
+            const FIFTEEN: &str = concat!(FOURTEEN, $c);
+            const THIRTY: &str = concat!(FIFTEEN, FIFTEEN);
+            const THIRTY_FIVE: &str = concat!(THIRTY, FIVE);
+
+            let draw = match max_div {
+                2 => TWO,
+                3 => THREE,
+                5 => FIVE,
+                6 => concat!(THREE, THREE),
+                7 => SEVEN,
+                10 => concat!(FIVE, FIVE),
+                14 => FOURTEEN,
+                15 => FIFTEEN,
+                21 => concat!(FOURTEEN, SEVEN),
+                30 => THIRTY,
+                35 => THIRTY_FIVE,
+                42 => concat!(THIRTY_FIVE, SEVEN),
+                _ => unreachable!("capped by `MAX_PRODUCT`"),
+            };
+
+            write!($f, "{}", Repeat(draw, $width / max_div))
+        } else {
+            write!($f, "{}", Repeat($c, $width))
+        }
+    };
+}
+
+fn calc_max_div(width: usize) -> Option<usize> {
+    if width < *PRIME.last().unwrap() {
+        return None;
+    }
+
+    let mut max_div = 1;
+    for prime in PRIME {
+        if width % prime == 0 {
+            let acc = max_div * prime;
+
+            if acc > MAX_PRODUCT {
+                break;
+            }
+
+            max_div = acc
+        }
+    }
+
+    (max_div > 1).then_some(max_div)
+}
+
+/// Logs and print's the given `err`
+pub fn error<E: Display>(err: E) {
+    tracing::error!("{err}")
+}
+
+/// Logs and print's the given `warning`
+pub fn warning<E: Display>(warning: E) {
+    tracing::warn!("{warning}")
+}
+
+/// _Only_ logs the given `err`
+pub fn log_error<E: Display>(err: E) {
+    tracing::error!(name: LOG_ONLY, "{err}")
+}
 
 pub(crate) struct ConnectionHelp;
 
@@ -62,16 +143,31 @@ impl From<ConnectionHelp> for Cow<'static, str> {
     }
 }
 
-pub(crate) struct DisplayLogs<'a>(pub(crate) &'a ConsoleHistory);
+#[cfg(not(debug_assertions))]
+pub(crate) struct HmwDownloadHint;
 
-impl Display for DisplayLogs<'_> {
+#[cfg(not(debug_assertions))]
+impl Display for HmwDownloadHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let last = self.0.last.load(Ordering::Relaxed);
-        for line in &self.0.history[last..] {
-            writeln!(f, "{line}")?;
-        }
-        self.0.last.store(self.0.history.len(), Ordering::SeqCst);
-        Ok(())
+        write!(
+            f,
+            "HMW mod files are available to download for free through the Horizon MW launcher\n{}",
+            global_state::Endpoints::hmw_download()
+        )
+    }
+}
+
+pub(crate) struct DisplayLogs;
+
+impl Display for DisplayLogs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        global_state::ConsoleHistory::with_borrow_mut(|history| {
+            for line in history.new_entries() {
+                writeln!(f, "{line}")?;
+            }
+            history.displayed();
+            Ok(())
+        })
     }
 }
 
@@ -202,23 +298,26 @@ impl Display for Sourced {
     }
 }
 
+impl Source {
+    pub(crate) fn to_str(self) -> &'static str {
+        match self {
+            Source::Iw4Master => DISP_NAME_IW4,
+            Source::HmwMaster => DISP_NAME_HMW,
+        }
+    }
+}
+
 impl Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Source::Iw4Master => DISP_NAME_IW4,
-                Source::HmwMaster => DISP_NAME_HMW,
-            }
-        )
+        write!(f, "{}", self.to_str())
     }
 }
 
 impl UnresponsiveCounter {
     fn flatten(&self) -> [(usize, &'static str); 4] {
         const _: () = assert!(
-            std::mem::size_of::<UnresponsiveCounter>() == std::mem::size_of::<usize>() * 4,
+            // offset by one since this struct also tracks the use of cached servers
+            std::mem::size_of::<UnresponsiveCounter>() == std::mem::size_of::<usize>() * 5,
             "`flatten()` needs to be updated if additional server sources are added"
         );
 
@@ -250,6 +349,17 @@ impl Display for UnresponsiveCounter {
                 display_count_of(count, source)?
             }
         }
+
+        if self.used_cached_servers > 0 {
+            write!(
+                f,
+                "\nIncluded outdated server data for {YELLOW}{}{RESET} \
+                    of {} that did not respond to 'getInfo' request",
+                self.used_cached_servers,
+                DisplayServerCount(self.total(), RED)
+            )?;
+        }
+
         Ok(())
     }
 }
@@ -289,6 +399,10 @@ impl Display for HmwUpdateHelp {
 
 impl Display for GameDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.version.is_none() && self.hash_curr.is_none() {
+            return Ok(());
+        }
+
         write!(f, "{} ", self.game_file_name())?;
         let color = match (&self.hash_curr, &self.hash_latest) {
             (Some(curr), Some(latest)) => {
@@ -300,16 +414,14 @@ impl Display for GameDetails {
             }
             _ => RESET,
         };
-        let mut wrote_details = false;
         if let Some(version) = self.version {
             write!(f, "{color}v{version}{RESET}")?;
-            wrote_details = true;
         }
         if let Some(ref hash) = self.hash_curr {
             write!(
                 f,
                 "{}hash: {color}{hash}{RESET}",
-                if wrote_details { ", " } else { "" }
+                if self.version.is_some() { ", " } else { "" }
             )?;
         }
         if color == YELLOW {
@@ -337,5 +449,59 @@ impl Display for AppDetails {
             }
         }
         Ok(())
+    }
+}
+
+/// `(repeat, count)`
+struct Repeat<T>(T, usize);
+
+impl<T: Display> Display for Repeat<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for _ in 0..self.1 {
+            write!(f, "{}", self.0)?;
+        }
+        Ok(())
+    }
+}
+
+/// `(Option<"title">, total_width)`
+pub(crate) struct BoxTop(pub(crate) Option<&'static str>, pub(crate) usize);
+
+impl Display for BoxTop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let title = self.0.unwrap_or_default();
+
+        write!(f, "┌{title}")?;
+        write!(f, "{}", Line(self.1 - title.chars().count()))?;
+        write!(f, "┐")
+    }
+}
+
+/// `(total_width)`
+pub(crate) struct BoxBottom(pub(crate) usize);
+
+impl Display for BoxBottom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "└")?;
+        write!(f, "{}", Line(self.0))?;
+        write!(f, "┘")
+    }
+}
+
+/// `(total_width)`
+pub(crate) struct Line(pub(crate) usize);
+
+impl Display for Line {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_div_str!(f, '─', self.0)
+    }
+}
+
+/// `(total_width)`
+pub(crate) struct Space(pub(crate) usize);
+
+impl Display for Space {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_div_str!(f, ' ', self.0)
     }
 }

@@ -1,4 +1,4 @@
-use crate::{commands::launch_h2m::HostName, ENDPOINTS};
+use crate::commands::launch_h2m::HostName;
 
 use std::{
     borrow::Cow,
@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct HostData {
@@ -20,42 +20,51 @@ pub(crate) struct HostData {
     // pub(crate) version: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub(crate) struct ServerInfo {
     pub(crate) ip: String,
     #[serde(rename = "clientnum")]
     pub(crate) clients: u8,
-    // #[serde(rename = "gametype")]
-    // pub(crate) game_type: String,
+    #[serde(rename = "gametype")]
+    pub(crate) game_type: String,
     // pub(crate) id: i64,
     #[serde(rename = "maxclientnum")]
     pub(crate) max_clients: u8,
     pub(crate) port: u16,
-    // pub(crate) map: String,
-    // pub(crate) version: String,
+    pub(crate) map: String,
+    // pub(crate) version: String, // iw4m version
     pub(crate) game: String,
     #[serde(rename = "hostname")]
     pub(crate) host_name: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub(crate) struct GetInfo {
     #[serde(deserialize_with = "from_string::<_, u8>")]
     pub(crate) clients: u8,
     #[serde(rename = "sv_maxclients")]
     #[serde(deserialize_with = "from_string::<_, u8>")]
     pub(crate) max_clients: u8,
-    // #[serde(rename = "sv_privateClients")]
-    // #[serde(deserialize_with = "from_string::<_, i8>")]
-    // pub(crate) private_clients: i8,
-    #[serde(deserialize_with = "from_string::<_, u8>")]
-    pub(crate) bots: u8,
     // #[serde(rename = "gamename")]
     // pub(crate) game_name: String,
-    // #[serde(rename = "gametype")]
-    // pub(crate) game_type: String,
+    #[serde(rename = "gametype")]
+    pub(crate) game_type: Cow<'static, str>,
     #[serde(rename = "hostname")]
     pub(crate) host_name: String,
+    #[serde(rename = "mapname")]
+    pub(crate) map_name: Cow<'static, str>,
+
+    // Does not appear in the iw4 master server
+    #[serde(deserialize_with = "from_string::<_, u8>")]
+    pub(crate) bots: u8,
+    #[serde(rename = "isPrivate")]
+    #[serde(deserialize_with = "from_bool_string::<_>")]
+    pub(crate) private: bool,
+    #[serde(rename = "sv_privateClients")]
+    #[serde(deserialize_with = "from_string::<_, i8>")]
+    pub(crate) private_clients: i8,
+    #[serde(rename = "gameversion")]
+    pub(crate) game_version: String,
 }
 
 fn from_string<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -64,8 +73,25 @@ where
     T: FromStr,
     T::Err: std::fmt::Display,
 {
-    let string = String::deserialize(deserializer)?;
-    string.parse::<T>().map_err(serde::de::Error::custom)
+    String::deserialize(deserializer)?
+        .parse::<T>()
+        .map_err(de::Error::custom)
+}
+
+fn from_bool_string<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match String::deserialize(deserializer)?.as_str() {
+        "0" | "false" => false,
+        "1" | "true" => true,
+        unexpected => {
+            return Err(de::Error::invalid_value(
+                de::Unexpected::Str(unexpected),
+                &"0 or 1",
+            ))
+        }
+    })
 }
 
 pub(crate) type ContCode = [u8; 2];
@@ -94,9 +120,10 @@ impl ContCodeDeserialize for String {
             .collect::<Vec<_>>()
             .try_into()
             .map_err(|_| {
-                serde::de::Error::custom(format!(
-                    "Expected 2 character Country code, found: {self}"
-                ))
+                serde::de::Error::invalid_value(
+                    de::Unexpected::Str(&self),
+                    &"2 character Country code",
+                )
             })
     }
 }
@@ -110,73 +137,19 @@ where
         .transpose()
 }
 
+// `Endpoints` now lives in utils/global_state since the same struct is used inside
+// thread_local storage and should maintain private fields
+
 #[derive(Deserialize, Debug)]
 pub(crate) struct StartupInfo {
     pub(crate) version: Version,
-    pub(crate) endpoints: Endpoints,
+    pub(crate) endpoints: crate::utils::global_state::Endpoints,
 }
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct Version {
     pub(crate) latest: String,
     pub(crate) message: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub(crate) struct Endpoints {
-    iw4_master_server: Cow<'static, str>,
-    hmw_master_server: Cow<'static, str>,
-    hmw_manifest: Cow<'static, str>,
-    hmw_download: Cow<'static, str>,
-    manifest_hash_path: Option<String>,
-    server_info_endpoint: Cow<'static, str>,
-}
-
-impl Default for Endpoints {
-    fn default() -> Self {
-        Self {
-            iw4_master_server: Cow::Borrowed("https://master.iw4.zip/instance"),
-            hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
-            hmw_manifest: Cow::Borrowed("https://price.horizonmw.org/manifest.json"),
-            hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
-            manifest_hash_path: None,
-            server_info_endpoint: Cow::Borrowed("/getInfo"),
-        }
-    }
-}
-
-impl Endpoints {
-    #[inline]
-    fn get() -> &'static Self {
-        ENDPOINTS
-            .get()
-            .expect("tried to access endpoints before startup process")
-    }
-
-    #[inline]
-    pub(crate) fn iw4_master_server() -> &'static str {
-        &Self::get().iw4_master_server
-    }
-    #[inline]
-    pub(crate) fn hmw_master_server() -> &'static str {
-        &Self::get().hmw_master_server
-    }
-    #[inline]
-    pub(crate) fn hmw_manifest() -> &'static str {
-        &Self::get().hmw_manifest
-    }
-    #[inline]
-    pub(crate) fn hmw_download() -> &'static str {
-        &Self::get().hmw_download
-    }
-    #[inline]
-    pub(crate) fn manifest_hash_path() -> Option<&'static str> {
-        Self::get().manifest_hash_path.as_deref()
-    }
-    #[inline]
-    pub(crate) fn server_info_endpoint() -> &'static str {
-        &Self::get().server_info_endpoint
-    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -254,7 +227,7 @@ pub(crate) struct HmwManifest {
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct Module {
     pub(crate) name: String,
-    // pub(crate) version: String,
+    pub(crate) version: String,
     pub(crate) files_with_hashes: HashMap<String, String>,
     // pub(crate) download_info: DownloadInfo,
 }

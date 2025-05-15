@@ -12,19 +12,24 @@ pub mod models {
 pub mod utils {
     pub mod caching;
     pub mod display;
+    pub mod global_state;
     pub mod subscriber;
 }
 
 use crate::{
     commands::{
-        handler::{AppDetails, Message, StartupCacheContents},
+        handler::{Message, StartupCacheContents},
         launch_h2m::get_exe_version,
     },
     models::{
         cli::Command,
-        json_data::{CacheFile, Endpoints, HmwManifest, StartupInfo},
+        json_data::{CacheFile, HmwManifest, StartupInfo},
     },
-    utils::caching::{build_cache, Cache, ReadCacheErr},
+    utils::{
+        caching::{build_cache, read_cache, ReadCacheErr},
+        global_state,
+        subscriber::init_subscriber,
+    },
 };
 
 use std::{
@@ -32,11 +37,7 @@ use std::{
     collections::HashSet,
     io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    sync::{
-        atomic::AtomicBool,
-        mpsc::{self, TryRecvError},
-        Arc, OnceLock,
-    },
+    sync::mpsc::{self, TryRecvError},
     time::Duration,
 };
 
@@ -48,10 +49,9 @@ use reqwest::Client;
 use serde_json::{from_value, Value};
 use serde_json_path::JsonPath;
 use sha2::{Digest, Sha256};
-use tracing::error;
+use tracing::{error, info};
 
-#[cfg(not(debug_assertions))]
-use crossterm::{execute, terminal};
+pub(crate) const CONSEC_CMD_DELAY: Duration = Duration::from_millis(15);
 
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const CRATE_VER: &str = env!("CARGO_PKG_VERSION");
@@ -59,12 +59,8 @@ pub const CRATE_VER: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
-const STARTUP_INFO_URL: &str =
-    "https://gist.githubusercontent.com/WardLordRuby/15920ff68ae348933636a5c18bc51709/raw";
-
 const MOD_FILES_MODULE_NAME: &str = "mod";
-const HMW_DOWNLOAD_HINT: &str =
-    "HMW mod files are available to download for free through the Horizon MW launcher";
+const MOD_FILES_LATEST_VER: &str = "1.1";
 
 pub(crate) const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -82,31 +78,30 @@ pub(crate) mod files {
         "hmw-mod.exe",
     ];
 
-    pub(crate) const FNAME_MWR: &str = GAME_ENTRIES[0];
-
     pub(crate) const FNAME_HMW: &str = GAME_ENTRIES[6];
-    pub(crate) const DIR_NAME_HMW: &str = GAME_ENTRIES[5];
 
-    pub(crate) const FNAME_H2M_1: &str = GAME_ENTRIES[3];
-    pub(crate) const FNAME_H2M_2: &str = GAME_ENTRIES[4];
-    pub(crate) const DIR_NAME_H2M: &str = GAME_ENTRIES[1];
+    #[cfg(not(debug_assertions))]
+    pub(crate) use release::*;
+
+    #[cfg(not(debug_assertions))]
+    mod release {
+        use super::*;
+
+        pub(crate) const FNAME_MWR: &str = GAME_ENTRIES[0];
+        pub(crate) const DIR_NAME_HMW: &str = GAME_ENTRIES[5];
+        pub(crate) const FNAME_H2M_1: &str = GAME_ENTRIES[3];
+        pub(crate) const FNAME_H2M_2: &str = GAME_ENTRIES[4];
+        pub(crate) const DIR_NAME_H2M: &str = GAME_ENTRIES[1];
+    }
 }
 
 use files::*;
+use utils::display;
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
 
 pub(crate) const TERM_CLEAR_LINE: &str = "\r\x1B[J";
-
-pub(crate) static SPLASH_SCREEN_VIS: AtomicBool = AtomicBool::new(false);
-
-#[cfg(not(debug_assertions))]
-pub(crate) static SPLASH_SCREEN_EVENT_BUFFER: std::sync::LazyLock<
-    std::sync::Mutex<SplashScreenEvents>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(SplashScreenEvents::default()));
-
-pub(crate) static ENDPOINTS: OnceLock<Endpoints> = OnceLock::new();
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -115,50 +110,156 @@ macro_rules! new_io_error {
     };
 }
 
-#[cfg(not(debug_assertions))]
-#[derive(Default)]
-pub(crate) struct SplashScreenEvents {
-    pub(crate) pre_subscriber: Vec<Message>,
-    pub(crate) from_subscriber: String,
+pub mod splash_screen {
+    use crate::commands::handler::Message;
+    use std::io;
+
+    #[cfg(not(debug_assertions))]
+    use crossterm::{
+        cursor, execute, queue,
+        terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
+    };
+
+    #[cfg(not(debug_assertions))]
+    pub(crate) use release::*;
+
+    #[cfg(not(debug_assertions))]
+    mod release {
+
+        use super::*;
+
+        use std::cell::{Cell, RefCell};
+
+        use tracing_subscriber::fmt::format::Writer;
+
+        thread_local! {
+            pub(super) static SPLASH_SCREEN_VIS: Cell<bool> = const { Cell::new(true) };
+            pub(super) static SPLASH_SCREEN_EVENT_BUFFER:
+                RefCell<SplashScreenEvents> = RefCell::new(SplashScreenEvents::default());
+        }
+
+        #[derive(Default)]
+        pub(super) struct SplashScreenEvents {
+            pub(super) pre_subscriber: Vec<Message>,
+            pub(super) from_subscriber: String,
+        }
+
+        pub(crate) fn is_visible() -> bool {
+            SPLASH_SCREEN_VIS.get()
+        }
+
+        pub(crate) fn push_formatter<F>(print: F) -> std::fmt::Result
+        where
+            F: FnOnce(Writer<'_>) -> std::fmt::Result,
+        {
+            SPLASH_SCREEN_EVENT_BUFFER
+                .with_borrow_mut(|buf| print(Writer::new(&mut buf.from_subscriber)))
+        }
+    }
+
+    /// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
+    /// event as our subscriber format layer takes care of fn call behind the scenes
+    pub fn push_message(message: Message) {
+        #[cfg(debug_assertions)]
+        message.record();
+
+        #[cfg(not(debug_assertions))]
+        {
+            if !SPLASH_SCREEN_VIS.get() {
+                return message.record();
+            }
+
+            SPLASH_SCREEN_EVENT_BUFFER.with_borrow_mut(|buf| buf.pre_subscriber.push(message))
+        }
+    }
+
+    pub async fn enter() -> io::Result<()> {
+        #[cfg(not(debug_assertions))]
+        {
+            // font: 4Max - patorjk.com
+            const SPLASH_TEXT: [&str; 4] = [
+                r#"8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888"#,
+                r#"88b  d88   dPYb     88   dP   `" 88  88      Yb  db  dP  88 88__dP 88__  "#,
+                r#"88YbdP88  dP__Yb    88   Yb      888888       YbdPYbdP   88 88"Yb  88""  "#,
+                r#"88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888"#,
+            ];
+
+            let mut stdout = std::io::stdout();
+
+            execute!(stdout, terminal::EnterAlternateScreen)?;
+
+            let (columns, rows) = terminal::size()?;
+
+            let start_y = rows.saturating_sub(SPLASH_TEXT.len() as u16) / 2;
+            let start_x = columns.saturating_sub(SPLASH_TEXT[0].len() as u16) / 2;
+
+            for (i, &line) in SPLASH_TEXT.iter().enumerate() {
+                execute!(stdout, BeginSynchronizedUpdate)?;
+
+                queue!(
+                    stdout,
+                    cursor::MoveTo(start_x, start_y + i as u16),
+                    crossterm::style::Print(line)
+                )?;
+
+                tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+                execute!(stdout, EndSynchronizedUpdate)?;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn leave(task: tokio::task::JoinHandle<io::Result<()>>) {
+        task.await.unwrap().unwrap();
+
+        #[cfg(not(debug_assertions))]
+        {
+            execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
+            SPLASH_SCREEN_VIS.set(false);
+
+            let events = SPLASH_SCREEN_EVENT_BUFFER.take();
+
+            events
+                .pre_subscriber
+                .into_iter()
+                .for_each(|message| message.record());
+
+            print!("{}", events.from_subscriber)
+        }
+    }
 }
 
-fn set_fallback_endpoints() -> AppDetails {
-    ENDPOINTS
-        .set(Endpoints::default())
-        .expect("only called if failed to reach match_wire_remote_info.json");
-    AppDetails::default()
+pub type LoggerRes = (Option<PathBuf>, Option<Result<CacheFile, ReadCacheErr>>);
+
+pub fn try_init_logger() -> LoggerRes {
+    let mut local_dir = std::env::var_os(LOCAL_DATA).map(PathBuf::from);
+    let mut cache_res = None;
+    if let Some(ref mut dir) = local_dir {
+        if let Err(err) = check_app_dir_exists(dir) {
+            splash_screen::push_message(Message::error(err.to_string()));
+        } else {
+            init_subscriber(dir)
+                .unwrap_or_else(|err| splash_screen::push_message(Message::error(err.to_string())));
+            info!(name: LOG_ONLY, "App startup");
+            cache_res = Some(read_cache(dir));
+        }
+    } else {
+        splash_screen::push_message(Message::error("Could not find %appdata%/local"));
+
+        #[cfg(debug_assertions)]
+        init_subscriber(std::path::Path::new("")).unwrap();
+    }
+
+    (local_dir, cache_res)
 }
 
 pub(crate) fn client_with_timeout(secs: u64) -> Client {
     Client::builder().timeout(Duration::from_secs(secs)).build().expect(
         "TLS backend cannot be initialized, or the resolver cannot load the system configuration",
     )
-}
-
-pub async fn set_endpoints() -> AppDetails {
-    let client = client_with_timeout(5);
-    let response = match client.get(STARTUP_INFO_URL).send().await {
-        Ok(data) => data,
-        Err(err) => {
-            print_during_splash(Message::error(format!(
-                "Could not reach MatchWire startup json: {err}"
-            )));
-            return set_fallback_endpoints();
-        }
-    };
-
-    match response.json::<StartupInfo>().await {
-        Ok(startup) => {
-            ENDPOINTS.set(startup.endpoints).expect("only valid set");
-            AppDetails::from(startup.version)
-        }
-        Err(err) => {
-            print_during_splash(Message::error(format!(
-                "Failed to parse MatchWire startup json: {err}"
-            )));
-            set_fallback_endpoints()
-        }
-    }
 }
 
 fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
@@ -179,16 +280,16 @@ fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
 pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static str>> {
     let client = client_with_timeout(6);
     let latest = client
-        .get(Endpoints::hmw_manifest())
+        .get(global_state::Endpoints::hmw_manifest())
         .send()
         .await?
         .json::<Value>()
         .await?;
 
-    if let Some(json_path) = Endpoints::manifest_hash_path() {
+    if let Some(json_path) = global_state::Endpoints::manifest_hash_path() {
         match try_query_json_path(&latest, json_path) {
             Ok(hash) => return Ok(Ok(hash)),
-            Err(err) => print_during_splash(Message::error(err)),
+            Err(err) => splash_screen::push_message(Message::error(err)),
         }
     }
 
@@ -200,7 +301,9 @@ pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static st
     Ok(hmw_manifest
         .modules
         .iter_mut()
-        .find(|module| module.name == MOD_FILES_MODULE_NAME)
+        .find(|module| {
+            module.name == MOD_FILES_MODULE_NAME && module.version == MOD_FILES_LATEST_VER
+        })
         .and_then(|module| module.files_with_hashes.remove(FNAME_HMW))
         .ok_or("hmw manifest.json formatting has changed"))
 }
@@ -268,11 +371,10 @@ where
     }
 }
 
-fn hmw_download_hint() -> String {
-    format!("{HMW_DOWNLOAD_HINT}\n{}", Endpoints::hmw_download())
-}
+#[cfg(not(debug_assertions))]
+fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
+    use crate::utils::display::HmwDownloadHint;
 
-pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
     match does_dir_contain(exe_dir, Operation::Count, &GAME_ENTRIES)
         .expect("Failed to read contents of current dir")
     {
@@ -286,8 +388,7 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, s
             }
             if !files.contains(DIR_NAME_HMW) && !files.contains(DIR_NAME_H2M) {
                 return Err(Cow::Owned(format!(
-                    "Mw2 Remastered mod files not found, {}",
-                    hmw_download_hint()
+                    "Mw2 Remastered mod files not found, {HmwDownloadHint}",
                 )));
             }
             let found_game = if files.contains(FNAME_HMW) {
@@ -297,10 +398,7 @@ pub fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, s
             } else if files.contains(FNAME_H2M_2) {
                 FNAME_H2M_2
             } else {
-                return Err(Cow::Owned(format!(
-                    "Mod exe not found, {}",
-                    hmw_download_hint()
-                )));
+                return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}",)));
             };
             Ok(exe_dir.join(found_game))
         }
@@ -325,7 +423,7 @@ fn hash_file_hex(path: &Path) -> io::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-pub fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
+fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
     let version = get_exe_version(game_exe_path).or_else(|| {
         println!(
             "{RED}Failed to get version of {}{RESET}",
@@ -358,7 +456,7 @@ pub fn await_user_for_end() {
 }
 
 /// Validates local/app_dir exists and modifies input if valid
-pub fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
+fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     const PREV_NAME: &str = "h2m_favorites";
     let local_dir = local.clone();
 
@@ -464,103 +562,17 @@ impl Spinner {
     }
 }
 
-pub async fn splash_screen() -> io::Result<()> {
-    #[cfg(not(debug_assertions))]
-    {
-        use crossterm::{
-            queue,
-            terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
-        };
-
-        // font: 4Max - patorjk.com
-        const SPLASH_TEXT: [&str; 4] = [
-            r#"8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888"#,
-            r#"88b  d88   dPYb     88   dP   `" 88  88      Yb  db  dP  88 88__dP 88__  "#,
-            r#"88YbdP88  dP__Yb    88   Yb      888888       YbdPYbdP   88 88"Yb  88""  "#,
-            r#"88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888"#,
-        ];
-
-        let mut stdout = std::io::stdout();
-
-        SPLASH_SCREEN_VIS.store(true, std::sync::atomic::Ordering::SeqCst);
-        execute!(stdout, terminal::EnterAlternateScreen)?;
-
-        let (width, height) = terminal::size()?;
-
-        let start_y = height.saturating_sub(SPLASH_TEXT.len() as u16) / 2;
-        let start_x = width.saturating_sub(SPLASH_TEXT[0].len() as u16) / 2;
-
-        for (i, &line) in SPLASH_TEXT.iter().enumerate() {
-            execute!(stdout, BeginSynchronizedUpdate)?;
-
-            queue!(
-                stdout,
-                cursor::MoveTo(start_x, start_y + i as u16),
-                crossterm::style::Print(line)
-            )?;
-
-            tokio::time::sleep(Duration::from_millis(160)).await;
-            execute!(stdout, EndSynchronizedUpdate)?;
-        }
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-
-    Ok(())
-}
-
-pub(crate) async fn leave_splash_screen(task: tokio::task::JoinHandle<io::Result<()>>) {
-    task.await.unwrap().unwrap();
-
-    #[cfg(not(debug_assertions))]
-    {
-        execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
-        SPLASH_SCREEN_VIS.store(false, std::sync::atomic::Ordering::SeqCst);
-
-        let events = loop {
-            match SPLASH_SCREEN_EVENT_BUFFER.try_lock() {
-                Ok(mut buffer) => break std::mem::take(&mut *buffer),
-                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        };
-
-        events
-            .pre_subscriber
-            .into_iter()
-            .for_each(|message| message.record());
-
-        print!("{}", events.from_subscriber)
-    }
-}
-
-/// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
-/// event as our subscriber format layer takes care of fn call behind the scenes
-pub fn print_during_splash(message: Message) {
-    #[cfg(debug_assertions)]
-    {
-        assert!(!SPLASH_SCREEN_VIS.load(std::sync::atomic::Ordering::SeqCst));
-        println!("{message}");
-    }
-
-    #[cfg(not(debug_assertions))]
-    {
-        let mut event_buffer = SPLASH_SCREEN_EVENT_BUFFER.lock().expect("lock uncontested");
-        event_buffer.pre_subscriber.push(message);
-    }
-}
-
 pub async fn startup_cache_task(
     cache_res: Option<Result<CacheFile, ReadCacheErr>>,
 ) -> StartupCacheContents {
-    use tokio::sync::Mutex;
-
     let (cmd_history, prev_cache) = match cache_res {
         Some(Ok(mut file_contents)) => {
-            return StartupCacheContents {
+            let startup_contents = StartupCacheContents {
                 command_history: std::mem::take(&mut file_contents.cmd_history),
-                cache: Arc::new(Mutex::new(Cache::from(file_contents))),
                 modified: false,
-            }
+            };
+            global_state::Cache::set(file_contents.into());
+            return startup_contents;
         }
         Some(Err(err)) => {
             error!("{err}");
@@ -568,7 +580,7 @@ pub async fn startup_cache_task(
                 .map(|mut file_contents| {
                     (
                         Some(std::mem::take(&mut file_contents.cmd_history)),
-                        Some(Arc::new(Mutex::new(Cache::from(file_contents)))),
+                        Some(file_contents.into()),
                     )
                 })
                 .unwrap_or((None, None))
@@ -576,30 +588,10 @@ pub async fn startup_cache_task(
         None => (None, None),
     };
 
-    let build_res = build_cache(prev_cache.as_ref()).await;
-    let modified = build_res.is_ok();
-
-    let cache = match build_res {
-        Ok(updated_cache) => {
-            if let Some(prev) = prev_cache {
-                {
-                    let mut lock = prev.lock().await;
-                    *lock = updated_cache;
-                }
-                prev
-            } else {
-                Arc::new(Mutex::new(updated_cache))
-            }
-        }
-        Err(err) => {
-            error!("{err}");
-            prev_cache.unwrap_or_else(|| Arc::new(Mutex::new(Cache::default())))
-        }
-    };
+    global_state::Cache::set(prev_cache.unwrap_or_default());
 
     StartupCacheContents {
         command_history: cmd_history.unwrap_or_default(),
-        cache,
-        modified,
+        modified: build_cache().await.map_err(display::error).is_ok(),
     }
 }

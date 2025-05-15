@@ -7,7 +7,7 @@ use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKin
 // HARD: this ideally would be done by a proc-macro
 pub const COMPLETION: CommandScheme = init_command_scheme();
 
-const COMMAND_RECS: [&str; 12] = [
+const COMMAND_RECS: [&str; 13] = [
     "filter",
     "reconnect",
     "launch",
@@ -17,11 +17,12 @@ const COMMAND_RECS: [&str; 12] = [
     "local-env",
     "quit",
     "version",
+    "last",
     "logs",
     "gamedir",
     "localenv",
 ];
-const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 9), (5, 10), (6, 11)];
+const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 10), (5, 11), (6, 12)];
 
 const fn init_command_scheme() -> CommandScheme {
     CommandScheme::new(
@@ -32,7 +33,7 @@ const fn init_command_scheme() -> CommandScheme {
     )
 }
 
-const FILTER_RECS: [&str; 11] = [
+const FILTER_RECS: [&str; 13] = [
     "limit",
     "player-min",
     "team-size-max",
@@ -40,12 +41,14 @@ const FILTER_RECS: [&str; 11] = [
     "source",
     "includes",
     "excludes",
+    "stats",
     "with-bots",
     "without-bots",
     "include-unresponsive",
     "retry-max",
+    "verbose",
 ];
-const FILTER_SHORT: [(usize, &str); 7] = [
+const FILTER_SHORT: [(usize, &str); 8] = [
     (0, "l"),
     (1, "p"),
     (2, "t"),
@@ -53,7 +56,9 @@ const FILTER_SHORT: [(usize, &str); 7] = [
     (4, "s"),
     (5, "i"),
     (6, "e"),
+    (7, "S"),
 ];
+const FILTER_ALIAS: [(usize, usize); 1] = [(7, 12)];
 
 const RECONNECT_RECS: [&str; 2] = ["history", "connect"];
 const RECONNECT_SHORT: [(usize, &str); 2] = [(0, "H"), (1, "c")];
@@ -63,12 +68,13 @@ const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
 
 const CONSOLE_RECS: [&str; 1] = ["all"];
 
-const COMMAND_INNER: &[InnerScheme; 9] = &[
+const COMMAND_INNER: &[InnerScheme] = &[
     // filter
     InnerScheme::new(
         RecData::new(RecKind::argument_with_no_required_inputs())
             .with_parent(Parent::Root)
             .with_recommendations(&FILTER_RECS)
+            .with_alias(&FILTER_ALIAS)
             .with_short(&FILTER_SHORT),
         Some(FILTER_INNER),
     ),
@@ -104,6 +110,8 @@ const COMMAND_INNER: &[InnerScheme; 9] = &[
     InnerScheme::end(Parent::Root),
     // version
     InnerScheme::end(Parent::Root),
+    // last
+    InnerScheme::end(Parent::Root),
 ];
 
 const FILTER_REGIONS: [&str; 8] = [
@@ -132,7 +140,7 @@ fn u8_bounds(value: &str, valid: impl Fn(u8) -> bool) -> bool {
     value.parse::<u8>().is_ok_and(valid)
 }
 
-const FILTER_INNER: &[InnerScheme; 11] = &[
+const FILTER_INNER: &[InnerScheme] = &[
     // limit
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
@@ -152,7 +160,8 @@ const FILTER_INNER: &[InnerScheme; 11] = &[
         RecData::new(RecKind::value_with_num_args(REGION_LEN))
             .with_parent(Parent::Entry(COMMAND_RECS[0]))
             .with_recommendations(&FILTER_REGIONS)
-            .with_alias(&FILTER_REGIONS_ALIAS),
+            .with_alias(&FILTER_REGIONS_ALIAS)
+            .without_help(),
         None,
     ),
     // source
@@ -160,7 +169,8 @@ const FILTER_INNER: &[InnerScheme; 11] = &[
         RecData::new(RecKind::value_with_num_args(SOURCE_LEN))
             .with_parent(Parent::Entry(COMMAND_RECS[0]))
             .with_recommendations(&FILTER_SOURCE_RECS)
-            .with_alias(&FILTER_SOURCE_ALIAS),
+            .with_alias(&FILTER_SOURCE_ALIAS)
+            .without_help(),
         None,
     ),
     // includes
@@ -171,6 +181,8 @@ const FILTER_INNER: &[InnerScheme; 11] = &[
     InnerScheme::user_defined(usize::MAX)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
         .with_parsing_rule(search_term_parser),
+    // stats
+    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
     // with-bots
     InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
     // without-bots
@@ -183,7 +195,7 @@ const FILTER_INNER: &[InnerScheme; 11] = &[
         .with_parsing_rule(is_unsigned),
 ];
 
-const RECONNECT_INNER: &[InnerScheme; 2] = &[
+const RECONNECT_INNER: &[InnerScheme] = &[
     // history
     InnerScheme::end(Parent::Entry(COMMAND_RECS[1])),
     // connect
@@ -193,7 +205,7 @@ const RECONNECT_INNER: &[InnerScheme; 2] = &[
         .set_end(),
 ];
 
-const CONSOLE_INNER: &[InnerScheme; 1] = &[
+const CONSOLE_INNER: &[InnerScheme] = &[
     // all
     InnerScheme::end(Parent::Entry(COMMAND_RECS[4])),
 ];

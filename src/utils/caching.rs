@@ -1,9 +1,12 @@
 use crate::{
     client_with_timeout,
     commands::{
-        filter::{get_sourced_servers, queue_info_requests, Server, Sourced, DEFAULT_SOURCES},
+        filter::{
+            ops::{get_sourced_servers, queue_info_requests},
+            strategies::FastStrategy,
+            Addressable, Server, Sourced, DEFAULT_SOURCES,
+        },
         handler::CommandContext,
-        launch_h2m::HostName,
         reconnect::HISTORY_MAX,
     },
     does_dir_contain,
@@ -11,8 +14,9 @@ use crate::{
         cli::Source,
         json_data::{CacheFile, ContCodeMap},
     },
-    new_io_error, Operation, OperationResult, Spinner, CACHED_DATA, CRATE_VER, LOG_ONLY,
-    SPLASH_SCREEN_VIS,
+    new_io_error,
+    utils::global_state::{self, ThreadCopyState},
+    Operation, OperationResult, Spinner, CACHED_DATA, CRATE_VER, LOG_ONLY,
 };
 
 use std::{
@@ -21,49 +25,11 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     path::Path,
-    sync::{atomic::Ordering, Arc},
     time::{Duration, SystemTime},
 };
 
 use constcat::concat;
-use tokio::sync::Mutex;
 use tracing::{error, info, instrument, trace};
-
-pub struct Cache {
-    /// Key: host name with cod color codes
-    pub host_to_connect: HashMap<String, SocketAddr>,
-    pub ip_to_region: HashMap<IpAddr, [u8; 2]>,
-    pub connection_history: Vec<HostName>,
-    pub iw4m: HashMap<IpAddr, Vec<u16>>,
-    pub hmw: HashMap<IpAddr, Vec<u16>>,
-    pub created: SystemTime,
-}
-
-impl From<CacheFile> for Cache {
-    fn from(value: CacheFile) -> Self {
-        Cache {
-            host_to_connect: value.cache.host_names,
-            ip_to_region: value.cache.regions,
-            connection_history: value.connection_history,
-            iw4m: value.cache.iw4m,
-            hmw: value.cache.hmw,
-            created: value.created,
-        }
-    }
-}
-
-impl Default for Cache {
-    fn default() -> Self {
-        Cache {
-            host_to_connect: HashMap::new(),
-            ip_to_region: HashMap::new(),
-            connection_history: Vec::new(),
-            iw4m: HashMap::new(),
-            hmw: HashMap::new(),
-            created: SystemTime::now(),
-        }
-    }
-}
 
 impl Sourced {
     pub(crate) fn to_flattened_source(&self) -> Source {
@@ -74,7 +40,7 @@ impl Sourced {
     }
 }
 
-impl Cache {
+impl global_state::Cache {
     fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
         let map = match source {
             Source::HmwMaster => &mut self.hmw,
@@ -91,15 +57,8 @@ impl Cache {
             .or_insert(ports.to_vec());
     }
 
-    fn internal_update_cache_call(
-        &mut self,
-        addr: SocketAddr,
-        source: Source,
-        host_name: Option<String>,
-    ) {
-        if let Some(host_name) = host_name {
-            self.host_to_connect.insert(host_name, addr);
-        }
+    fn internal_update_cache_call(&mut self, addr: SocketAddr, source: Source, host_name: String) {
+        self.host_to_connect.insert(host_name, addr);
         self.insert_ports(addr.ip(), &[addr.port()], source);
     }
 
@@ -107,7 +66,7 @@ impl Cache {
         self.internal_update_cache_call(
             server.source.socket_addr(),
             server.source.to_flattened_source(),
-            server.info.as_ref().map(|info| info.host_name.clone()),
+            server.info.host_name.clone(),
         );
     }
 
@@ -115,14 +74,26 @@ impl Cache {
         self.internal_update_cache_call(
             server.source.socket_addr(),
             server.source.to_flattened_source(),
-            server.info.map(|info| info.host_name),
+            server.info.host_name,
         );
     }
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'static str> {
-    let spinner = if !SPLASH_SCREEN_VIS.load(Ordering::SeqCst) {
+pub async fn build_cache() -> Result<(), &'static str> {
+    let splash_screen_visible = {
+        #[cfg(debug_assertions)]
+        {
+            false
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            crate::splash_screen::is_visible()
+        }
+    };
+
+    let spinner = if !splash_screen_visible {
         Some(Spinner::new(String::from("Updating cache")))
     } else {
         info!("Updating cache...");
@@ -136,8 +107,7 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
     };
 
     let client = client_with_timeout(5);
-
-    let servers = match get_sourced_servers(DEFAULT_SOURCES, prev, &client).await {
+    let servers = match get_sourced_servers::<_, FastStrategy>(DEFAULT_SOURCES, &client).await {
         Ok(servers) => servers,
         Err(err) => {
             finish_spinner();
@@ -145,49 +115,49 @@ pub async fn build_cache(prev: Option<&Arc<Mutex<Cache>>>) -> Result<Cache, &'st
         }
     };
 
-    let mut cache = Cache::default();
+    global_state::Cache::with_borrow_mut(|cache| {
+        let mut ip_to_region = servers
+            .iter()
+            .filter_map(|server| {
+                let server_ip = server.socket_addr().ip();
+                cache
+                    .ip_to_region
+                    .get(&server_ip)
+                    .map(|&region| (server_ip, region))
+            })
+            .collect::<HashMap<_, _>>();
 
-    if let Some(prev_cache) = prev {
-        let mut lock = prev_cache.lock().await;
-        std::mem::swap(&mut cache.connection_history, &mut lock.connection_history);
-
-        for server in servers.iter() {
-            let server_ip = server.socket_addr().ip();
-            let Some(cached_region) = lock.ip_to_region.remove(&server_ip) else {
-                continue;
-            };
-            cache.ip_to_region.insert(server_ip, cached_region);
-        }
-    }
-
-    let mut tasks = queue_info_requests(servers, false, &client).await;
-
-    while let Some(res) = tasks.join_next().await {
+        std::mem::swap(&mut cache.ip_to_region, &mut ip_to_region);
+    });
+    let (_, mut requests) = queue_info_requests(servers.into_iter(), false, &client);
+    let mut servers = Vec::with_capacity(requests.len());
+    while let Some(res) = requests.join_next().await {
         match res {
-            Ok(result) => match result {
-                Ok(server) => cache.push(server),
-                Err(mut err) => {
-                    error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
-                    let Sourced::Iw4(data) = err.meta else {
-                        continue;
-                    };
-                    let Ok(ip) = data.server.ip.parse() else {
-                        continue;
-                    };
-                    cache.insert_ports(ip, &[data.server.port], Source::Iw4Master);
-                    cache
-                        .host_to_connect
-                        .insert(data.server.host_name, SocketAddr::new(ip, data.server.port));
-                }
-            },
+            Ok(Ok(server)) => servers.push(server),
+            Ok(Err(mut err)) => {
+                error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
+                if let Sourced::Iw4(meta) = err.meta {
+                    servers.push(Server::from(meta));
+                };
+            }
             Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
 
+    global_state::Cache::with_borrow_mut(|cache| {
+        for server in servers {
+            cache.push(server);
+        }
+
+        cache.created = SystemTime::now();
+    });
+
+    global_state::UpdateCache::set(true);
+
     finish_spinner();
     info!("Cache updated!");
 
-    Ok(cache)
+    Ok(())
 }
 
 pub struct ReadCacheErr {
@@ -255,15 +225,13 @@ pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub async fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Result<()> {
+pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Result<()> {
     let Some(local_path) = context.local_dir() else {
         return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
-    {
-        let cache_lock = context.cache();
-        let cache = cache_lock.lock().await;
 
+    global_state::Cache::with_borrow(|cache| {
         serde_json::to_writer_pretty(
             file,
             &serde_json::json!({
@@ -283,8 +251,9 @@ pub async fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io
                 },
             }),
         )
-        .map_err(io::Error::other)?;
-    }
+        .map_err(io::Error::other)
+    })?;
+
     info!(name: LOG_ONLY, "Cache saved locally");
     Ok(())
 }

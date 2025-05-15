@@ -2,21 +2,22 @@ use crate::{
     commands::{
         filter::build_favorites,
         launch_h2m::{
-            game_open, get_console_hwnd, hide_pseudo_console, initialize_listener,
-            launch_h2m_pseudo, toggle_close_state, LaunchError, WinApiErr,
+            game_open, hide_pseudo_console, initialize_listener, launch_h2m_pseudo,
+            toggle_close_state, LaunchError, WinApiErr,
         },
     },
     exe_details,
     files::*,
-    get_latest_hmw_hash, leave_splash_screen,
+    get_latest_hmw_hash,
     models::{
         cli::{CacheCmd, Command, Filters},
         json_data::Version,
     },
-    open_dir, print_during_splash,
+    open_dir, splash_screen,
     utils::{
-        caching::{build_cache, write_cache, Cache},
-        display::{ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_H2M, DISP_NAME_HMW},
+        caching::{build_cache, write_cache},
+        display::{self, ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_HMW},
+        global_state::{self, ThreadCopyState},
     },
     Spinner, CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, SAVED_HISTORY_CAP,
 };
@@ -25,13 +26,10 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Display,
-    future::Future,
     io::{self, Stdout},
+    net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use crossterm::{
@@ -43,19 +41,18 @@ use repl_oxide::{
     ansi_code::{GREEN, RED, RESET, YELLOW},
     clap::try_parse_from,
     executor::{CommandHandle as CmdHandle, Executor},
-    input_hook::{CallbackErr, HookControl, HookID, HookStates, HookedEvent, InputHook},
-    repl_builder, EventLoop, Repl,
+    input_hook::{HookControl, HookID, HookStates, HookedEvent, InputHook},
+    repl_builder, Repl,
 };
 use tokio::{
     sync::{
         mpsc::{channel, Receiver, Sender},
-        Mutex, Notify, RwLock, RwLockReadGuard,
+        Notify,
     },
     task::JoinHandle,
     time::Duration,
 };
 use tracing::{error, info, warn};
-use windows_sys::Win32::Foundation::HWND;
 use winptyrs::PTY;
 
 pub enum Message {
@@ -81,10 +78,9 @@ impl Message {
         }
     }
 
-    #[cfg(not(debug_assertions))]
     pub(crate) fn record(&self) {
         match self {
-            str @ Self::Str(_) => println!("{str}"),
+            Self::Str(msg) => println!("{msg}"),
             Self::Info(msg) => info!("{msg}"),
             Self::Warn(msg) => warn!("{msg}"),
             Self::Err(msg) => error!("{msg}"),
@@ -132,20 +128,43 @@ pub struct GameDetails {
 }
 
 impl GameDetails {
-    fn set_game_name(exe_path: &Path) -> Cow<'static, str> {
-        let file_name = exe_path
-            .file_name()
-            .expect("path points to exe")
-            .to_string_lossy();
+    pub fn get() -> Result<(Self, bool), Cow<'static, str>> {
+        let exe_dir =
+            std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
 
-        match file_name.as_ref() {
-            FNAME_HMW => Cow::Borrowed(DISP_NAME_HMW),
-            FNAME_H2M_1 | FNAME_H2M_2 => Cow::Borrowed(DISP_NAME_H2M),
-            _ => Cow::Owned(file_name.into_owned()),
+        let no_launch = {
+            #[cfg(not(debug_assertions))]
+            {
+                use clap::Parser;
+                crate::models::cli::Cli::parse().no_launch
+            }
+
+            #[cfg(debug_assertions)]
+            true
+        };
+
+        #[cfg(not(debug_assertions))]
+        {
+            let game = match crate::contains_required_files(&exe_dir) {
+                Ok(game_exe_path) => {
+                    let (version, hash) = crate::exe_details(&game_exe_path);
+                    GameDetails::new(game_exe_path, version, hash)
+                }
+                Err(err) if no_launch => {
+                    splash_screen::push_message(Message::error(err));
+                    GameDetails::default(&exe_dir)
+                }
+                Err(err) => return Err(err),
+            };
+
+            Ok((game, no_launch))
         }
+
+        #[cfg(debug_assertions)]
+        Ok((GameDetails::default(&exe_dir), no_launch))
     }
 
-    pub fn default(exe_dir: &Path) -> Self {
+    fn default(exe_dir: &Path) -> Self {
         GameDetails {
             path: exe_dir.join(FNAME_HMW),
             game_name: Cow::Borrowed(DISP_NAME_HMW),
@@ -155,9 +174,23 @@ impl GameDetails {
         }
     }
 
-    pub fn new(exe_path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
+    #[cfg(not(debug_assertions))]
+    fn new(exe_path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
+        fn set_game_name(exe_path: &Path) -> Cow<'static, str> {
+            let file_name = exe_path
+                .file_name()
+                .expect("path points to exe")
+                .to_string_lossy();
+
+            match file_name.as_ref() {
+                FNAME_HMW => Cow::Borrowed(DISP_NAME_HMW),
+                FNAME_H2M_1 | FNAME_H2M_2 => Cow::Borrowed(crate::utils::display::DISP_NAME_H2M),
+                _ => Cow::Owned(file_name.into_owned()),
+            }
+        }
+
         GameDetails {
-            game_name: GameDetails::set_game_name(&exe_path),
+            game_name: set_game_name(&exe_path),
             path: exe_path,
             version,
             hash_curr,
@@ -200,25 +233,8 @@ impl From<Version> for AppDetails {
 pub(crate) type CommandHandle = CmdHandle<CommandContext, Stdout>;
 pub type ReplHandle = Repl<CommandContext, Stdout>;
 
-#[derive(Default)]
-pub(crate) struct ConsoleHistory {
-    pub(crate) history: Vec<String>,
-    pub(crate) last: AtomicUsize,
-}
-
-impl ConsoleHistory {
-    fn reset_start_i(&self) {
-        self.last.store(0, Ordering::SeqCst);
-    }
-}
-
 pub struct CommandContext {
-    cache: Arc<Mutex<Cache>>,
-    cache_needs_update: Arc<AtomicBool>,
     can_close_console: bool,
-    forward_logs: Arc<AtomicBool>,
-    h2m_console_history: Arc<Mutex<ConsoleHistory>>,
-    pty_handle: Option<Arc<RwLock<PTY>>>,
     local_dir: Option<PathBuf>,
     msg_sender: Sender<Message>,
     pub game_state_change: Arc<Notify>,
@@ -229,7 +245,7 @@ pub struct CommandContext {
 impl Executor<Stdout> for CommandContext {
     async fn try_execute_command(
         &mut self,
-        _line_handle: &mut ReplHandle,
+        line_handle: &mut ReplHandle,
         user_tokens: Vec<String>,
     ) -> io::Result<CommandHandle> {
         let command = match try_parse_from(&user_tokens) {
@@ -237,14 +253,15 @@ impl Executor<Stdout> for CommandContext {
             Err(err) => return err.print().map(|_| CommandHandle::Processed),
         };
 
-        self.cache_needs_update.store(true, Ordering::Relaxed);
+        global_state::UpdateCache::set(true);
 
         match command {
-            Command::Filter { args } => self.new_favorites_with(args).await,
-            Command::Reconnect { args } => self.reconnect(args).await,
-            Command::Launch => self.launch_handler().await,
+            Command::Filter { args } => self.new_favorites_with(line_handle, args).await,
+            Command::Last => Self::display_servers(line_handle),
+            Command::Reconnect { args } => self.reconnect(line_handle, args),
+            Command::Launch => self.launch_handler(),
             Command::Cache { option } => self.modify_cache(option).await,
-            Command::Console { all } => self.open_game_console(all).await,
+            Command::Console { all } => self.open_game_console(all),
             Command::GameDir => self.try_open_game_dir(),
             Command::LocalEnv => self.try_open_local_dir(),
             Command::Version => self.print_version().await,
@@ -265,7 +282,6 @@ pub struct StartupData {
 #[derive(Default)]
 pub struct StartupCacheContents {
     pub command_history: Vec<String>,
-    pub cache: Arc<Mutex<Cache>>,
     pub modified: bool,
 }
 
@@ -279,21 +295,19 @@ impl From<HookTag> for i32 {
     }
 }
 
-pub type Extras = (Receiver<Message>, Option<HWND>);
-
 impl CommandContext {
     pub async fn from(
         mut startup_data: StartupData,
         app: AppDetails,
         term: Stdout,
-    ) -> (ReplHandle, Self, Extras) {
+    ) -> (ReplHandle, Self, Receiver<Message>) {
         let (launch_res, hmw_hash_res, cache_res) = tokio::join!(
             startup_data.launch_task,
             startup_data.hmw_hash_task,
             startup_data.cache_task
         );
 
-        let handle = match launch_res {
+        let game_console = match launch_res {
             Ok(Some(Ok(handle))) => Some(handle),
             Ok(None) => None,
             rest => {
@@ -303,10 +317,12 @@ impl CommandContext {
                     Ok(Some(Ok(_))) | Ok(None) => unreachable!("by covered paths"),
                 };
                 error!("Could not launch H2M as child process: {err}");
-                print_during_splash(Message::Str(ConnectionHelp.into()));
+                splash_screen::push_message(Message::Str(ConnectionHelp.into()));
                 None
             }
         };
+        let console_set = game_console.is_some();
+        global_state::PtyHandle::set(game_console);
 
         if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
             if CRATE_VER != latest {
@@ -315,8 +331,8 @@ impl CommandContext {
         }
 
         if let Ok(Ok(Ok(hash_latest))) = hmw_hash_res {
-            if let Some(ref hash_curr) = startup_data.game.hash_curr {
-                if hash_curr != &hash_latest {
+            if let Some(hash_curr) = startup_data.game.hash_curr.as_deref() {
+                if hash_curr != hash_latest {
                     info!("{HmwUpdateHelp}")
                 }
             }
@@ -337,32 +353,22 @@ impl CommandContext {
         });
 
         let (message_tx, message_rx) = channel(50);
+        global_state::UpdateCache::set(startup_contents.modified);
 
         let mut ctx = CommandContext {
-            cache: startup_contents.cache,
             msg_sender: message_tx,
             game_state_change: Arc::new(Notify::const_new()),
             app,
             game: startup_data.game,
             local_dir: startup_data.local_dir,
-            pty_handle: handle.map(|pty| Arc::new(RwLock::new(pty))),
-            cache_needs_update: Arc::new(AtomicBool::new(startup_contents.modified)),
             can_close_console: true,
-            forward_logs: Arc::new(AtomicBool::new(false)),
-            h2m_console_history: Arc::new(Mutex::new(ConsoleHistory::default())),
         };
 
-        let hwnd = get_console_hwnd()
-            .map_err(|err| error!("{err}"))
-            .unwrap_or_default();
-
-        if ctx.pty_handle.is_some() {
-            ctx.listener_routine()
-                .await
-                .unwrap_or_else(|err| warn!("{err}"));
+        if console_set {
+            ctx.listener_routine().unwrap_or_else(display::warning);
         }
 
-        leave_splash_screen(startup_data.splash_task).await;
+        splash_screen::leave(startup_data.splash_task).await;
 
         (
             repl_builder(term)
@@ -373,48 +379,12 @@ impl CommandContext {
                 .build()
                 .expect("`Stdout` accepts crossterm commands"),
             ctx,
-            (message_rx, hwnd),
+            message_rx,
         )
-    }
-    #[inline]
-    pub(crate) fn cache(&self) -> Arc<Mutex<Cache>> {
-        Arc::clone(&self.cache)
-    }
-    #[inline]
-    pub(crate) fn cache_needs_update(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.cache_needs_update)
-    }
-    #[inline]
-    pub(crate) fn forward_logs(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.forward_logs)
-    }
-    pub(crate) async fn check_h2m_connection(
-        &mut self,
-    ) -> Result<Arc<RwLock<PTY>>, Cow<'static, str>> {
-        let Some(lock) = &self.pty_handle else {
-            return Err(Cow::Borrowed("No connection to H2M is active"));
-        };
-        let handle = lock.read().await;
-        let err = match handle.is_alive() {
-            Ok(true) => return Ok(Arc::clone(lock)),
-            Ok(false) => Cow::Borrowed("No connection to H2M is active"),
-            Err(err) => Cow::Owned(err.to_string_lossy().to_string()),
-        };
-        drop(handle);
-        self.pty_handle = None;
-        Err(err)
     }
     #[inline]
     pub(crate) fn local_dir(&self) -> Option<&Path> {
         self.local_dir.as_deref()
-    }
-    #[inline]
-    pub(crate) fn h2m_console_history(&self) -> Arc<Mutex<ConsoleHistory>> {
-        Arc::clone(&self.h2m_console_history)
-    }
-    #[inline]
-    pub(crate) fn pty_handle(&self) -> Option<Arc<RwLock<PTY>>> {
-        self.pty_handle.as_ref().map(Arc::clone)
     }
     #[inline]
     pub(crate) fn msg_sender(&self) -> Sender<Message> {
@@ -431,10 +401,6 @@ impl CommandContext {
     #[inline]
     pub(crate) fn game_name(&self) -> Cow<'static, str> {
         Cow::clone(&self.game.game_name)
-    }
-    #[inline]
-    fn init_pty(&mut self, pty: PTY) {
-        self.pty_handle = Some(Arc::new(RwLock::new(pty)))
     }
 
     fn try_open_game_dir(&self) -> io::Result<CommandHandle> {
@@ -454,56 +420,29 @@ impl CommandContext {
         Ok(CommandHandle::Processed)
     }
 
-    pub async fn graceful_shutdown(&mut self, cmd_history: &[String]) {
-        if self.cache_needs_update().load(Ordering::SeqCst) {
-            write_cache(self, cmd_history)
-                .await
-                .unwrap_or_else(|err| error!(name: LOG_ONLY, "{err}"))
+    pub fn graceful_shutdown(&mut self, cmd_history: &[String]) {
+        if global_state::UpdateCache::get() {
+            write_cache(self, cmd_history).unwrap_or_else(display::log_error)
         }
-        self.try_send_quit_cmd().await;
+
+        global_state::PtyHandle::try_drop_pty(&self.game_name());
+
+        if let Some(hwnd) = global_state::AppHWND::get().filter(|_| !self.can_close_console) {
+            // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
+            unsafe { toggle_close_state(&mut self.can_close_console, hwnd) }
+                .unwrap_or_else(display::log_error);
+        }
+
         info!(name: LOG_ONLY, "graceful app shutdown");
     }
 
-    async fn try_send_quit_cmd(&mut self) {
-        if game_open()
-            .unwrap_or_else(WinApiErr::resolve_to_closed)
-            .is_none()
-        {
-            return;
-        }
-        let Ok(rw_console_lock) = self.check_h2m_connection().await else {
-            return;
-        };
-        let game_console = rw_console_lock.read().await;
-        match game_console.send_cmd("quit") {
-            Ok(()) => {
-                info!(name: LOG_ONLY, "{}'s console accepted quit command", self.game_name());
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            Err(err) => error!(name: LOG_ONLY, "{err}"),
-        }
+    fn try_send_cmd_from_hook(&mut self, command: String) -> Result<(), Cow<'static, str>> {
+        global_state::PtyHandle::try_if_alive(|game_console| game_console.send_cmd(command))
+            .map_err(Into::into)
     }
 
-    fn try_send_cmd_from_hook(
-        &mut self,
-        command: String,
-        input_hook_id: HookID,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), CallbackErr>> + Send + '_>> {
-        Box::pin(async move {
-            let rw_console_lock = self.check_h2m_connection().await.map_err(|err| {
-                CallbackErr::new(input_hook_id, format!("Could not send command: {err}"))
-            })?;
-
-            let game_console = rw_console_lock.read().await;
-
-            game_console
-                .send_cmd(command)
-                .map_err(|err| CallbackErr::new(input_hook_id, err))
-        })
-    }
-
-    pub(crate) async fn launch_handler(&mut self) -> io::Result<CommandHandle> {
-        if self.check_h2m_connection().await.is_ok() {
+    pub(crate) fn launch_handler(&mut self) -> io::Result<CommandHandle> {
+        if global_state::PtyHandle::check_connection().is_ok() {
             println!(
                 "{GREEN}Connection to {} already active{RESET}",
                 self.game_name()
@@ -515,8 +454,8 @@ impl CommandContext {
             Ok(conpty) => {
                 info!("Launching {}...", self.game_name());
                 self.game.update(exe_details(&self.game.path));
-                self.init_pty(conpty);
-                if let Err(err) = self.listener_routine().await {
+                global_state::PtyHandle::set(Some(conpty));
+                if let Err(err) = self.listener_routine() {
                     error!("{err}")
                 }
             }
@@ -531,27 +470,19 @@ impl CommandContext {
         Ok(CommandHandle::Processed)
     }
 
-    pub async fn save_cache_if_needed(
-        &mut self,
-        line_handle: &mut Repl<Self, Stdout>,
-    ) -> io::Result<()> {
-        if self
-            .cache_needs_update
-            .compare_exchange(true, false, Ordering::Acquire, Ordering::SeqCst)
-            .is_ok()
-        {
-            return write_cache(self, &line_handle.export_history(Some(SAVED_HISTORY_CAP))).await;
+    pub fn save_cache_if_needed(&self, line_handle: &Repl<Self, Stdout>) -> io::Result<()> {
+        if global_state::UpdateCache::take() {
+            return write_cache(self, &line_handle.export_history(Some(SAVED_HISTORY_CAP)));
         }
 
         Ok(())
     }
 
-    pub async fn handle_game_state_change(
+    pub fn handle_game_state_change(
         &mut self,
         line_handle: &mut Repl<Self, Stdout>,
-        self_win: Option<HWND>,
     ) -> io::Result<Result<(), WinApiErr>> {
-        let game_open = self.check_h2m_connection().await.is_ok();
+        let game_open = global_state::PtyHandle::check_connection().is_ok();
 
         line_handle.writer().queue(SetTitle(CRATE_NAME))?;
 
@@ -559,22 +490,20 @@ impl CommandContext {
             line_handle.remove_all_hooks_with_tag(self, HookTag::GameConsole)?;
         }
 
-        if let Some(hwnd) = self_win {
-            if game_open == self.can_close_console {
-                // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
-                return Ok(unsafe { toggle_close_state(&mut self.can_close_console, hwnd) });
-            }
+        if let Some(hwnd) =
+            global_state::AppHWND::get().filter(|_| game_open == self.can_close_console)
+        {
+            // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
+            return Ok(unsafe { toggle_close_state(&mut self.can_close_console, hwnd) });
         }
 
         Ok(Ok(()))
     }
 
     /// if calling manually you are responsible for setting pty inside of context
-    pub async fn listener_routine(&mut self) -> Result<(), String> {
-        initialize_listener(self).await?;
-        let handle = self
-            .pty_handle()
-            .expect("initialize_listener returned early if this is `None`");
+    pub fn listener_routine(&mut self) -> Result<(), String> {
+        initialize_listener(self)?;
+
         let msg_sender = self.msg_sender();
         let game_name = self.game_name();
         let game_state_change = self.game_state_change();
@@ -583,7 +512,7 @@ impl CommandContext {
             let mut attempt = 1;
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
-                match handle.read().await.is_alive() {
+                match global_state::PtyHandle::is_alive() {
                     Ok(true) if attempt == 3 => {
                         match hide_pseudo_console() {
                             Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
@@ -604,7 +533,7 @@ impl CommandContext {
                             Message::str(ConnectionHelp),
                         ];
                     }
-                    Err(err) => break vec![Message::error(err.to_string_lossy().to_string())],
+                    Err(err) => break vec![Message::error(err)],
                 }
             };
 
@@ -615,24 +544,30 @@ impl CommandContext {
         Ok(())
     }
 
-    async fn new_favorites_with(&self, args: Option<Filters>) -> io::Result<CommandHandle> {
+    async fn new_favorites_with(
+        &self,
+        repl: &mut Repl<CommandContext, Stdout>,
+        args: Option<Filters>,
+    ) -> io::Result<CommandHandle> {
         let exe_dir = self.game.path.parent().expect("has parent");
 
         let new_entries_found = build_favorites(
+            repl,
             exe_dir,
             args.unwrap_or_default(),
-            self.cache(),
             self.game.version.unwrap_or(1.0),
         )
         .await
-        .unwrap_or_else(|err| {
-            error!("{err}");
-            false
-        });
-        if new_entries_found {
-            self.cache_needs_update().store(true, Ordering::Release);
-        }
+        .map_err(display::error)
+        .unwrap_or_default();
 
+        global_state::UpdateCache::and_modify(|curr| curr || new_entries_found);
+
+        Ok(CommandHandle::Processed)
+    }
+
+    fn display_servers(repl: &mut Repl<CommandContext, Stdout>) -> io::Result<CommandHandle> {
+        global_state::LastServerStats::display(repl.terminal_size());
         Ok(CommandHandle::Processed)
     }
 
@@ -642,7 +577,7 @@ impl CommandContext {
 
             self.game.hash_latest = get_latest_hmw_hash()
                 .await
-                .map_err(|err| error!("{err}"))
+                .map_err(display::error)
                 .ok()
                 .and_then(|res| {
                     match res {
@@ -654,9 +589,7 @@ impl CommandContext {
         }
 
         println!("{}", self.app);
-        if self.game.version.is_some() || self.game.hash_curr.is_some() {
-            println!("{}", self.game)
-        }
+        println!("{}", self.game);
         Ok(CommandHandle::Processed)
     }
 
@@ -666,67 +599,61 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        match build_cache(matches!(arg, CacheCmd::Update).then_some(&self.cache)).await {
-            Ok(cache) => {
-                let mut lock = self.cache.lock().await;
-                *lock = cache
-            }
-            Err(err) => {
-                error!("{err}, cache remains unchanged");
-                return Ok(CommandHandle::Processed);
-            }
-        };
+        if let CacheCmd::Reset = arg {
+            global_state::Cache::clear();
+        }
 
-        self.cache_needs_update.store(true, Ordering::SeqCst);
+        let cache_modified = build_cache()
+            .await
+            .map_err(|err| error!("{err}, cache remains unchanged"))
+            .is_ok();
+
+        global_state::UpdateCache::and_modify(|curr| curr || cache_modified);
+
         Ok(CommandHandle::Processed)
     }
 
-    async fn open_game_console(&mut self, all: bool) -> io::Result<CommandHandle> {
-        let h2m_connection_err = self.check_h2m_connection().await.is_err();
-        let console = self.h2m_console_history.lock().await;
-
+    fn open_game_console(&mut self, all: bool) -> io::Result<CommandHandle> {
         if all {
-            console.reset_start_i();
+            global_state::ConsoleHistory::with_borrow_mut(|history| history.reset_i());
         }
 
-        if h2m_connection_err
+        if global_state::PtyHandle::check_connection().is_err()
             || game_open()
                 .unwrap_or_else(WinApiErr::resolve_to_closed)
                 .is_none()
         {
-            if !console.history.is_empty() {
-                println!(
-                    "{YELLOW}No active connection to {}, displaying old logs{RESET}",
-                    self.game_name()
-                );
+            print!("{YELLOW}No active connection to {}", self.game_name());
 
-                console.reset_start_i();
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                print!("{}", DisplayLogs(&console));
+            if global_state::ConsoleHistory::with_borrow_mut(|history| {
+                let not_empty = !history.entries.is_empty();
+                if not_empty {
+                    history.reset_i();
+                }
+                not_empty
+            }) {
+                println!(", displaying old logs{RESET}");
+
+                std::thread::sleep(Duration::from_secs(2));
+                print!("{DisplayLogs}");
             } else {
-                println!(
-                    "{YELLOW}No active connection to {}{RESET}",
-                    self.game_name()
-                );
+                println!()
             }
             return Ok(CommandHandle::Processed);
         }
 
-        print!("{}", DisplayLogs(&console));
-        drop(console);
-
-        let uid = HookID::tagged(HookTag::GameConsole);
+        print!("{DisplayLogs}");
 
         let line_changes = HookStates::<CommandContext, _>::new(
             |handle, context| {
-                context.forward_logs.store(true, Ordering::SeqCst);
+                global_state::ForwardLogs::set(true);
                 handle.set_prompt(&context.game.game_file_name());
                 handle.disable_completion();
                 handle.disable_line_stylization();
                 Ok(())
             },
-            |handle, context| {
-                context.forward_logs.store(false, Ordering::SeqCst);
+            |handle, _context| {
+                global_state::ForwardLogs::set(false);
                 handle.set_prompt(MAIN_PROMPT);
                 handle.enable_completion();
                 handle.enable_line_stylization();
@@ -734,57 +661,62 @@ impl CommandContext {
             },
         );
 
-        let input_hook = InputHook::new(uid, line_changes, move |handle, _context, event| {
-            match event {
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('d'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }) => {
-                    handle.clear_line()?;
-                    return HookedEvent::new(handle.process_close_signal()?, HookControl::Release);
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: KeyModifiers::CONTROL,
-                    ..
-                }) => {
-                    if handle.input().is_empty() {
-                        return HookedEvent::release_hook();
-                    }
-                    handle.ctrl_c_line()?;
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char(c),
-                    ..
-                }) => handle.insert_char(c),
-                Event::Key(KeyEvent {
-                    code: KeyCode::Backspace,
-                    ..
-                }) => {
-                    if handle.input().is_empty() {
-                        return HookedEvent::release_hook();
-                    }
-                    handle.remove_char()?;
-                }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Enter,
-                    ..
-                }) => {
-                    if !handle.input().trim().is_empty() {
-                        let cmd = handle.new_line()?;
-                        let send_user_cmd = EventLoop::<CommandContext, _>::new_async_callback(
-                            move |_handle, context| context.try_send_cmd_from_hook(cmd, uid),
+        let input_hook = InputHook::new(
+            HookID::tagged(HookTag::GameConsole),
+            line_changes,
+            move |handle, context, event| {
+                match event {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('d'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    }) => {
+                        handle.clear_line()?;
+                        return HookedEvent::new(
+                            handle.process_close_signal()?,
+                            HookControl::Release,
                         );
-
-                        return HookedEvent::new(send_user_cmd, HookControl::Continue);
                     }
-                    handle.new_line()?;
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('c'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    }) => {
+                        if handle.input().is_empty() {
+                            return HookedEvent::release_hook();
+                        }
+                        handle.ctrl_c_line()?;
+                    }
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char(c),
+                        ..
+                    }) => handle.insert_char(c),
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Backspace,
+                        ..
+                    }) => {
+                        if handle.input().is_empty() {
+                            return HookedEvent::release_hook();
+                        }
+                        handle.remove_char()?;
+                    }
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Enter,
+                        ..
+                    }) => {
+                        let cmd = handle.new_line()?;
+                        if !cmd.trim().is_empty() {
+                            if let Err(err) = context.try_send_cmd_from_hook(cmd) {
+                                error!("{err}");
+                                return HookedEvent::release_hook();
+                            }
+                        }
+                    }
+                    _ => handle.set_uneventful(),
                 }
-                _ => handle.set_uneventful(),
-            }
-            HookedEvent::continue_hook()
-        });
+                HookedEvent::continue_hook()
+            },
+        );
 
         Ok(CommandHandle::InsertHook(input_hook))
     }
@@ -796,13 +728,13 @@ impl CommandContext {
         {
             let spinner = Spinner::new(format!("Waiting for {} to close", self.game_name()));
 
-            while self.check_h2m_connection().await.is_ok() {
+            while global_state::PtyHandle::check_connection().is_ok() {
                 tokio::task::yield_now().await;
             }
 
             spinner.finish();
             return Ok(CommandHandle::Exit);
-        } else if self.check_h2m_connection().await.is_err() {
+        } else if global_state::PtyHandle::check_connection().is_err() {
             return Ok(CommandHandle::Exit);
         }
 
@@ -846,10 +778,11 @@ impl CommandContext {
 
 pub(crate) trait CommandSender {
     fn send_cmd<S: AsRef<str>>(&self, command: S) -> Result<(), Cow<'static, str>>;
+    fn send_connect(&self, ip: SocketAddr) -> Result<(), Cow<'static, str>>;
 }
 
-impl CommandSender for RwLockReadGuard<'_, PTY> {
-    /// Before calling be sure to guard against invalid handles by checking `.check_h2m_connection().is_ok()`
+impl CommandSender for PTY {
+    /// Before calling be sure to guard against invalid handles by checking pty connection is alive
     fn send_cmd<S: AsRef<str>>(&self, command: S) -> Result<(), Cow<'static, str>> {
         const NEW_LINE: &str = "\r\n";
         let cmd_str = command.as_ref();
@@ -866,5 +799,12 @@ impl CommandSender for RwLockReadGuard<'_, PTY> {
             }
             Err(err) => Err(Cow::Owned(err.to_string_lossy().to_string())),
         }
+    }
+
+    /// Before calling be sure to guard against invalid handles by checking pty connection is alive
+    fn send_connect(&self, ip_port: SocketAddr) -> Result<(), Cow<'static, str>> {
+        self.send_cmd("disconnect")?;
+        std::thread::sleep(crate::CONSEC_CMD_DELAY);
+        self.send_cmd(format!("connect {ip_port}"))
     }
 }

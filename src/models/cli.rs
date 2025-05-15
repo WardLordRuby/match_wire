@@ -19,6 +19,10 @@ pub(crate) enum Command {
         args: Option<Filters>,
     },
 
+    /// Displays the results from the last filter command that included '--stats'
+    #[command(alias = "Last")]
+    Last,
+
     /// Reconnect to last server joined
     #[command(alias = "Reconnect")]
     Reconnect {
@@ -70,7 +74,7 @@ pub(crate) struct HistoryArgs {
     pub(crate) history: bool,
 
     /// Connect to numbered entry in history
-    #[arg(short, long, value_parser = value_parser!(u8).range(1..=HISTORY_MAX as i64))]
+    #[arg(short, long, value_name = "HISTORY_ENTRY", value_parser = value_parser!(u8).range(1..=HISTORY_MAX as i64))]
     pub(crate) connect: Option<u8>,
 }
 
@@ -83,11 +87,11 @@ pub(crate) struct Filters {
     pub(crate) limit: Option<usize>,
 
     /// Specify a minimum number of players a server must have [Default: 0]
-    #[arg(short, long, value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM))]
+    #[arg(short, long, value_name = "MIN_PLAYERS", value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM))]
     pub(crate) player_min: Option<u8>,
 
     /// Specify a maximum team size [Default: 9]
-    #[arg(short, long, value_parser = value_parser!(u8).range(1..=H2M_MAX_TEAM_SIZE))]
+    #[arg(short, long, value_name = "MAX_TEAM_SIZE", value_parser = value_parser!(u8).range(1..=H2M_MAX_TEAM_SIZE))]
     pub(crate) team_size_max: Option<u8>,
 
     /// Server contains bot players
@@ -112,19 +116,23 @@ pub(crate) struct Filters {
 
     /// Server name must contain any 1 of the following terms
     /// {n}  [Note: search terms are case-insensitive]
-    #[arg(short, long, num_args(1..))]
+    #[arg(short, long, value_name = "STRING", num_args(1..))]
     pub(crate) includes: Option<Vec<String>>,
 
     /// Server name must not contain any 1 of the following terms
     /// {n}  [Note: exclude has higher priority] [Examples]
     /// {n}  [-e term1 term2] searches for "term1" or "term2"
     /// {n}  [-e "one long term"] searches for "one long term"
-    #[arg(short, long, num_args(1..))]
+    #[arg(short, long, value_name = "STRING", num_args(1..))]
     pub(crate) excludes: Option<Vec<String>>,
 
     /// Specify a maximum number of 'getInfo' retries [Default: 3]
-    #[arg(long, value_parser = value_parser!(u8).range(0..=20))]
+    #[arg(long, value_name = "MAX_ATTEMPTS", value_parser = value_parser!(u8).range(0..=20))]
     pub(crate) retry_max: Option<u8>,
+
+    /// Display statistics about the servers found in the current filter
+    #[arg(short = 'S', long, alias = "verbose")]
+    pub(crate) stats: bool,
 }
 
 pub(crate) const REGION_LEN: usize = 3;
