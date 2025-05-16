@@ -58,7 +58,7 @@ window will provide you a place to enter commands. MatchWire includes a command 
 key to walk through available commands and command options. Pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> will clear the current line or
 if line current line is empty it will close MatchWire. Note that closing MatchWire will also close Mw2 Remastered.  
 
-MatchWire can be launched from the command line with the '--no-launch' argument to opt out of the automatic launch of Horizon
+MatchWire can be launched from the command line with the `--no-launch` argument to opt out of the automatic launch of Horizon
 Modern Warfare.  
 
 ### Commands
