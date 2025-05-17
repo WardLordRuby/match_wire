@@ -789,7 +789,7 @@ pub(crate) const MAP_IDS: [(&str, &str); 62] = [
     ("gulag", "Gulag"),
 ];
 
-pub(crate) const GAME_TYPE_IDS: [(&str, &str); 8] = [
+pub(crate) const GAME_TYPE_IDS: [(&str, &str); 10] = [
     ("war", "Ground War"),
     ("dom", "Domination"),
     ("conf", "Kill Confirmed"),
@@ -798,4 +798,6 @@ pub(crate) const GAME_TYPE_IDS: [(&str, &str); 8] = [
     ("hp", "Hard Point"),
     ("gun", "Gun Game"),
     ("koth", "Headquarters"),
+    ("sab", "Sabotage"),
+    ("infect", "Infection"),
 ];
