@@ -197,9 +197,8 @@ impl GameStats {
     fn new(games: &[String]) -> Vec<Self> {
         games
             .iter()
-            .cloned()
             .map(|game| Self {
-                game: game_name_str(&game),
+                game: game_name_str(game),
                 ..Default::default()
             })
             .collect()
@@ -357,7 +356,7 @@ impl FilterStrategy for StatTrackStrategy {
             &spinner,
             HashMap::with_capacity,
             |map, server| {
-                map.insert(server.source.socket_addr(), server.info);
+                map.insert(server.socket_addr(), server.info);
             },
         )
         .await;
@@ -552,7 +551,8 @@ impl Display for DisplaySourceStats<'_> {
             writeln!(f, " {}", BoxTop(Some(source.to_str()), SOURCE_STAT_WIDTH))?;
             writeln!(
                 f,
-                " │ Game                        Id    Hosts  Servers(unresponsive)  Players │",
+                " │ Game                        Id    {}  Servers(unresponsive)  Players │",
+                if host_ct.is_some() { "Hosts" } else { "     " }
             )?;
             writeln!(f, " │{}│", Space(SOURCE_STAT_WIDTH))?;
 
@@ -647,12 +647,14 @@ impl Display for DisplayFilterStats<'_> {
             for (server, addr_len) in self.0.iter().zip(ips) {
                 let mut name = parse_hostname(&server.info.host_name);
 
-                if name.chars().count() >= max_host_len {
-                    name = name
-                        .chars()
-                        .take(max_host_len - 1)
-                        .chain(std::iter::once('…'))
-                        .collect();
+                let mut name_chars = name.char_indices();
+                if let Some(i) = name_chars
+                    .nth(max_host_len - 1)
+                    .and_then(|(i, _)| name_chars.next().is_some().then_some(i))
+                {
+                    let mut elided = String::from(name[..i].trim_end());
+                    elided.push('…');
+                    name = elided
                 }
 
                 let game_type = server.info.game_type.as_ref();
