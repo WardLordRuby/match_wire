@@ -348,16 +348,12 @@ where
 
     match operation {
         Operation::All => Ok(OperationResult::Bool({
-            let result = list
-                .iter()
-                .all(|check_file| str_names.contains(check_file.borrow()));
-            result
+            list.iter()
+                .all(|check_file| str_names.contains(check_file.borrow()))
         })),
         Operation::Any => Ok(OperationResult::Bool({
-            let result = list
-                .iter()
-                .any(|check_file| str_names.contains(check_file.borrow()));
-            result
+            list.iter()
+                .any(|check_file| str_names.contains(check_file.borrow()))
         })),
         Operation::Count => Ok(OperationResult::Count({
             let collection = list

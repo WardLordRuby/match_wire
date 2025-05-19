@@ -674,15 +674,9 @@ unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
     };
 
     // Safety: `hwnd` is a valid pointer
-    if unsafe {
-        class_name_a_matches(hwnd, |class| {
-            WINDOW_CLASS_NAMES_GAME
-                .iter()
-                .any(|&h2m_class| class == h2m_class)
-        })
-    }
-    .map_err(display::log_error)
-    .unwrap_or_default()
+    if unsafe { class_name_a_matches(hwnd, |class| WINDOW_CLASS_NAMES_GAME.contains(&class)) }
+        .map_err(display::log_error)
+        .unwrap_or_default()
     {
         // Safety:
         // - We input `lparam` as a `*mut Option<&'static str>` casted to `isize`
