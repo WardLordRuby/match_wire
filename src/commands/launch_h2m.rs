@@ -1,7 +1,7 @@
 use crate::{
-    client_with_timeout,
+    CRATE_NAME, LOG_ONLY, client_with_timeout,
     commands::{
-        filter::{try_get_info, Addressable, GetInfoMetaData, Request, Sourced},
+        filter::{Addressable, GetInfoMetaData, Request, Sourced, try_get_info},
         handler::{CommandContext, Message},
     },
     parse_hostname, strip_ansi_private_modes,
@@ -9,11 +9,10 @@ use crate::{
         display,
         global_state::{self, ThreadCopyState},
     },
-    CRATE_NAME, LOG_ONLY,
 };
 
 use std::{
-    ffi::{c_void, OsStr, OsString},
+    ffi::{OsStr, OsString, c_void},
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::Path,
@@ -27,15 +26,15 @@ use tracing::{error, info, warn};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HWND},
     Storage::FileSystem::{
-        GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
     },
     UI::WindowsAndMessaging::{
         DrawMenuBar, EnableMenuItem, EnumWindows, GetClassNameA, GetSystemMenu, GetWindowTextW,
-        IsWindowVisible, ShowWindow, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, SC_CLOSE, SW_HIDE,
+        IsWindowVisible, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, SC_CLOSE, SW_HIDE, ShowWindow,
         WNDENUMPROC,
     },
 };
-use winptyrs::{AgentConfig, MouseMode, PTYArgs, PTYBackend, PTY};
+use winptyrs::{AgentConfig, MouseMode, PTY, PTYArgs, PTYBackend};
 
 #[allow(non_camel_case_types)]
 type wchar_t = u16;
@@ -420,7 +419,7 @@ impl From<WinApiErr> for LaunchError {
 
 impl WinApiErr {
     /// Caller must guarantee that this is only ever called if the windows api returned an error
-    unsafe fn get_last_win_err(from_api_call: &'static str) -> Self {
+    unsafe fn get_last(from_api_call: &'static str) -> Self {
         let (code, validity) = match unsafe { GetLastError() } {
             0 => (0, "an unknown error"),
             err => (err, "error"),
@@ -480,7 +479,7 @@ where
 
     if c_len == 0 {
         // Safety: `GetClassNameA` always returns an error when it's result is 0
-        return Err(unsafe { WinApiErr::get_last_win_err("GetClassNameA") }.to_string());
+        return Err(unsafe { WinApiErr::get_last("GetClassNameA") }.to_string());
     }
 
     Ok(f(
@@ -509,9 +508,11 @@ unsafe fn get_window_text_w(hwnd: HWND) -> String {
 /// - If provided the EnumWindowsCallback contains no unchecked safety conditions
 /// - The type of `lParam` is correctly referenced within the provided EnumWindowsCallback if provided
 unsafe fn enum_windows<T>(f: WNDENUMPROC, lparam: &mut T) -> Result<(), WinApiErr> {
-    if EnumWindows(f, lparam as *mut _ as isize) == 0 {
+    // Safety: The caller guarantees that `f` is a valid callback and `lparam` is correctly typed and valid.
+    // We cast `lparam` to a raw pointer for the Windows API, which is safe given these guarantees.
+    if unsafe { EnumWindows(f, lparam as *mut _ as isize) } == 0 {
         // Safety: Enum windows returned error (0), it must have set an Error code
-        return Err(unsafe { WinApiErr::get_last_win_err("EnumWindows") });
+        return Err(unsafe { WinApiErr::get_last("EnumWindows") });
     }
     Ok(())
 }
@@ -537,7 +538,7 @@ pub(crate) unsafe fn toggle_close_state(can_close: &mut bool, hwnd: HWND) -> Res
     // Safety: Caller provided a valid `hwnd`
     if unsafe { DrawMenuBar(hwnd) } == 0 {
         // Safety: `DrawMenuBar` returned an error(0)
-        return Err(unsafe { WinApiErr::get_last_win_err("DrawMenuBar") });
+        return Err(unsafe { WinApiErr::get_last("DrawMenuBar") });
     }
 
     *can_close = !*can_close;
@@ -563,7 +564,7 @@ unsafe extern "system" fn self_window_search(hwnd: HWND, lparam: isize) -> i32 {
     }
 
     // Safety: `hwnd` is a valid pointer
-    let window_title = get_window_text_w(hwnd);
+    let window_title = unsafe { get_window_text_w(hwnd) };
 
     if window_title == CRATE_NAME {
         // Safety
@@ -661,7 +662,8 @@ unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
         return 1;
     }
 
-    let mut window_title = get_window_text_w(hwnd);
+    // Safety: `hwnd` is a valid pointer
+    let mut window_title = unsafe { get_window_text_w(hwnd) };
     window_title.make_ascii_lowercase();
 
     let Some(associated_game) = WINDOW_NAMES_GAME
