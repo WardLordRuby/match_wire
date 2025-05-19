@@ -1,9 +1,9 @@
 use super::{
-    ops::*, Addressable, FilterData, HostMeta, Server, Sourced, DEFAULT_SOURCES, GAME_ID, H2M_ID,
-    HMW_ID,
+    Addressable, DEFAULT_SOURCES, FilterData, GAME_ID, H2M_ID, HMW_ID, HostMeta, Server, Sourced,
+    ops::*,
 };
 use crate::{
-    client_with_timeout, command_err,
+    Spinner, client_with_timeout, command_err,
     commands::handler::{CmdErr, ReplHandle},
     display::{self, BoxBottom, BoxTop, Line, Space},
     models::{
@@ -12,7 +12,6 @@ use crate::{
     },
     parse_hostname,
     utils::global_state,
-    Spinner,
 };
 
 use std::{
@@ -669,7 +668,11 @@ impl Display for DisplayFilterStats<'_> {
                     " │ {name}{}{game_type}{}{map_name}{}{player_ct}({bots})/{max_players}{}{private}{}{version}    {}    {}connect {addr} │",
                     Space(max_host_len + 2 - name.chars().count()),
                     Space(MODE_WIDTH - game_type.len()),
-                    Space(MAP_PLAYERS_WIDTH - player_disp_len(player_ct, bots, max_players) - map_name.len()),
+                    Space(
+                        MAP_PLAYERS_WIDTH
+                            - player_disp_len(player_ct, bots, max_players)
+                            - map_name.len()
+                    ),
                     Space(PASS_WIDTH - private.len()),
                     Space(VERSION_WIDTH - version.len()),
                     cache

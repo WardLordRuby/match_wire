@@ -6,8 +6,8 @@ use tracing::{Event, Level, Subscriber};
 #[cfg(not(debug_assertions))]
 use tracing_subscriber::{
     fmt::{
-        format::{FormatEvent, FormatFields, PrettyFields, Writer},
         FmtContext,
+        format::{FormatEvent, FormatFields, PrettyFields, Writer},
     },
     registry::LookupSpan,
 };
@@ -71,7 +71,7 @@ where
         writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        use crate::{splash_screen, TERM_CLEAR_LINE};
+        use crate::{TERM_CLEAR_LINE, splash_screen};
         use repl_oxide::ansi_code::{BLUE, GREEN, MAGENTA, RED, RESET, YELLOW};
 
         let line_color = match *event.metadata().level() {
@@ -99,7 +99,7 @@ where
 pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
     use crate::CRATE_NAME;
     use constcat::concat;
-    use tracing_subscriber::{filter::FilterFn, Layer};
+    use tracing_subscriber::{Layer, filter::FilterFn};
 
     const LOG_NAME: &str = concat!(CRATE_NAME, ".log");
 
@@ -140,7 +140,7 @@ pub fn init_subscriber(local_env_dir: &std::path::Path) -> std::io::Result<()> {
 
 #[cfg(debug_assertions)]
 pub fn init_subscriber(_local_env_dir: &std::path::Path) -> std::io::Result<()> {
-    use tracing_subscriber::{filter::LevelFilter, Layer};
+    use tracing_subscriber::{Layer, filter::LevelFilter};
 
     tracing_subscriber::registry()
         .with(

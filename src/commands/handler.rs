@@ -1,9 +1,10 @@
 use crate::{
+    CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, SAVED_HISTORY_CAP, Spinner,
     commands::{
         filter::build_favorites,
         launch_h2m::{
-            game_open, hide_pseudo_console, initialize_listener, launch_h2m_pseudo,
-            toggle_close_state, LaunchError, WinApiErr,
+            LaunchError, WinApiErr, game_open, hide_pseudo_console, initialize_listener,
+            launch_h2m_pseudo, toggle_close_state,
         },
     },
     exe_details,
@@ -16,10 +17,9 @@ use crate::{
     open_dir, splash_screen,
     utils::{
         caching::{build_cache, write_cache},
-        display::{self, ConnectionHelp, DisplayLogs, HmwUpdateHelp, DISP_NAME_HMW},
+        display::{self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp},
         global_state::{self, ThreadCopyState},
     },
-    Spinner, CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, SAVED_HISTORY_CAP,
 };
 
 use std::{
@@ -33,21 +33,22 @@ use std::{
 };
 
 use crossterm::{
+    QueueableCommand,
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::SetTitle,
-    QueueableCommand,
 };
 use repl_oxide::{
+    Repl,
     ansi_code::{GREEN, RED, RESET, YELLOW},
     clap::try_parse_from,
     executor::{CommandHandle as CmdHandle, Executor},
     input_hook::{HookControl, HookID, HookStates, HookedEvent, InputHook},
-    repl_builder, Repl,
+    repl_builder,
 };
 use tokio::{
     sync::{
-        mpsc::{channel, Receiver, Sender},
         Notify,
+        mpsc::{Receiver, Sender, channel},
     },
     task::JoinHandle,
     time::Duration,

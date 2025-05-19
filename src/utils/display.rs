@@ -1,19 +1,19 @@
 use crate::{
+    CRATE_NAME, CRATE_VER, LOG_ONLY,
     commands::{
         filter::{
+            Server, Sourced, UnresponsiveCounter,
             strategies::{
                 DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, MIN_FILTER_COLS,
             },
-            Server, Sourced, UnresponsiveCounter,
         },
         handler::{AppDetails, GameDetails, ReplHandle},
-        launch_h2m::{game_open, LaunchError, WinApiErr},
+        launch_h2m::{LaunchError, WinApiErr, game_open},
     },
     global_state,
     models::cli::Source,
     try_fit_table,
     utils::caching::ReadCacheErr,
-    CRATE_NAME, CRATE_VER, LOG_ONLY,
 };
 
 use std::{borrow::Cow, fmt::Display, io};
@@ -458,11 +458,7 @@ impl Display for GameDetails {
 impl Display for AppDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let color = if let Some(ref latest) = self.ver_latest {
-            if CRATE_VER == latest {
-                GREEN
-            } else {
-                YELLOW
-            }
+            if CRATE_VER == latest { GREEN } else { YELLOW }
         } else {
             RESET
         };

@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use serde::{de, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeMap};
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct HostData {
@@ -89,7 +89,7 @@ where
             return Err(de::Error::invalid_value(
                 de::Unexpected::Str(unexpected),
                 &"0 or 1",
-            ))
+            ));
         }
     })
 }

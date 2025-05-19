@@ -1,17 +1,16 @@
 use crate::{
-    client_with_timeout,
+    LOG_ONLY, Spinner, StartupInfo, client_with_timeout,
     commands::{
         filter::{
-            strategies::{DisplaySourceStatsInner, GAME_TYPE_IDS, MAP_IDS},
             Server,
+            strategies::{DisplaySourceStatsInner, GAME_TYPE_IDS, MAP_IDS},
         },
         handler::{AppDetails, CommandSender, Message, ReplHandle},
-        launch_h2m::{game_open, HostName, WinApiErr},
+        launch_h2m::{HostName, WinApiErr, game_open},
     },
     models::json_data::CacheFile,
     splash_screen,
     utils::display,
-    Spinner, StartupInfo, LOG_ONLY,
 };
 
 use std::{

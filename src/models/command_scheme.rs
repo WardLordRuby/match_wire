@@ -1,5 +1,5 @@
 use super::cli::{REGION_LEN, SOURCE_LEN};
-use crate::{commands::reconnect::HISTORY_MAX, H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE};
+use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE, commands::reconnect::HISTORY_MAX};
 
 use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKind};
 

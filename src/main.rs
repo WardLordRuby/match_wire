@@ -1,5 +1,5 @@
 use match_wire::{
-    await_user_for_end,
+    CRATE_NAME, LOG_ONLY, LoggerRes, SAVED_HISTORY_CAP, await_user_for_end,
     commands::{
         handler::{CommandContext, GameDetails, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
@@ -9,7 +9,6 @@ use match_wire::{
         display::{self, DisplayPanic},
         global_state,
     },
-    LoggerRes, CRATE_NAME, LOG_ONLY, SAVED_HISTORY_CAP,
 };
 
 use std::{borrow::Cow, io};
@@ -22,7 +21,7 @@ use repl_oxide::{
 };
 use tokio::{
     sync::mpsc::Receiver,
-    time::{interval, Duration},
+    time::{Duration, interval},
 };
 use tokio_stream::StreamExt;
 use tracing::{error, info, instrument};

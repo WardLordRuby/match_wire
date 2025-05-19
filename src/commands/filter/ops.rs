@@ -1,9 +1,9 @@
 use super::{
-    strategies::FilterStrategy, try_get_info, try_location_lookup, Addressable, GetInfoMetaData,
-    Request, Server, Sourced, UnresponsiveCounter, DEFAULT_INFO_RETRIES, RETRY_TIME_SCALE,
+    Addressable, DEFAULT_INFO_RETRIES, GetInfoMetaData, RETRY_TIME_SCALE, Request, Server, Sourced,
+    UnresponsiveCounter, strategies::FilterStrategy, try_get_info, try_location_lookup,
 };
 use crate::{
-    make_slice_ascii_lowercase,
+    LOG_ONLY, Spinner, TERM_CLEAR_LINE, make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Source},
         json_data::{ContCode, HostData},
@@ -15,7 +15,6 @@ use crate::{
         },
         global_state,
     },
-    Spinner, LOG_ONLY, TERM_CLEAR_LINE,
 };
 
 use std::{collections::HashSet, net::SocketAddr};

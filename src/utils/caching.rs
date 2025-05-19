@@ -1,10 +1,10 @@
 use crate::{
-    client_with_timeout,
+    CACHED_DATA, CRATE_VER, LOG_ONLY, Operation, OperationResult, Spinner, client_with_timeout,
     commands::{
         filter::{
+            Addressable, DEFAULT_SOURCES, Server, Sourced,
             ops::{get_sourced_servers, queue_info_requests},
             strategies::FastStrategy,
-            Addressable, Server, Sourced, DEFAULT_SOURCES,
         },
         handler::CommandContext,
         reconnect::HISTORY_MAX,
@@ -16,7 +16,6 @@ use crate::{
     },
     new_io_error,
     utils::global_state::{self, ThreadCopyState},
-    Operation, OperationResult, Spinner, CACHED_DATA, CRATE_VER, LOG_ONLY,
 };
 
 use std::{

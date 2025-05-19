@@ -26,7 +26,7 @@ use crate::{
         json_data::{CacheFile, HmwManifest, StartupInfo},
     },
     utils::{
-        caching::{build_cache, read_cache, ReadCacheErr},
+        caching::{ReadCacheErr, build_cache, read_cache},
         display::{self, TABLE_PADDING},
         global_state,
         subscriber::init_subscriber,
@@ -47,7 +47,7 @@ use constcat::concat;
 use crossterm::cursor;
 use repl_oxide::ansi_code::{RED, RESET};
 use reqwest::Client;
-use serde_json::{from_value, Value};
+use serde_json::{Value, from_value};
 use serde_json_path::JsonPath;
 use sha2::{Digest, Sha256};
 use tracing::{error, info};

@@ -107,7 +107,9 @@ impl CommandContext {
                 Some(&addr) => Ok(Some(addr)),
                 None => {
                     error!("Could not find server in cache");
-                    println!("use command '{YELLOW}cache{RESET} update' to attempt to locate missing server");
+                    println!(
+                        "use command '{YELLOW}cache{RESET} update' to attempt to locate missing server"
+                    );
                     Err(CmdErr::Command)
                 }
             }

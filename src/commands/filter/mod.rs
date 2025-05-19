@@ -4,14 +4,13 @@ pub(crate) mod strategies;
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 
 use crate::{
-    command_err,
+    LOG_ONLY, Spinner, TERM_CLEAR_LINE, command_err,
     commands::handler::{CmdErr, ReplHandle},
     models::{
         cli::{Filters, Region, Source},
         json_data::{ContCode, GetInfo, LocationApiResponse, ServerInfo},
     },
-    utils::display::{DisplayCountOf, DisplayServerCount, SingularPlural, SOURCE_HMW},
-    Spinner, LOG_ONLY, TERM_CLEAR_LINE,
+    utils::display::{DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural},
 };
 
 use std::{
