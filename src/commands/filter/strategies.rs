@@ -1,5 +1,3 @@
-use reqwest::Client;
-
 use super::{
     ops::*, Addressable, FilterData, HostMeta, Server, Sourced, DEFAULT_SOURCES, GAME_ID, H2M_ID,
     HMW_ID,
@@ -24,6 +22,8 @@ use std::{
     io,
     net::SocketAddr,
 };
+
+use reqwest::Client;
 
 const MIN_HOST_NAME_LEN: usize = 18;
 const FILTER_HEADER_LEN: usize = 107;
@@ -305,24 +305,17 @@ impl FilterStrategy for StatTrackStrategy {
     }
 
     fn hmw_master_map(servers: Vec<String>) -> Self {
-        let valid_servers = servers
-            .into_iter()
-            .filter_map(Sourced::try_parse_hmw_master)
-            .collect::<Vec<_>>();
-
-        Self {
-            game: vec![HMW_ID.into()],
-            servers: vec![valid_servers],
-            ..Default::default()
-        }
+        Self::from_sourced(
+            HMW_ID,
+            servers
+                .into_iter()
+                .filter_map(Sourced::try_parse_hmw_master)
+                .collect(),
+        )
     }
 
     fn from_cached(cached: Vec<Sourced>) -> Self {
-        Self {
-            game: vec![HMW_ID.into()],
-            servers: vec![cached],
-            ..Default::default()
-        }
+        Self::from_sourced(HMW_ID, cached)
     }
 
     async fn execute(
@@ -391,6 +384,15 @@ impl FilterStrategy for StatTrackStrategy {
 }
 
 impl StatTrackStrategy {
+    /// For sources where it is not possible to determine the number of hosters
+    fn from_sourced<S: AsRef<str>>(game: S, servers: Vec<Sourced>) -> Self {
+        Self {
+            game: vec![String::from(game.as_ref())],
+            servers: vec![servers],
+            host_ct: 0,
+        }
+    }
+
     /// `(game, servers)`
     fn drain<R>(&mut self, r: R) -> impl Iterator<Item = (String, Vec<Sourced>)> + use<'_, R>
     where
@@ -448,10 +450,7 @@ impl StatTrackStrategy {
         self.filter_sourced(ids).map(<[Sourced]>::len).sum()
     }
 
-    fn get_source_stats(
-        &mut self,
-        map: &HashMap<SocketAddr, GetInfo>,
-    ) -> Vec<DisplaySourceStatsInner> {
+    fn get_source_stats(&self, map: &HashMap<SocketAddr, GetInfo>) -> Vec<DisplaySourceStatsInner> {
         let mut hmw = GameStats::new(&self.game);
         let mut hmw_total = GameStats::default();
 
@@ -702,7 +701,7 @@ impl Display for DisplayFilterStats<'_> {
 }
 
 fn game_name_str(name: &str) -> Cow<'static, str> {
-    match name {
+    Cow::Borrowed(match name {
         "COD" => "Modern Warfare             (COD)",
         "H1" => "Modern Warfare Remastered  (H1)",
         "HMW" => "Horizon Modern Warfare     (HMW)",
@@ -718,8 +717,7 @@ fn game_name_str(name: &str) -> Cow<'static, str> {
         "SHG1" => "Advanced Warfare           (SHG1)",
         "L4D2" => "Left for Dead II           (L4D2)",
         rest => return Cow::Owned(rest.to_owned()),
-    }
-    .into()
+    })
 }
 
 pub(crate) const MAP_IDS: [(&str, &str); 62] = [
