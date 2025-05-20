@@ -3,7 +3,7 @@ use super::{
     Request, Server, Sourced, ops::*, try_get_info,
 };
 use crate::{
-    Spinner, client_with_timeout, command_err,
+    ResponseErr, Spinner, client_with_timeout, command_err,
     commands::{
         filter::try_location_lookup,
         handler::{CmdErr, ReplHandle},
@@ -240,7 +240,7 @@ impl GameStats {
 
 struct Requests {
     info: JoinSet<Result<Server, GetInfoMetaData>>,
-    region: JoinSet<Result<(IpAddr, ContCode), Cow<'static, str>>>,
+    region: JoinSet<Result<(IpAddr, ContCode), ResponseErr>>,
     duplicates: usize,
 }
 

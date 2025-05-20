@@ -1,5 +1,5 @@
 use crate::{
-    CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, SAVED_HISTORY_CAP, Spinner,
+    CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, ResponseErr, SAVED_HISTORY_CAP, Spinner,
     commands::{
         filter::build_favorites,
         launch_h2m::{
@@ -307,7 +307,7 @@ pub struct StartupData {
     pub cache_task: JoinHandle<StartupCacheContents>,
     pub splash_task: JoinHandle<io::Result<()>>,
     pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
-    pub hmw_hash_task: JoinHandle<reqwest::Result<Result<String, &'static str>>>,
+    pub hmw_hash_task: JoinHandle<Result<String, ResponseErr>>,
 }
 
 #[derive(Default)]
@@ -338,20 +338,21 @@ impl CommandContext {
             startup_data.cache_task
         );
 
+        macro_rules! hmw_launch_err {
+            ($($arg:tt)*) => {{
+                error!("Could not launch H2M as child process: {}", format_args!($($arg)*));
+                splash_screen::push_message(Message::Str(ConnectionHelp.into()));
+                None
+            }}
+        }
+
         let game_console = match launch_res {
             Ok(Some(Ok(handle))) => Some(handle),
             Ok(None) => None,
-            rest => {
-                let err = match rest {
-                    Err(join_err) => join_err.to_string(),
-                    Ok(Some(Err(launch_err))) => launch_err.to_string(),
-                    Ok(Some(Ok(_))) | Ok(None) => unreachable!("by covered paths"),
-                };
-                error!("Could not launch H2M as child process: {err}");
-                splash_screen::push_message(Message::Str(ConnectionHelp.into()));
-                None
-            }
+            Err(join_err) => hmw_launch_err!("{join_err}"),
+            Ok(Some(Err(launch_err))) => hmw_launch_err!("{launch_err}"),
         };
+
         let console_set = game_console.is_some();
         global_state::PtyHandle::set(game_console);
 
@@ -361,22 +362,25 @@ impl CommandContext {
             }
         }
 
-        if let Ok(Ok(Ok(hash_latest))) = hmw_hash_res {
-            if let Some(hash_curr) = startup_data.game.hash_curr.as_deref() {
-                if hash_curr != hash_latest {
-                    info!("{HmwUpdateHelp}")
-                }
+        macro_rules! hmw_hash_err {
+            ($($arg:tt)*) => {
+                error!("Could not get latest HMW version: {}", format_args!($($arg)*))
             }
-            startup_data.game.hash_latest = Some(hash_latest);
-        } else {
-            let err = match hmw_hash_res {
-                Ok(Ok(Err(err))) => Cow::Borrowed(err),
-                Ok(Err(err)) => Cow::Owned(err.to_string()),
-                Err(err) => Cow::Owned(err.to_string()),
-                Ok(Ok(Ok(_))) => unreachable!("by happy path"),
-            };
-            error!("Could not get latest HMW version: {err}");
-        };
+        }
+
+        match hmw_hash_res {
+            Ok(Ok(hash_latest)) => {
+                if let Some(hash_curr) = startup_data.game.hash_curr.as_deref() {
+                    if hash_curr != hash_latest {
+                        info!("{HmwUpdateHelp}")
+                    }
+                }
+                startup_data.game.hash_latest = Some(hash_latest);
+            }
+            Ok(Err(err)) => hmw_hash_err!("{err}"),
+            Err(err) => hmw_hash_err!("{err}"),
+        }
+
         let startup_contents = cache_res.unwrap_or_else(|err| {
             error!("Critical error building cache, could not populate cache");
             error!(name: LOG_ONLY, "{err:?}");
@@ -601,17 +605,11 @@ impl CommandContext {
         if self.game.hash_latest.is_none() {
             println!("{GREEN}Trying to get latest HMW version..{RESET}");
 
-            self.game.hash_latest = get_latest_hmw_hash()
-                .await
-                .map_err(display::error)
-                .ok()
-                .and_then(|res| {
-                    match res {
-                        Ok(_) => info!("Found latest HMW version"),
-                        Err(err) => error!("{err}"),
-                    }
-                    res.ok()
-                })
+            self.game.hash_latest = get_latest_hmw_hash().await.map_err(display::error).ok();
+
+            if self.game.hash_latest.is_some() {
+                info!("Found latest HMW version")
+            }
         }
 
         println!("{}", self.app);

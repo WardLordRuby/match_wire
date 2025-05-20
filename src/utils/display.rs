@@ -1,5 +1,5 @@
 use crate::{
-    CRATE_NAME, CRATE_VER, LOG_ONLY,
+    CRATE_NAME, CRATE_VER, LOG_ONLY, ResponseErr,
     commands::{
         filter::{
             Server, Sourced, UnresponsiveCounter,
@@ -119,6 +119,16 @@ pub fn warning<E: Display>(warning: E) {
 /// _Only_ logs the given `err`
 pub fn log_error<E: Display>(err: E) {
     tracing::error!(name: LOG_ONLY, "{err}")
+}
+
+impl Display for ResponseErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseErr::Reqwest(err) => write!(f, "{err}"),
+            ResponseErr::Status(status_code) => write!(f, "{status_code}"),
+            ResponseErr::Other(msg) => write!(f, "{msg}"),
+        }
+    }
 }
 
 pub(crate) fn stats(

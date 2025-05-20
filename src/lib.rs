@@ -52,6 +52,8 @@ use serde_json_path::JsonPath;
 use sha2::{Digest, Sha256};
 use tracing::{error, info};
 
+pub(crate) const STATUS_OK: reqwest::StatusCode = reqwest::StatusCode::OK;
+
 pub(crate) const CONSEC_CMD_DELAY: Duration = Duration::from_millis(15);
 
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
@@ -232,6 +234,28 @@ pub mod splash_screen {
     }
 }
 
+#[derive(Debug)]
+pub enum ResponseErr {
+    Reqwest(reqwest::Error),
+    Status(reqwest::StatusCode),
+    Other(Cow<'static, str>),
+}
+
+impl ResponseErr {
+    fn bad_status(response: reqwest::Response) -> Self {
+        Self::Status(response.status())
+    }
+    fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
+        Self::Other(msg.into())
+    }
+}
+
+impl From<reqwest::Error> for ResponseErr {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Reqwest(err)
+    }
+}
+
 pub type LoggerRes = (Option<PathBuf>, Option<Result<CacheFile, ReadCacheErr>>);
 
 pub fn try_init_logger() -> LoggerRes {
@@ -277,35 +301,45 @@ fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
     }
 }
 
-pub async fn get_latest_hmw_hash() -> reqwest::Result<Result<String, &'static str>> {
+pub async fn get_latest_hmw_hash() -> Result<String, ResponseErr> {
     let client = client_with_timeout(6);
-    let latest = client
+    let response = client
         .get(global_state::Endpoints::hmw_manifest())
         .send()
-        .await?
-        .json::<Value>()
         .await?;
+
+    if response.status() != STATUS_OK {
+        return Err(ResponseErr::bad_status(response));
+    }
+
+    let latest = response.json::<Value>().await?;
 
     if let Some(json_path) = global_state::Endpoints::manifest_hash_path() {
         match try_query_json_path(&latest, json_path) {
-            Ok(hash) => return Ok(Ok(hash)),
+            Ok(hash) => return Ok(hash),
             Err(err) => splash_screen::push_message(Message::error(err)),
         }
     }
 
     let mut hmw_manifest = match from_value::<HmwManifest>(latest) {
         Ok(manifest) => manifest,
-        Err(_) => return Ok(Err("hmw manifest.json formatting has changed")),
+        Err(_) => {
+            return Err(ResponseErr::other(
+                "hmw manifest.json formatting has changed",
+            ));
+        }
     };
 
-    Ok(hmw_manifest
+    hmw_manifest
         .modules
         .iter_mut()
         .find(|module| {
             module.name == MOD_FILES_MODULE_NAME && module.version == MOD_FILES_LATEST_VER
         })
         .and_then(|module| module.files_with_hashes.remove(FNAME_HMW))
-        .ok_or("hmw manifest.json formatting has changed"))
+        .ok_or(ResponseErr::other(
+            "hmw manifest.json formatting has changed",
+        ))
 }
 
 pub(crate) fn open_dir(path: &Path) {

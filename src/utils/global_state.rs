@@ -1,6 +1,6 @@
 use super::{caching::AddrMap, display};
 use crate::{
-    LOG_ONLY, Spinner, StartupInfo, client_with_timeout,
+    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, StartupInfo, client_with_timeout,
     commands::{
         filter::{
             Server,
@@ -121,7 +121,7 @@ impl Endpoints {
         ENDPOINTS.with(|cell| cell.set(endpoints))
     }
 
-    fn set_default(ctx: &'static str, err: reqwest::Error) -> AppDetails {
+    fn set_default<D: Display>(ctx: &'static str, err: D) -> AppDetails {
         splash_screen::push_message(Message::error(format!("{ctx}: {err}")));
 
         Self::set(Self {
@@ -147,6 +147,11 @@ impl Endpoints {
                 return Self::set_default("Could not reach MatchWire startup json", err);
             }
         };
+
+        if response.status() != STATUS_OK {
+            let err = ResponseErr::bad_status(response);
+            return Self::set_default("Received bad response", err);
+        }
 
         match response.json::<StartupInfo>().await {
             Ok(startup) => {

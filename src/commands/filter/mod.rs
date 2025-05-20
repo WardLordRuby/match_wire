@@ -4,7 +4,7 @@ pub(crate) mod strategies;
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 
 use crate::{
-    LOG_ONLY, Spinner, TERM_CLEAR_LINE, command_err,
+    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, TERM_CLEAR_LINE, command_err,
     commands::handler::{CmdErr, ReplHandle},
     models::{
         cli::{Filters, Region, Source},
@@ -370,10 +370,16 @@ pub(crate) async fn try_get_info(
             err
         }
     };
+
     let server_response = match client.get(&meta_data.url).send().await {
         Ok(res) => res,
         Err(err) => return Err(meta_data.set_err_msg(err.without_url().to_string())),
     };
+
+    if server_response.status() != STATUS_OK {
+        return Err(meta_data.set_err_msg(server_response.status().to_string()));
+    }
+
     match server_response.json::<GetInfo>().await {
         Ok(info) => Ok(Server {
             source: meta_data.meta,
@@ -498,26 +504,27 @@ impl Source {
 async fn try_location_lookup(
     ip: IpAddr,
     client: Client,
-) -> Result<(IpAddr, ContCode), Cow<'static, str>> {
+) -> Result<(IpAddr, ContCode), ResponseErr> {
     let location_api_url = format!("{MASTER_LOCATION_URL}{ip}{REQUESTED_FIELDS}");
 
-    let api_response = client
-        .get(location_api_url)
-        .send()
-        .await
-        .map_err(|err| format!("{}, ip: {ip}", err.without_url()))?;
+    let api_response = client.get(location_api_url).send().await?;
 
-    let code = match api_response.json::<LocationApiResponse>().await {
-        Ok(LocationApiResponse {
+    if api_response.status() != STATUS_OK {
+        return Err(ResponseErr::bad_status(api_response));
+    }
+
+    let code = match api_response.json::<LocationApiResponse>().await? {
+        LocationApiResponse {
             cont_code: Some(code),
             ..
-        }) => code,
-        Ok(LocationApiResponse { message, .. }) => {
-            return Err(message
-                .map(Cow::Owned)
-                .unwrap_or(Cow::Borrowed("unknown error")));
+        } => code,
+        LocationApiResponse { message, .. } => {
+            return Err(ResponseErr::Other(
+                message
+                    .map(Cow::Owned)
+                    .unwrap_or(Cow::Borrowed("unknown error")),
+            ));
         }
-        Err(err) => return Err(Cow::Owned(format!("{}, ip: {ip}", err.without_url()))),
     };
 
     Ok((ip, code))

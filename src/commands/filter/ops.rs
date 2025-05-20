@@ -3,7 +3,7 @@ use super::{
     UnresponsiveCounter, strategies::FilterStrategy, try_get_info, try_location_lookup,
 };
 use crate::{
-    LOG_ONLY, Spinner, TERM_CLEAR_LINE, make_slice_ascii_lowercase,
+    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, TERM_CLEAR_LINE, make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Source},
         json_data::{ContCode, HostData},
@@ -18,7 +18,6 @@ use crate::{
 };
 
 use std::{
-    borrow::Cow,
     collections::HashSet,
     net::{IpAddr, SocketAddr},
 };
@@ -65,34 +64,46 @@ where
 }
 
 impl Source {
-    async fn iw4_servers<S: FilterStrategy>(client: Client) -> reqwest::Result<S> {
+    async fn iw4_servers<S: FilterStrategy>(client: Client) -> Result<S, ResponseErr> {
         trace!("retrieving iw4 master server list");
 
-        client
+        let response = client
             .get(global_state::Endpoints::iw4_master_server())
             .send()
-            .await?
+            .await?;
+
+        if response.status() != STATUS_OK {
+            return Err(ResponseErr::bad_status(response));
+        }
+
+        Ok(response
             .json::<Vec<HostData>>()
             .await
-            .map(S::iw4_master_map)
+            .map(S::iw4_master_map)?)
     }
 
-    async fn hmw_servers<S: FilterStrategy>(client: Client) -> reqwest::Result<S> {
+    async fn hmw_servers<S: FilterStrategy>(client: Client) -> Result<S, ResponseErr> {
         trace!("retrieving hmw master server list");
 
-        client
+        let response = client
             .get(global_state::Endpoints::hmw_master_server())
             .send()
-            .await?
+            .await?;
+
+        if response.status() != STATUS_OK {
+            return Err(ResponseErr::bad_status(response));
+        }
+
+        Ok(response
             .json::<Vec<String>>()
             .await
-            .map(S::hmw_master_map)
+            .map(S::hmw_master_map)?)
     }
 
     async fn try_get_sourced_servers<S: FilterStrategy>(
         self,
         client: Client,
-    ) -> reqwest::Result<S> {
+    ) -> Result<S, ResponseErr> {
         let sourced_res = match self {
             Source::HmwMaster => Self::hmw_servers::<S>(client).await,
             Source::Iw4Master => Self::iw4_servers::<S>(client).await,
@@ -229,7 +240,7 @@ pub(super) async fn join_info_requests<R>(
 
 /// Returns if [`global_state::Cache`] was modified
 pub(super) async fn join_region_requests(
-    mut requests: JoinSet<Result<(IpAddr, ContCode), Cow<'static, str>>>,
+    mut requests: JoinSet<Result<(IpAddr, ContCode), ResponseErr>>,
 ) -> bool {
     if requests.is_empty() {
         return false;
