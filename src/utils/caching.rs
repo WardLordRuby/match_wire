@@ -3,7 +3,7 @@ use crate::{
     commands::{
         filter::{
             Addressable, DEFAULT_SOURCES, Server, Sourced,
-            ops::{get_sourced_servers, queue_info_requests},
+            ops::{get_sourced_servers, spawn_info_requests},
             strategies::FastStrategy,
         },
         handler::CommandContext,
@@ -29,6 +29,8 @@ use std::{
 
 use constcat::concat;
 use tracing::{error, info, instrument, trace};
+
+pub(crate) type AddrMap = HashMap<IpAddr, Vec<u16>>;
 
 impl Sourced {
     pub(crate) fn to_flattened_source(&self) -> Source {
@@ -128,7 +130,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
 
         std::mem::swap(&mut cache.ip_to_region, &mut ip_to_region);
     });
-    let (_, mut requests) = queue_info_requests(servers.into_iter(), false, &client);
+    let (_, mut requests) = spawn_info_requests(servers.into_iter(), false, &client);
     let mut servers = Vec::with_capacity(requests.len());
     while let Some(res) = requests.join_next().await {
         match res {

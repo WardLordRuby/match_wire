@@ -1,3 +1,4 @@
+use super::{caching::AddrMap, display};
 use crate::{
     LOG_ONLY, Spinner, StartupInfo, client_with_timeout,
     commands::{
@@ -10,7 +11,6 @@ use crate::{
     },
     models::json_data::CacheFile,
     splash_screen,
-    utils::display,
 };
 
 use std::{
@@ -54,8 +54,8 @@ pub struct Cache {
     pub host_to_connect: HashMap<String, SocketAddr>,
     pub ip_to_region: HashMap<IpAddr, [u8; 2]>,
     pub connection_history: Vec<HostName>,
-    pub iw4m: HashMap<IpAddr, Vec<u16>>,
-    pub hmw: HashMap<IpAddr, Vec<u16>>,
+    pub iw4m: AddrMap,
+    pub hmw: AddrMap,
     pub created: SystemTime,
 }
 
@@ -140,7 +140,7 @@ impl Endpoints {
         const STARTUP_INFO_URL: &str =
             "https://gist.githubusercontent.com/WardLordRuby/15920ff68ae348933636a5c18bc51709/raw";
 
-        let client = client_with_timeout(5);
+        let client = client_with_timeout(6);
         let response = match client.get(STARTUP_INFO_URL).send().await {
             Ok(data) => data,
             Err(err) => {

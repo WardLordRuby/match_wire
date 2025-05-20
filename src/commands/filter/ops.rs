@@ -17,7 +17,11 @@ use crate::{
     },
 };
 
-use std::{collections::HashSet, net::SocketAddr};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    net::{IpAddr, SocketAddr},
+};
 
 use repl_oxide::ansi_code::{GREEN, RED, RESET};
 use reqwest::Client;
@@ -114,26 +118,25 @@ impl Source {
                 Source::HmwMaster => &cache.hmw,
             };
 
-            let servers = backup
+            backup
                 .iter()
                 .flat_map(|(&ip, ports)| {
                     ports
                         .iter()
                         .map(move |&port| self.with_cached_ip(SocketAddr::new(ip, port)))
                 })
-                .collect::<Vec<_>>();
-
-            S::from_cached(servers)
+                .collect::<Vec<_>>()
         });
 
         if cached.is_empty() {
             return None;
         }
-        Some(cached)
+
+        Some(S::from_cached(cached))
     }
 }
 
-pub(crate) fn queue_info_requests(
+pub(crate) fn spawn_info_requests(
     servers: impl Iterator<Item = Sourced>,
     remove_duplicates: bool,
     client: &Client,
@@ -155,7 +158,7 @@ pub(crate) fn queue_info_requests(
     (server_ct - tasks.len(), tasks)
 }
 
-pub(super) async fn await_info_requests<R>(
+pub(super) async fn join_info_requests<R>(
     mut requests: JoinSet<Result<Server, GetInfoMetaData>>,
     args: &Filters,
     client: &Client,
@@ -225,6 +228,57 @@ pub(super) async fn await_info_requests<R>(
 }
 
 /// Returns if [`global_state::Cache`] was modified
+pub(super) async fn join_region_requests(
+    mut requests: JoinSet<Result<(IpAddr, ContCode), Cow<'static, str>>>,
+) -> bool {
+    if requests.is_empty() {
+        return false;
+    }
+
+    let task_ct = requests.len();
+    let mut failure_count = 0_usize;
+    let mut new_cont_codes = Vec::with_capacity(task_ct);
+
+    while let Some(res) = requests.join_next().await {
+        match res {
+            Ok(Ok(addr_map)) => {
+                new_cont_codes.push(addr_map);
+            }
+            Ok(Err(err)) => {
+                error!(name: LOG_ONLY, "{err}");
+                failure_count += 1
+            }
+            Err(err) => {
+                error!(name: LOG_ONLY, "{err:?}");
+                failure_count += 1
+            }
+        }
+    }
+
+    let cache_modified = !new_cont_codes.is_empty();
+    if cache_modified {
+        global_state::Cache::with_borrow_mut(|cache| {
+            cache.ip_to_region.extend(new_cont_codes);
+        });
+    }
+
+    info!(
+        "Made {} new location {}",
+        task_ct,
+        SingularPlural(task_ct, "request", "requests")
+    );
+
+    if failure_count > 0 {
+        println!(
+            "{TERM_CLEAR_LINE}{RED}Failed to resolve location for {failure_count} server {}{RESET}",
+            SingularPlural(failure_count, "hoster", "hosters")
+        )
+    }
+
+    cache_modified
+}
+
+/// Returns if [`global_state::Cache`] was modified
 pub(super) async fn filter_via_region<S>(
     sourced_servers: &mut Vec<S>,
     regions: &HashSet<ContCode>,
@@ -239,7 +293,10 @@ where
         DisplayServerCount(sourced_servers.len(), GREEN)
     ));
 
-    let servers = std::mem::take(sourced_servers);
+    let servers = std::mem::replace(
+        sourced_servers,
+        Vec::with_capacity((sourced_servers.len() as f32 * 0.6).round() as usize),
+    );
     let mut tasks = JoinSet::new();
     let mut check_again = Vec::new();
     let mut new_lookups = HashSet::new();
@@ -254,52 +311,16 @@ where
                 continue;
             }
             if new_lookups.insert(socket_addr.ip()) {
-                let client = client.clone();
                 trace!("Requesting location data for: {}", socket_addr.ip());
-                tasks.spawn(async move {
-                    try_location_lookup(&socket_addr.ip(), client)
-                        .await
-                        .map(|location| (sourced_data, location))
-                });
-            } else {
-                check_again.push(sourced_data)
+                tasks.spawn(try_location_lookup(socket_addr.ip(), client.clone()));
             }
+            check_again.push(sourced_data)
         }
     });
 
-    let mut failure_count = 0_usize;
-    let mut new_cont_codes = Vec::with_capacity(new_lookups.len());
+    let cache_modified = join_region_requests(tasks).await;
 
-    while let Some(res) = tasks.join_next().await {
-        match res {
-            Ok(Ok((sourced_data, cont_code))) => {
-                new_cont_codes.push((sourced_data.socket_addr().ip(), cont_code));
-                if regions.contains(&cont_code) {
-                    sourced_servers.push(sourced_data);
-                }
-            }
-            Ok(Err(err)) => {
-                error!(name: LOG_ONLY, "{err}");
-                failure_count += 1
-            }
-            Err(err) => {
-                error!(name: LOG_ONLY, "{err:?}");
-                failure_count += 1
-            }
-        }
-    }
-
-    if !new_lookups.is_empty() {
-        info!(
-            "Made {} new location {}",
-            new_lookups.len(),
-            SingularPlural(new_lookups.len(), "request", "requests")
-        );
-    }
-
-    global_state::Cache::with_borrow_mut(|cache| {
-        cache.ip_to_region.extend(new_cont_codes);
-
+    global_state::Cache::with_borrow(|cache| {
         for sourced_data in check_again {
             if cache
                 .ip_to_region
@@ -311,20 +332,13 @@ where
         }
     });
 
-    if failure_count > 0 {
-        println!(
-            "{TERM_CLEAR_LINE}{RED}Failed to resolve location for {failure_count} server {}{RESET}",
-            SingularPlural(failure_count, "hoster", "hosters")
-        )
-    }
-
     println!(
         "{TERM_CLEAR_LINE}{} match the input {}",
         DisplayServerCount(sourced_servers.len(), GREEN),
         SingularPlural(regions.len(), "region", "regions"),
     );
 
-    !new_lookups.is_empty()
+    cache_modified
 }
 
 pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters) {

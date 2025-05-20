@@ -1,4 +1,4 @@
-use crate::commands::launch_h2m::HostName;
+use crate::{commands::launch_h2m::HostName, utils::caching::AddrMap};
 
 use std::{
     borrow::Cow,
@@ -166,8 +166,8 @@ pub struct CacheFile {
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct ServerCache {
-    pub iw4m: HashMap<IpAddr, Vec<u16>>,
-    pub hmw: HashMap<IpAddr, Vec<u16>>,
+    pub iw4m: AddrMap,
+    pub hmw: AddrMap,
     #[serde(
         deserialize_with = "deserialize_country_code_map",
         serialize_with = "serialize_country_code_map"

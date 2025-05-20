@@ -479,18 +479,38 @@ pub(crate) fn make_slice_ascii_lowercase(vec: &mut [String]) {
 }
 
 pub(crate) fn parse_hostname(name: &str) -> String {
-    const COLOR_ESCAPE_CODE: char = '^';
-    let mut host_name = String::new();
-    let mut chars = name.chars().peekable();
-    while let Some(c) = chars.next() {
+    let trimmed_name = name.trim_start();
+    if trimmed_name.is_empty() {
+        return String::new();
+    }
+
+    fn step(c: char, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<char> {
         if c == COLOR_ESCAPE_CODE {
-            if chars.peek().is_some() {
-                chars.next();
-            }
+            chars.next();
+            None
         } else {
-            host_name.push(c.to_ascii_lowercase());
+            Some(c.to_ascii_lowercase())
         }
     }
+
+    const COLOR_ESCAPE_CODE: char = '^';
+    let mut chars = trimmed_name.chars().peekable();
+    let mut host_name = String::new();
+
+    if let Some(c) = step(chars.next().expect("early return"), &mut chars) {
+        host_name.push(c);
+    }
+
+    while chars.peek().copied().is_some_and(char::is_whitespace) {
+        chars.next();
+    }
+
+    while let Some(c) = chars.next() {
+        if let Some(c) = step(c, &mut chars) {
+            host_name.push(c);
+        }
+    }
+
     host_name
 }
 

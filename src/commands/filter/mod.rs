@@ -133,14 +133,14 @@ pub(crate) async fn build_favorites(
         DisplayCountOf(ip_collected, "entry", "entries")
     );
 
-    Ok(filter.modified_cache)
+    Ok(filter.cache_modified)
 }
 
 pub(crate) struct FilterData {
     /// (addr, clients)
     servers: Vec<(SocketAddr, u8)>,
     duplicates: usize,
-    modified_cache: bool,
+    cache_modified: bool,
 }
 
 impl Region {
@@ -495,7 +495,10 @@ impl Source {
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn try_location_lookup(ip: &IpAddr, client: Client) -> Result<ContCode, Cow<'static, str>> {
+async fn try_location_lookup(
+    ip: IpAddr,
+    client: Client,
+) -> Result<(IpAddr, ContCode), Cow<'static, str>> {
     let location_api_url = format!("{MASTER_LOCATION_URL}{ip}{REQUESTED_FIELDS}");
 
     let api_response = client
@@ -504,18 +507,20 @@ async fn try_location_lookup(ip: &IpAddr, client: Client) -> Result<ContCode, Co
         .await
         .map_err(|err| format!("{}, ip: {ip}", err.without_url()))?;
 
-    match api_response.json::<LocationApiResponse>().await {
-        Ok(json) => {
-            if let Some(code) = json.cont_code {
-                return Ok(code);
-            }
-            Err(json
-                .message
+    let code = match api_response.json::<LocationApiResponse>().await {
+        Ok(LocationApiResponse {
+            cont_code: Some(code),
+            ..
+        }) => code,
+        Ok(LocationApiResponse { message, .. }) => {
+            return Err(message
                 .map(Cow::Owned)
-                .unwrap_or(Cow::Borrowed("unknown error")))
+                .unwrap_or(Cow::Borrowed("unknown error")));
         }
-        Err(err) => Err(Cow::Owned(format!("{}, ip: {ip}", err.without_url()))),
-    }
+        Err(err) => return Err(Cow::Owned(format!("{}, ip: {ip}", err.without_url()))),
+    };
+
+    Ok((ip, code))
 }
 
 #[instrument(level = "trace", skip_all)]

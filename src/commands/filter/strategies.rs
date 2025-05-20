@@ -1,17 +1,20 @@
 use super::{
-    Addressable, DEFAULT_SOURCES, FilterData, GAME_ID, H2M_ID, HMW_ID, HostMeta, Server, Sourced,
-    ops::*,
+    Addressable, DEFAULT_SOURCES, FilterData, GAME_ID, GetInfoMetaData, H2M_ID, HMW_ID, HostMeta,
+    Request, Server, Sourced, ops::*, try_get_info,
 };
 use crate::{
     Spinner, client_with_timeout, command_err,
-    commands::handler::{CmdErr, ReplHandle},
+    commands::{
+        filter::try_location_lookup,
+        handler::{CmdErr, ReplHandle},
+    },
     display::{self, BoxBottom, BoxTop, Line, Space},
     models::{
         cli::{Filters, Source},
-        json_data::{GetInfo, HostData, ServerInfo},
+        json_data::{ContCode, GetInfo, HostData, ServerInfo},
     },
     parse_hostname,
-    utils::global_state,
+    utils::{caching::AddrMap, global_state},
 };
 
 use std::{
@@ -19,10 +22,11 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
 };
 
 use reqwest::Client;
+use tokio::task::JoinSet;
 
 const MIN_HOST_NAME_LEN: usize = 18;
 const FILTER_HEADER_LEN: usize = 107;
@@ -134,9 +138,9 @@ impl FilterStrategy for FastStrategy {
 
         let (duplicates, servers) = if args.need_get_info_data() {
             let (duplicates, requests) =
-                queue_info_requests(sourced_servers.into_iter(), true, &client);
+                spawn_info_requests(sourced_servers.into_iter(), true, &client);
 
-            let mut servers = await_info_requests(
+            let mut servers = join_info_requests(
                 requests,
                 &args,
                 &client,
@@ -178,7 +182,7 @@ impl FilterStrategy for FastStrategy {
         Ok(FilterData {
             servers,
             duplicates,
-            modified_cache,
+            cache_modified: modified_cache,
         })
     }
 }
@@ -234,6 +238,12 @@ impl GameStats {
     }
 }
 
+struct Requests {
+    info: JoinSet<Result<Server, GetInfoMetaData>>,
+    region: JoinSet<Result<(IpAddr, ContCode), Cow<'static, str>>>,
+    duplicates: usize,
+}
+
 #[derive(Default)]
 pub(super) struct StatTrackStrategy {
     game: Vec<String>,
@@ -251,16 +261,6 @@ impl IntoIterator for StatTrackStrategy {
 
     fn into_iter(self) -> Self::IntoIter {
         self.servers.into_iter().flatten()
-    }
-}
-
-impl StatTrackStrategy {
-    fn filter_sourced(&self, ids: &'static [&str]) -> impl Iterator<Item = &[Sourced]> {
-        self.game
-            .iter()
-            .zip(self.servers.iter())
-            .filter(|(id, _)| ids.contains(&id.as_str()))
-            .map(|(_, servers)| servers.as_slice())
     }
 }
 
@@ -327,40 +327,41 @@ impl FilterStrategy for StatTrackStrategy {
 
         let mut stat_track = Self::new(sources, &client).await?;
 
-        let (duplicates, requests) = queue_info_requests(
+        let requests = Self::queue_requests(
+            &client,
             // MARK: TODO
-            // 'getInfo' endpoint is only correct for H2M/HMW servers, find a way request the same data from
-            // _all_ game servers. Meantime iw4m servers are **not** marked as unresponsive in `GameStats::update`
+            // 'getInfo' endpoint is only correct for H2M/HMW servers, find a way request the same data from _all_
+            // game servers. Meantime iw4m servers are **not** marked as unresponsive in `GameStats::update`. If
+            // 'getInfo' requests are received from games other than hmw, we need to ensure _only_ hmw servers are cached
             stat_track
                 .filter_sourced(&[HMW_ID])
                 .flatten()
                 .map(Sourced::addr_copy),
-            true,
-            &client,
         );
 
         args.include_unresponsive = false;
 
-        let info_map = await_info_requests(
-            requests,
-            &args,
-            &client,
-            &spinner,
-            HashMap::with_capacity,
-            |map, server| {
-                map.insert(server.socket_addr(), server.info);
-            },
-        )
-        .await;
+        let (info_map, mut cache_modified) = tokio::join!(
+            join_info_requests(
+                requests.info,
+                &args,
+                &client,
+                &spinner,
+                HashMap::with_capacity,
+                |map, server| {
+                    map.insert(server.socket_addr(), server.info);
+                },
+            ),
+            join_region_requests(requests.region)
+        );
 
         let source_stats = stat_track.get_source_stats(&info_map);
         let mut servers = stat_track.collect_to_servers(&[HMW_ID], info_map);
 
-        let modified_cache = if let Some(regions) = args.regions().as_ref() {
-            filter_via_region(&mut servers, regions, &client, &spinner).await
-        } else {
-            false
-        };
+        if let Some(regions) = args.regions().as_ref() {
+            cache_modified =
+                filter_via_region(&mut servers, regions, &client, &spinner).await || cache_modified
+        }
 
         filter_via_get_info(&mut servers, &mut args);
         servers.sort_unstable_by(|a, b| b.info.player_ct().cmp(&a.info.player_ct()));
@@ -376,8 +377,8 @@ impl FilterStrategy for StatTrackStrategy {
 
         Ok(FilterData {
             servers: out,
-            duplicates,
-            modified_cache,
+            duplicates: requests.duplicates,
+            cache_modified,
         })
     }
 }
@@ -390,6 +391,14 @@ impl StatTrackStrategy {
             servers: vec![servers],
             host_ct: 0,
         }
+    }
+
+    fn filter_sourced(&self, ids: &'static [&str]) -> impl Iterator<Item = &[Sourced]> {
+        self.game
+            .iter()
+            .zip(self.servers.iter())
+            .filter(|(id, _)| ids.contains(&id.as_str()))
+            .map(|(_, servers)| servers.as_slice())
     }
 
     /// `(game, servers)`
@@ -415,6 +424,61 @@ impl StatTrackStrategy {
                 self.servers.push(Vec::new());
                 i
             })
+    }
+
+    fn queue_requests(client: &Client, servers: impl Iterator<Item = Sourced>) -> Requests {
+        fn insert(map: &mut AddrMap, ip: IpAddr, port: u16) -> (bool, bool) {
+            let (mut unique_ip, mut unique_socket) = (false, false);
+            map.entry(ip)
+                .and_modify(|ports| {
+                    if !ports.contains(&port) {
+                        unique_socket = true;
+                        ports.push(port);
+                    }
+                })
+                .or_insert_with(|| {
+                    (unique_ip, unique_socket) = (true, true);
+                    vec![port]
+                });
+            (unique_ip, unique_socket)
+        }
+
+        let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
+
+        let mut seen = HashMap::new();
+
+        let (info, region, server_ct) = global_state::Cache::with_borrow(|cache| {
+            servers.fold(
+                (JoinSet::new(), JoinSet::new(), 0),
+                |(mut info_set, mut region_set, ct), server| {
+                    let socket_addr = server.socket_addr();
+                    let (unique_ip, unique_socket) =
+                        insert(&mut seen, socket_addr.ip(), socket_addr.port());
+
+                    if unique_socket {
+                        info_set.spawn(try_get_info(
+                            Request::New(server),
+                            client.clone(),
+                            server_info_endpoint,
+                        ));
+                    }
+                    if unique_ip {
+                        let ip = socket_addr.ip();
+                        if !cache.ip_to_region.contains_key(&ip) {
+                            region_set.spawn(try_location_lookup(ip, client.clone()));
+                        }
+                    }
+
+                    (info_set, region_set, ct + 1)
+                },
+            )
+        });
+
+        Requests {
+            duplicates: server_ct - info.len(),
+            info,
+            region,
+        }
     }
 
     fn collect_to_servers(
@@ -456,7 +520,13 @@ impl StatTrackStrategy {
         let mut iw4 = hmw.clone();
         let mut iw4_total = GameStats::default();
 
-        for (i, servers) in self.servers.iter().map(Vec::as_slice).enumerate() {
+        for (i, (servers, game)) in self
+            .servers
+            .iter()
+            .map(Vec::as_slice)
+            .zip(self.game.iter().map(String::as_str))
+            .enumerate()
+        {
             for sourced_server in servers {
                 match sourced_server {
                     Sourced::Hmw(socket_addr) => {
@@ -465,7 +535,8 @@ impl StatTrackStrategy {
                     Sourced::Iw4(server) => iw4_total.add(iw4[i].update(
                         &server.resolved_addr,
                         map,
-                        Some(&server.server),
+                        // trust the iw4 instance while we don't have getInfo setup for other games
+                        (game != HMW_ID).then_some(&server.server),
                     )),
                     _ => (),
                 }
