@@ -41,7 +41,7 @@ pub(crate) enum Command {
         option: CacheCmd,
     },
 
-    /// Opens H2M/HMW game console
+    /// Opens HMW/H2M game console
     #[command(aliases(["Logs", "logs", "Console"]))]
     Console {
         /// Re-print all logs captured from MW2 Remastered

@@ -24,10 +24,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 use windows_sys::Win32::{
-    Foundation::{GetLastError, HWND},
+    Foundation::{CloseHandle, GetLastError, HWND},
     Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
     },
+    System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess},
     UI::WindowsAndMessaging::{
         DrawMenuBar, EnableMenuItem, EnumWindows, GetClassNameA, GetSystemMenu, GetWindowTextW,
         IsWindowVisible, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, SC_CLOSE, SW_HIDE, ShowWindow,
@@ -430,6 +431,10 @@ impl WinApiErr {
         }
     }
 
+    fn with_generic_msg(msg: String) -> Self {
+        Self { msg, code: 0 }
+    }
+
     pub(crate) fn resolve_to_closed(self) -> Option<&'static str> {
         error!("{self}");
         None
@@ -693,6 +698,30 @@ unsafe extern "system" fn game_window_search(hwnd: HWND, lparam: isize) -> i32 {
     }
 
     1
+}
+
+pub(crate) fn terminate_process_by_id(pid: u32) -> Result<(), WinApiErr> {
+    // Safety: The correct parameters are supplied to `OpenProcess` for our use case
+    let process_handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+
+    if process_handle.is_null() {
+        return Err(WinApiErr::with_generic_msg(format!(
+            "Failed to open process with ID: {pid}",
+        )));
+    }
+
+    // Safety: Early return ensures that the raw pointer given by `OpenProcess` is not null
+    let result = unsafe { TerminateProcess(process_handle, 1) };
+
+    // Safety: Early return ensures that the raw pointer given by `OpenProcess` is not null
+    unsafe { CloseHandle(process_handle) };
+
+    if result == 0 {
+        // Safety: `TerminateProcess` returned an error(0)
+        return Err(unsafe { WinApiErr::get_last("TerminateProcess") });
+    }
+
+    Ok(())
 }
 
 pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {

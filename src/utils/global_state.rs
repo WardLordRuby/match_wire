@@ -1,6 +1,6 @@
 use super::{caching::AddrMap, display};
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, StartupInfo, client_with_timeout,
+    LOG_ONLY, STATUS_OK, Spinner, StartupInfo, client_with_timeout,
     commands::{
         filter::{
             Server,
@@ -149,8 +149,7 @@ impl Endpoints {
         };
 
         if response.status() != STATUS_OK {
-            let err = ResponseErr::bad_status(response);
-            return Self::set_default("Received bad response", err);
+            return Self::set_default("Received bad response", response.status());
         }
 
         match response.json::<StartupInfo>().await {

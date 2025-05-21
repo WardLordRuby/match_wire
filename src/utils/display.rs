@@ -500,10 +500,7 @@ pub(crate) struct BoxTop(pub(crate) Option<&'static str>, pub(crate) usize);
 impl Display for BoxTop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let title = self.0.unwrap_or_default();
-
-        write!(f, "┌{title}")?;
-        write!(f, "{}", Line(self.1 - title.chars().count()))?;
-        write!(f, "┐")
+        write!(f, "┌{title}{}┐", Line(self.1 - title.chars().count()))
     }
 }
 
@@ -512,9 +509,7 @@ pub(crate) struct BoxBottom(pub(crate) usize);
 
 impl Display for BoxBottom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "└")?;
-        write!(f, "{}", Line(self.0))?;
-        write!(f, "┘")
+        write!(f, "└{}┘", Line(self.0))
     }
 }
 

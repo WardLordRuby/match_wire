@@ -4,7 +4,7 @@ use crate::{
         filter::build_favorites,
         launch_h2m::{
             LaunchError, WinApiErr, game_open, hide_pseudo_console, initialize_listener,
-            launch_h2m_pseudo, toggle_close_state,
+            launch_h2m_pseudo, terminate_process_by_id, toggle_close_state,
         },
     },
     exe_details,
@@ -750,9 +750,26 @@ impl CommandContext {
             .unwrap_or_else(WinApiErr::resolve_to_open)
             .is_none()
         {
-            let spinner = Spinner::new(format!("Waiting for {} to close", self.game_name()));
+            const TIMEOUT: Duration = Duration::from_secs(60);
 
+            let spinner = Spinner::new(format!("Waiting for {} to close", self.game_name()));
+            let start_time = std::time::Instant::now();
             while global_state::PtyHandle::check_connection().is_ok() {
+                if start_time.elapsed() > TIMEOUT {
+                    if let Ok(pid) = global_state::PtyHandle::try_if_alive(|pty| Ok(pty.get_pid()))
+                        .map_err(display::log_error)
+                    {
+                        if terminate_process_by_id(pid)
+                            .map_err(display::log_error)
+                            .is_ok()
+                        {
+                            error!(name: LOG_ONLY, "Hang detected, {} terminated by windows api", self.game_name());
+                        }
+                    }
+
+                    break;
+                }
+
                 tokio::task::yield_now().await;
             }
 

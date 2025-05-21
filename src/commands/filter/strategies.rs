@@ -520,13 +520,7 @@ impl StatTrackStrategy {
         let mut iw4 = hmw.clone();
         let mut iw4_total = GameStats::default();
 
-        for (i, (servers, game)) in self
-            .servers
-            .iter()
-            .map(Vec::as_slice)
-            .zip(self.game.iter().map(String::as_str))
-            .enumerate()
-        {
+        for (i, servers) in self.servers.iter().map(Vec::as_slice).enumerate() {
             for sourced_server in servers {
                 match sourced_server {
                     Sourced::Hmw(socket_addr) => {
@@ -536,7 +530,7 @@ impl StatTrackStrategy {
                         &server.resolved_addr,
                         map,
                         // trust the iw4 instance while we don't have getInfo setup for other games
-                        (game != HMW_ID).then_some(&server.server),
+                        (self.game[i] != HMW_ID).then_some(&server.server),
                     )),
                     _ => (),
                 }
