@@ -42,41 +42,56 @@ impl Sourced {
 }
 
 impl global_state::Cache {
-    fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) {
+    fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) -> bool {
         let map = match source {
             Source::HmwMaster => &mut self.hmw,
             Source::Iw4Master => &mut self.iw4m,
         };
+
+        let mut modified = true;
+
         map.entry(ip)
             .and_modify(|cached| {
+                let mut port_inserted = false;
+
                 for port in ports {
                     if !cached.contains(port) {
                         cached.push(*port);
+                        port_inserted = true;
                     }
                 }
+
+                modified = port_inserted
             })
             .or_insert(ports.to_vec());
+
+        modified
     }
 
-    fn internal_update_cache_call(&mut self, addr: SocketAddr, source: Source, host_name: String) {
-        self.host_to_connect.insert(host_name, addr);
-        self.insert_ports(addr.ip(), &[addr.port()], source);
+    fn internal_update_cache_call(
+        &mut self,
+        addr: SocketAddr,
+        source: Source,
+        host_name: String,
+    ) -> bool {
+        self.host_to_connect.insert(host_name, addr).is_none()
+            | self.insert_ports(addr.ip(), &[addr.port()], source)
     }
 
-    pub(crate) fn update_cache_with(&mut self, server: &Server) {
+    pub(crate) fn update_cache_with(&mut self, server: &Server) -> bool {
         self.internal_update_cache_call(
             server.source.socket_addr(),
             server.source.to_flattened_source(),
             server.info.host_name.clone(),
-        );
+        )
     }
 
-    pub(crate) fn push(&mut self, server: Server) {
+    pub(crate) fn push(&mut self, server: Server) -> bool {
         self.internal_update_cache_call(
             server.source.socket_addr(),
             server.source.to_flattened_source(),
             server.info.host_name,
-        );
+        )
     }
 }
 

@@ -169,6 +169,7 @@ pub(crate) fn spawn_info_requests(
     (server_ct - tasks.len(), tasks)
 }
 
+/// Returns if [`global_state::Cache`] was modified along with the joined result
 pub(super) async fn join_info_requests<R>(
     mut requests: JoinSet<Result<Server, GetInfoMetaData>>,
     args: &Filters,
@@ -176,7 +177,7 @@ pub(super) async fn join_info_requests<R>(
     spinner: &Spinner,
     init: impl FnOnce(usize) -> R,
     insert: impl Fn(&mut R, Server),
-) -> R {
+) -> (R, bool) {
     let mut out = init(requests.len());
 
     let can_use_backup = args.can_use_iw4m_data();
@@ -222,20 +223,19 @@ pub(super) async fn join_info_requests<R>(
         requests = retries;
     }
 
-    global_state::Cache::with_borrow_mut(|cache| {
-        for server in responses {
-            // MARK: XXX
-            // Untracked cache modification
-            cache.update_cache_with(&server);
+    let modified = global_state::Cache::with_borrow_mut(|cache| {
+        responses.into_iter().fold(false, |prev, server| {
+            let inserted = cache.update_cache_with(&server);
             insert(&mut out, server);
-        }
+            inserted || prev
+        })
     });
 
     if did_not_respond.total() > 0 {
         println!("{CLEAR_LINE}{did_not_respond}");
     }
 
-    out
+    (out, modified)
 }
 
 /// Returns if [`global_state::Cache`] was modified
@@ -289,7 +289,8 @@ pub(super) async fn join_region_requests(
     cache_modified
 }
 
-/// Returns if [`global_state::Cache`] was modified
+/// Returns if [`global_state::Cache`] was modified\
+/// Does not retain the ordering of `servers`, internally appends valid new lookups to the end
 pub(super) async fn filter_via_region<S>(
     sourced_servers: &mut Vec<S>,
     regions: &HashSet<ContCode>,
@@ -352,6 +353,7 @@ where
     cache_modified
 }
 
+/// Does not retain the ordering of `servers`, internally uses `swap_remove`
 pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters) {
     args.includes.as_deref_mut().map(make_slice_ascii_lowercase);
     args.excludes.as_deref_mut().map(make_slice_ascii_lowercase);
@@ -359,18 +361,23 @@ pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters)
     for i in (0..servers.len()).rev() {
         let info = &servers[i].info;
 
-        if let Some(team_size_max) = args.team_size_max {
-            if info.max_clients > team_size_max * 2 {
-                servers.swap_remove(i);
-                continue;
-            }
+        // Server isn't running but management software is
+        if info.max_clients == 0 {
+            servers.swap_remove(i);
+            continue;
         }
 
-        if let Some(player_min) = args.player_min {
-            if info.clients < player_min {
-                servers.swap_remove(i);
-                continue;
-            }
+        if args
+            .team_size_max
+            .is_some_and(|max| info.max_clients > max * 2)
+        {
+            servers.swap_remove(i);
+            continue;
+        }
+
+        if args.player_min.is_some_and(|min| info.clients < min) {
+            servers.swap_remove(i);
+            continue;
         }
 
         if args.with_bots && info.bots == 0 {

@@ -129,18 +129,18 @@ impl FilterStrategy for FastStrategy {
         let client = client_with_timeout(5);
 
         let mut sourced_servers = Self::new(sources, &client).await?;
+        let mut cache_modified = false;
 
-        let modified_cache = if let Some(regions) = args.regions() {
-            filter_via_region(&mut sourced_servers.0, &regions, &client, &spinner).await
-        } else {
-            false
-        };
+        if let Some(regions) = args.regions() {
+            cache_modified =
+                filter_via_region(&mut sourced_servers.0, &regions, &client, &spinner).await
+        }
 
         let (duplicates, servers) = if args.need_get_info_data() {
             let (duplicates, requests) =
                 spawn_info_requests(sourced_servers.into_iter(), true, &client);
 
-            let mut servers = join_info_requests(
+            let (mut servers, mod_info) = join_info_requests(
                 requests,
                 &args,
                 &client,
@@ -149,6 +149,7 @@ impl FilterStrategy for FastStrategy {
                 |vec, server| vec.push(server),
             )
             .await;
+            cache_modified |= mod_info;
 
             filter_via_get_info(&mut servers, &mut args);
 
@@ -182,7 +183,7 @@ impl FilterStrategy for FastStrategy {
         Ok(FilterData {
             servers,
             duplicates,
-            cache_modified: modified_cache,
+            cache_modified,
         })
     }
 }
@@ -213,10 +214,12 @@ impl GameStats {
         map: &HashMap<SocketAddr, GetInfo>,
         backup: Option<&ServerInfo>,
     ) -> (usize, usize, usize) {
-        if let Some(player_ct) = map
+        if let Some((player_ct, _)) = map
             .get(addr)
-            .map(|i| i.player_ct() as usize)
-            .or_else(|| backup.map(|b| b.clients as usize))
+            .map(|i| (i.player_ct() as usize, i.max_clients))
+            .or_else(|| backup.map(|b| (b.clients as usize, b.max_clients)))
+            // Server isn't running but management software is
+            .filter(|(_, m)| *m != 0)
         {
             self.servers += 1;
             self.players += player_ct;
@@ -341,7 +344,7 @@ impl FilterStrategy for StatTrackStrategy {
 
         args.include_unresponsive = false;
 
-        let (info_map, mut cache_modified) = tokio::join!(
+        let ((info_map, mod_info), mod_region) = tokio::join!(
             join_info_requests(
                 requests.info,
                 &args,
@@ -355,12 +358,13 @@ impl FilterStrategy for StatTrackStrategy {
             join_region_requests(requests.region)
         );
 
+        let mut cache_modified = mod_info || mod_region;
+
         let source_stats = stat_track.get_source_stats(&info_map);
         let mut servers = stat_track.collect_to_servers(&[HMW_ID], info_map);
 
         if let Some(regions) = args.regions().as_ref() {
-            cache_modified =
-                filter_via_region(&mut servers, regions, &client, &spinner).await || cache_modified
+            cache_modified |= filter_via_region(&mut servers, regions, &client, &spinner).await
         }
 
         filter_via_get_info(&mut servers, &mut args);

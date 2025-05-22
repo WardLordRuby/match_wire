@@ -62,6 +62,8 @@ pub(crate) enum CmdErr {
 }
 
 impl From<io::Error> for CmdErr {
+    /// This implementation of `from` should be used carefully, not _all_ `io::Error`s are critical,
+    /// but **all** `io::Error`s that originate from the repl_oxide crate are.
     fn from(err: io::Error) -> Self {
         Self::Critical(err)
     }
