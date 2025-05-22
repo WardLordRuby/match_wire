@@ -3,7 +3,7 @@ use super::{
     UnresponsiveCounter, strategies::FilterStrategy, try_get_info, try_location_lookup,
 };
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, TERM_CLEAR_LINE, make_slice_ascii_lowercase,
+    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Source},
         json_data::{ContCode, HostData},
@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use repl_oxide::ansi_code::{GREEN, RED, RESET};
+use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RED, RESET};
 use reqwest::Client;
 use tokio::task::JoinSet;
 use tracing::{error, info, trace, warn};
@@ -232,7 +232,7 @@ pub(super) async fn join_info_requests<R>(
     });
 
     if did_not_respond.total() > 0 {
-        println!("{TERM_CLEAR_LINE}{did_not_respond}");
+        println!("{CLEAR_LINE}{did_not_respond}");
     }
 
     out
@@ -281,7 +281,7 @@ pub(super) async fn join_region_requests(
 
     if failure_count > 0 {
         println!(
-            "{TERM_CLEAR_LINE}{RED}Failed to resolve location for {failure_count} server {}{RESET}",
+            "{CLEAR_LINE}{RED}Failed to resolve location for {failure_count} server {}{RESET}",
             SingularPlural(failure_count, "hoster", "hosters")
         )
     }
@@ -344,7 +344,7 @@ where
     });
 
     println!(
-        "{TERM_CLEAR_LINE}{} match the input {}",
+        "{CLEAR_LINE}{} match the input {}",
         DisplayServerCount(sourced_servers.len(), GREEN),
         SingularPlural(regions.len(), "region", "regions"),
     );

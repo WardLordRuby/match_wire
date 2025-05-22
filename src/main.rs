@@ -1,7 +1,7 @@
 use match_wire::{
     CRATE_NAME, LOG_ONLY, LoggerRes, SAVED_HISTORY_CAP, await_user_for_end,
     commands::{
-        handler::{CommandContext, GameDetails, Message, ReplHandle, StartupData},
+        handler::{CommandContext, GameDetails, HistoryTag, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
     get_latest_hmw_hash, print_help, splash_screen, startup_cache_task, try_init_logger,
@@ -55,7 +55,9 @@ async fn main() {
         .await
         .unwrap_or_else(display::error);
 
-    command_context.graceful_shutdown(&line_handle.export_history(Some(SAVED_HISTORY_CAP)))
+    command_context.graceful_shutdown(
+        &line_handle.export_filtered_history(HistoryTag::filter, Some(SAVED_HISTORY_CAP)),
+    )
 }
 
 async fn run_eval_print_loop(

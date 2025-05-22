@@ -45,7 +45,7 @@ use std::{
 use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
-use repl_oxide::ansi_code::{RED, RESET};
+use repl_oxide::ansi_code::{CLEAR_LINE, RED, RESET};
 use reqwest::Client;
 use serde_json::{Value, from_value};
 use serde_json_path::JsonPath;
@@ -102,8 +102,6 @@ use files::*;
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
-
-pub(crate) const TERM_CLEAR_LINE: &str = "\r\x1B[J";
 
 #[macro_export]
 macro_rules! new_io_error {
@@ -582,11 +580,11 @@ impl Spinner {
                         Ok(new) => message = new,
                         Err(TryRecvError::Empty) => (),
                         Err(TryRecvError::Disconnected) => {
-                            write!(stdout, "{TERM_CLEAR_LINE}")?;
+                            write!(stdout, "{CLEAR_LINE}")?;
                             break;
                         }
                     }
-                    write!(stdout, "{TERM_CLEAR_LINE}{ch} {message}")?;
+                    write!(stdout, "{CLEAR_LINE}{ch} {message}")?;
                     stdout.flush()?;
                     std::thread::sleep(Duration::from_millis(60));
                 }
@@ -599,7 +597,7 @@ impl Spinner {
     pub(crate) fn update_message(&self, message: String) {
         self.sender
             .send(message)
-            .unwrap_or_else(|err| println!("{TERM_CLEAR_LINE}{}...", err.0))
+            .unwrap_or_else(|err| println!("{CLEAR_LINE}{}...", err.0))
     }
 
     pub(crate) fn finish(self) {

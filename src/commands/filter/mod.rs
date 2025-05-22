@@ -4,7 +4,7 @@ pub(crate) mod strategies;
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, TERM_CLEAR_LINE, command_err,
+    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, command_err,
     commands::handler::{CmdErr, ReplHandle},
     models::{
         cli::{Filters, Region, Source},
@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 
-use repl_oxide::ansi_code::{GREEN, RESET, YELLOW};
+use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RESET, YELLOW};
 use reqwest::Client;
 use tracing::{error, info, instrument, trace, warn};
 
@@ -94,7 +94,7 @@ pub(crate) async fn build_favorites(
 
     if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
         println!(
-            "{TERM_CLEAR_LINE}{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}"
+            "{CLEAR_LINE}{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}"
         )
     }
 
@@ -102,14 +102,14 @@ pub(crate) async fn build_favorites(
 
     if filter.duplicates != 0 {
         println!(
-            "{TERM_CLEAR_LINE}{YELLOW}{}{RESET} duplicate {} not included",
+            "{CLEAR_LINE}{YELLOW}{}{RESET} duplicate {} not included",
             filter.duplicates,
             SingularPlural(filter.duplicates, "server was", "servers were")
         );
     }
 
     println!(
-        "{TERM_CLEAR_LINE}{} match the parameters in the current query",
+        "{CLEAR_LINE}{} match the parameters in the current query",
         DisplayServerCount(filter.servers.len(), GREEN)
     );
 

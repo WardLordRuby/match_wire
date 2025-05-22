@@ -272,6 +272,16 @@ pub struct CommandContext {
     app: AppDetails,
 }
 
+pub enum HistoryTag {
+    Invalid,
+}
+
+impl HistoryTag {
+    pub fn filter(tag: Option<u32>) -> bool {
+        tag != Some(Self::Invalid as u32)
+    }
+}
+
 impl Executor<Stdout> for CommandContext {
     async fn try_execute_command(
         &mut self,
@@ -280,7 +290,12 @@ impl Executor<Stdout> for CommandContext {
     ) -> io::Result<CommandHandle> {
         let command = match try_parse_from(&user_tokens) {
             Ok(c) => c,
-            Err(err) => return err.print().map(|_| CommandHandle::Processed),
+            Err(err) => {
+                line_handle
+                    .tag_last_history(|tag| *tag = Some(HistoryTag::Invalid as u32))
+                    .expect("command was added");
+                return err.print().map(|_| CommandHandle::Processed);
+            }
         };
 
         global_state::UpdateCache::set(true);
@@ -507,7 +522,10 @@ impl CommandContext {
 
     pub fn save_cache_if_needed(&self, line_handle: &Repl<Self, Stdout>) -> io::Result<()> {
         if global_state::UpdateCache::take() {
-            return write_cache(self, &line_handle.export_history(Some(SAVED_HISTORY_CAP)));
+            return write_cache(
+                self,
+                &line_handle.export_filtered_history(HistoryTag::filter, Some(SAVED_HISTORY_CAP)),
+            );
         }
 
         Ok(())
