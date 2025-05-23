@@ -46,7 +46,6 @@ thread_local! {
         .unwrap_or_default();
     static LAST_SERVER_STATS: RefCell<(Vec<DisplaySourceStatsInner>, Vec<Server>)> = const { RefCell::new((Vec::new(), Vec::new())) };
     static ID_MAPS: OnceCell<IDMapsInner> = const { OnceCell::new() };
-
 }
 
 pub struct Cache {

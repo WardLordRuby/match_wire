@@ -514,7 +514,7 @@ impl Display for BoxBottom {
 }
 
 /// `(total_width)`
-pub(crate) struct Line(pub(crate) usize);
+pub struct Line(pub usize);
 
 impl Display for Line {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

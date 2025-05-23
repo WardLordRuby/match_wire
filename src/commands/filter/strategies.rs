@@ -565,11 +565,17 @@ fn process_stats(
 ) -> io::Result<()> {
     global_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
         for server in filter.iter_mut() {
-            if let Some(&display_name) = map_ids.get(server.info.map_name.as_ref()) {
-                server.info.map_name = Cow::Borrowed(display_name);
-            }
-            if let Some(&display_name) = game_type_ids.get(server.info.game_type.as_ref()) {
-                server.info.game_type = Cow::Borrowed(display_name);
+            let pairs = [
+                (&mut server.info.map_name, map_ids, 17),
+                (&mut server.info.game_type, game_type_ids, 13),
+            ];
+
+            for (field, map, max_len) in pairs {
+                if let Some(&display_name) = map.get(field.as_ref()) {
+                    *field = Cow::Borrowed(display_name);
+                } else if let Some(elided) = elide(field, max_len) {
+                    *field = Cow::Owned(elided);
+                }
             }
         }
     });
@@ -579,6 +585,36 @@ fn process_stats(
     global_state::LastServerStats::set(source, filter);
 
     Ok(())
+}
+
+fn parse_ver(ver: &str) -> Cow<'_, str> {
+    let trim = ver.trim_start_matches('v');
+    let mut chars = trim.char_indices();
+    if let Some(pre) = chars
+        .nth(5)
+        .and_then(|(i, c)| (c == '-').then_some(&trim[..i]))
+    {
+        return Cow::Owned(format!(
+            "{pre}{}",
+            chars
+                .next()
+                .map(|(_, c)| c.to_ascii_lowercase())
+                .unwrap_or_default()
+        ));
+    } else if let Some(elided) = elide(trim, 7) {
+        return Cow::Owned(elided);
+    }
+    Cow::Borrowed(trim)
+}
+
+fn elide(str: &str, at: usize) -> Option<String> {
+    let mut chars = str.char_indices();
+    let i = chars
+        .nth(at)
+        .and_then(|(i, _)| chars.next().is_some().then_some(i))?;
+    let mut elided = String::from(str[..i].trim_end());
+    elided.push('…');
+    Some(elided)
 }
 
 fn count_digits(mut n: usize) -> usize {
@@ -714,13 +750,7 @@ impl Display for DisplayFilterStats<'_> {
             for (server, addr_len) in self.0.iter().zip(ips) {
                 let mut name = parse_hostname(&server.info.host_name);
 
-                let mut name_chars = name.char_indices();
-                if let Some(i) = name_chars
-                    .nth(max_host_len - 1)
-                    .and_then(|(i, _)| name_chars.next().is_some().then_some(i))
-                {
-                    let mut elided = String::from(name[..i].trim_end());
-                    elided.push('…');
+                if let Some(elided) = elide(&name, max_host_len - 1) {
                     name = elided
                 }
 
@@ -730,7 +760,7 @@ impl Display for DisplayFilterStats<'_> {
                 let bots = server.info.bots;
                 let max_players = server.info.max_public_slots();
                 let private = server.info.private.then_some("X").unwrap_or_default();
-                let version = server.info.game_version.trim_start_matches('v');
+                let version = parse_ver(&server.info.game_version);
                 let addr = server.socket_addr();
                 writeln!(
                     f,
@@ -743,7 +773,7 @@ impl Display for DisplayFilterStats<'_> {
                             - map_name.len()
                     ),
                     Space(PASS_WIDTH - private.len()),
-                    Space(VERSION_WIDTH - version.len()),
+                    Space(VERSION_WIDTH - version.chars().count()),
                     cache
                         .ip_to_region
                         .get(&addr.ip())
