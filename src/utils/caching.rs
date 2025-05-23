@@ -1,10 +1,12 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY, Operation, OperationResult, Spinner, client_with_timeout,
+    CACHED_DATA, CRATE_VER, LOG_ONLY, Operation, OperationResult, ResponseErr, Spinner,
+    client_with_timeout,
     commands::{
         filter::{
-            Addressable, DEFAULT_SOURCES, Server, Sourced,
+            Addressable, DEFAULT_SOURCES, GetInfoMetaData, Server, Sourced,
             ops::{get_sourced_servers, spawn_info_requests},
             strategies::FastStrategy,
+            try_location_lookup,
         },
         handler::CommandContext,
         reconnect::HISTORY_MAX,
@@ -12,7 +14,7 @@ use crate::{
     does_dir_contain,
     models::{
         cli::Source,
-        json_data::{CacheFile, ContCodeMap},
+        json_data::{CacheFile, ContCode, ContCodeMap},
     },
     new_io_error,
     utils::global_state::{self, ThreadCopyState},
@@ -28,6 +30,7 @@ use std::{
 };
 
 use constcat::concat;
+use tokio::task::JoinSet;
 use tracing::{error, info, instrument, trace};
 
 pub(crate) type AddrMap = HashMap<IpAddr, Vec<u16>>;
@@ -93,10 +96,49 @@ impl global_state::Cache {
             server.info.host_name,
         )
     }
+
+    fn clear_servers(&mut self) {
+        self.host_to_connect.clear();
+        self.hmw.clear();
+        self.iw4m.clear();
+    }
 }
 
 #[instrument(level = "trace", skip_all)]
 pub async fn build_cache() -> Result<(), &'static str> {
+    async fn join_info_requests(
+        mut requests: JoinSet<Result<Server, GetInfoMetaData>>,
+    ) -> Vec<Server> {
+        let mut servers = Vec::with_capacity(requests.len());
+        while let Some(res) = requests.join_next().await {
+            match res {
+                Ok(Ok(server)) => servers.push(server),
+                Ok(Err(mut err)) => {
+                    error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
+                    if let Sourced::Iw4(meta) = err.meta {
+                        servers.push(Server::from(meta));
+                    };
+                }
+                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+            }
+        }
+        servers
+    }
+
+    async fn join_region_requests(
+        mut requests: JoinSet<Result<(IpAddr, ContCode), ResponseErr>>,
+    ) -> Vec<(IpAddr, ContCode)> {
+        let mut regions = Vec::with_capacity(requests.len());
+        while let Some(res) = requests.join_next().await {
+            match res {
+                Ok(Ok(server)) => regions.push(server),
+                Ok(Err(err)) => error!(name: LOG_ONLY, "{err}"),
+                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
+            }
+        }
+        regions
+    }
+
     let splash_screen_visible = {
         #[cfg(debug_assertions)]
         {
@@ -131,6 +173,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
         }
     };
 
+    let mut region_requests = JoinSet::new();
     global_state::Cache::with_borrow_mut(|cache| {
         let mut ip_to_region = servers
             .iter()
@@ -140,29 +183,32 @@ pub async fn build_cache() -> Result<(), &'static str> {
                     .ip_to_region
                     .get(&server_ip)
                     .map(|&region| (server_ip, region))
+                    .or_else(|| {
+                        region_requests.spawn(try_location_lookup(server_ip, client.clone()));
+                        None
+                    })
             })
             .collect::<HashMap<_, _>>();
 
         std::mem::swap(&mut cache.ip_to_region, &mut ip_to_region);
     });
-    let (_, mut requests) = spawn_info_requests(servers.into_iter(), false, &client);
-    let mut servers = Vec::with_capacity(requests.len());
-    while let Some(res) = requests.join_next().await {
-        match res {
-            Ok(Ok(server)) => servers.push(server),
-            Ok(Err(mut err)) => {
-                error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
-                if let Sourced::Iw4(meta) = err.meta {
-                    servers.push(Server::from(meta));
-                };
-            }
-            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
-        }
-    }
+
+    let (_, info_requests) = spawn_info_requests(servers.into_iter(), false, &client);
+
+    let (regions, servers) = tokio::join!(
+        join_region_requests(region_requests),
+        join_info_requests(info_requests)
+    );
 
     global_state::Cache::with_borrow_mut(|cache| {
+        cache.clear_servers();
+
         for server in servers {
             cache.push(server);
+        }
+
+        for (ip, region) in regions {
+            cache.ip_to_region.insert(ip, region);
         }
 
         cache.created = SystemTime::now();

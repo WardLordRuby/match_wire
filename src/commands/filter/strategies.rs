@@ -589,7 +589,13 @@ fn process_stats(
 
 fn parse_ver(ver: &str) -> Cow<'_, str> {
     let trim = ver.trim_start_matches('v');
+
+    if trim.len() <= 5 {
+        return Cow::Borrowed(trim);
+    }
+
     let mut chars = trim.char_indices();
+
     if let Some(pre) = chars
         .nth(5)
         .and_then(|(i, c)| (c == '-').then_some(&trim[..i]))
@@ -601,9 +607,12 @@ fn parse_ver(ver: &str) -> Cow<'_, str> {
                 .map(|(_, c)| c.to_ascii_lowercase())
                 .unwrap_or_default()
         ));
-    } else if let Some(elided) = elide(trim, 7) {
+    }
+
+    if let Some(elided) = elide(trim, 6) {
         return Cow::Owned(elided);
     }
+
     Cow::Borrowed(trim)
 }
 

@@ -214,6 +214,7 @@ async fn filter_server_list(
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Server {
     pub(crate) source: Sourced,
     pub(crate) info: GetInfo,
@@ -501,7 +502,7 @@ impl Source {
 }
 
 #[instrument(level = "trace", skip_all)]
-async fn try_location_lookup(
+pub(crate) async fn try_location_lookup(
     ip: IpAddr,
     client: Client,
 ) -> Result<(IpAddr, ContCode), ResponseErr> {
