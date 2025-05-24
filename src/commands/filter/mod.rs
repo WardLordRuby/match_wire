@@ -397,15 +397,27 @@ pub(crate) struct HostMeta {
 }
 
 impl HostMeta {
+    fn from_ip(ip: IpAddr, server: ServerInfo) -> Self {
+        Self {
+            resolved_addr: SocketAddr::new(ip, server.port),
+            server,
+        }
+    }
+
     fn try_from(host_ip: &str, webfront_url: &str, server: ServerInfo) -> Option<Self> {
+        if let Some(set_resolved) = server
+            .resolved_ip
+            .as_deref()
+            .and_then(|ip_str| ip_str.parse::<IpAddr>().ok())
+        {
+            return Some(Self::from_ip(set_resolved, server));
+        }
+
         resolve_address(&server.ip, host_ip, webfront_url)
             .map_err(|err| {
                 error!(name: LOG_ONLY, "{err}, server_ip: {}, host_ip: {host_ip}, webfront_url: {webfront_url}", server.ip)
             })
-            .map(|ip| HostMeta {
-                resolved_addr: SocketAddr::new(ip, server.port),
-                server,
-            })
+            .map(|ip| Self::from_ip(ip, server))
             .ok()
     }
 }

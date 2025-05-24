@@ -22,6 +22,8 @@ pub(crate) struct HostData {
 
 #[derive(Deserialize, Debug, Default)]
 pub(crate) struct ServerInfo {
+    #[serde(rename = "resolved_external_ip_address")]
+    pub(crate) resolved_ip: Option<String>,
     pub(crate) ip: String,
     #[serde(rename = "clientnum")]
     pub(crate) clients: u8,
