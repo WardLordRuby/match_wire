@@ -1,7 +1,10 @@
 use crate::{
     CRATE_NAME, CRATE_VER, LOG_ONLY, ResponseErr,
     commands::{
-        filter::{Addressable, Server, Sourced, UnresponsiveCounter, strategies::GameStats},
+        filter::{
+            Addressable, FilterPreProcess, Server, Sourced, UnresponsiveCounter,
+            strategies::GameStats,
+        },
         handler::{AppDetails, GameDetails},
         launch_h2m::{LaunchError, WinApiErr, game_open},
     },
@@ -551,9 +554,9 @@ impl Display for DisplayHistory<'_> {
     }
 }
 
-pub(crate) type DisplaySourceStatsInner = (Source, GameStats, Vec<GameStats>, Option<usize>);
+pub type DisplaySourceStatsInner = (Source, GameStats, Vec<GameStats>, Option<usize>);
 
-pub(crate) struct DisplaySourceStats<'a>(pub(crate) &'a [DisplaySourceStatsInner]);
+pub struct DisplaySourceStats<'a>(pub &'a [DisplaySourceStatsInner]);
 
 impl Display for DisplaySourceStats<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -586,7 +589,7 @@ impl Display for DisplaySourceStats<'_> {
                 }
 
                 let col_1_spacing = GAME_HOST_SERVERS_WIDTH
-                    - game_stats.game.len()
+                    - game_stats.game.chars().count()
                     - server_disp_len(game_stats.servers, game_stats.unresponsive);
                 let col_2_spacing = PLAYERS_WIDTH - count_digits(game_stats.players);
 
@@ -659,8 +662,8 @@ fn parse_ver(ver: &str) -> Cow<'_, str> {
     Cow::Borrowed(trim)
 }
 
-/// `(Filtered data, width)`
-pub struct DisplayFilterStats<'a>(pub &'a [Server], pub usize);
+/// `(Filtered data, Pre processed data, width)`
+pub struct DisplayFilterStats<'a>(pub &'a [Server], pub &'a FilterPreProcess, pub usize);
 
 impl Display for DisplayFilterStats<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -675,17 +678,9 @@ impl Display for DisplayFilterStats<'_> {
         const MAP_PLAYERS_WIDTH: usize = 28;
         const PASS_WIDTH: usize = 5;
         const VERSION_WIDTH: usize = 10;
-        // const REGION_WIDTH: usize = 37;
 
-        let width = self.1;
-        let (ips, max_addr_len) = self.0.iter().fold(
-            (Vec::with_capacity(self.0.len()), 0),
-            |(mut lens, acc), server| {
-                let ip = server.socket_addr().to_string();
-                lens.push(ip.len());
-                (lens, acc.max(ip.len()))
-            },
-        );
+        let width = self.2;
+        let max_addr_len = self.1.max_addr_len;
         let region_width = max_addr_len + 8;
         let max_host_len = width - (FILTER_HEADER_LEN - INNER_TABLE_PADDING + region_width);
 
@@ -701,7 +696,7 @@ impl Display for DisplayFilterStats<'_> {
         let (total_servers, mut total_players) = (self.0.len(), 0);
 
         global_state::Cache::with_borrow(|cache| {
-            for (server, addr_len) in self.0.iter().zip(ips) {
+            for (server, &addr_len) in self.0.iter().zip(self.1.addr_lens.iter()) {
                 let mut name = parse_hostname(&server.info.host_name);
 
                 if let Some(elided) = elide(&name, max_host_len - 1) {

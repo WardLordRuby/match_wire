@@ -8,7 +8,7 @@ use super::{
 use crate::{
     LOG_ONLY, STATUS_OK, Spinner, StartupInfo, client_with_timeout,
     commands::{
-        filter::{Server, process_stats},
+        filter::{FilterPreProcess, Server, process_stats},
         handler::{AppDetails, CommandSender, Message, ReplHandle},
         launch_h2m::{HostName, WinApiErr, game_open},
     },
@@ -36,6 +36,7 @@ type IDMapsInner = (
     HashMap<&'static str, &'static str>,
     HashMap<&'static str, &'static str>,
 );
+type ServerStatsInner = (Vec<DisplaySourceStatsInner>, Vec<Server>, FilterPreProcess);
 
 thread_local! {
     static GAME_CONSOLE_HISTORY: RefCell<ConsoleHistory> = const { RefCell::new(ConsoleHistory::new()) };
@@ -47,7 +48,8 @@ thread_local! {
     static SELF_HWND: Option<HWND> = crate::commands::launch_h2m::get_console_hwnd()
         .map_err(crate::utils::display::error)
         .unwrap_or_default();
-    static LAST_SERVER_STATS: RefCell<(Vec<DisplaySourceStatsInner>, Vec<Server>)> = const { RefCell::new((Vec::new(), Vec::new())) };
+    static LAST_SERVER_STATS: RefCell<ServerStatsInner> =
+        const { RefCell::new((Vec::new(), Vec::new(), FilterPreProcess::default())) };
     static ID_MAPS: OnceCell<IDMapsInner> = const { OnceCell::new() };
     static GAME_ID_MAP: OnceCell<HashMap<&'static str, &'static str>> = const { OnceCell::new() };
 }
@@ -411,7 +413,7 @@ pub(crate) struct LastServerStats;
 
 impl LastServerStats {
     pub(crate) fn display(repl: &mut ReplHandle) -> io::Result<()> {
-        LAST_SERVER_STATS.with_borrow(|(source, filter)| {
+        LAST_SERVER_STATS.with_borrow(|(source, filter, pre_process)| {
             if source.is_empty() {
                 println!(
                     "{YELLOW}No previous filter data in memory, \
@@ -426,15 +428,15 @@ impl LastServerStats {
 
             println!();
             println!("{}", DisplaySourceStats(source));
-            println!("{}", DisplayFilterStats(filter, width));
+            println!("{}", DisplayFilterStats(filter, pre_process, width));
 
             Ok(())
         })
     }
 
     pub(crate) fn set(source: Vec<DisplaySourceStatsInner>, mut filter: Vec<Server>) {
-        process_stats(&mut filter);
-        LAST_SERVER_STATS.set((source, filter));
+        let pre_process = process_stats(&mut filter);
+        LAST_SERVER_STATS.set((source, filter, pre_process));
     }
 }
 

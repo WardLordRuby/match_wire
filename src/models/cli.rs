@@ -150,7 +150,7 @@ pub(crate) enum Region {
 pub(crate) const SOURCE_LEN: usize = 2;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, ValueEnum, Debug)]
-pub(crate) enum Source {
+pub enum Source {
     #[value(alias = "iw4")]
     Iw4Master,
     #[value(alias = "hmw")]

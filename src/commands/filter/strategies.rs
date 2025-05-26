@@ -183,15 +183,15 @@ impl FilterStrategy for FastStrategy {
 }
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct GameStats {
-    pub(crate) game: Cow<'static, str>,
-    pub(crate) servers: usize,
-    pub(crate) unresponsive: usize,
-    pub(crate) players: usize,
+pub struct GameStats {
+    pub game: Cow<'static, str>,
+    pub servers: usize,
+    pub unresponsive: usize,
+    pub players: usize,
 }
 
 impl GameStats {
-    fn new(games: &[String]) -> Vec<Self> {
+    pub fn new(games: &[String]) -> Vec<Self> {
         global_state::GameDisplayMap::with_borrow(|map| {
             games
                 .iter()
@@ -199,7 +199,9 @@ impl GameStats {
                     game: map
                         .get(game.as_str())
                         .map(|&id| Cow::Borrowed(id))
-                        .unwrap_or_else(|| Cow::Owned(game.to_owned())),
+                        .unwrap_or_else(|| {
+                            elide(game, 32).unwrap_or_else(|| game.to_owned()).into()
+                        }),
                     ..Default::default()
                 })
                 .collect()
@@ -228,7 +230,7 @@ impl GameStats {
         }
     }
 
-    fn add(&mut self, (server, backup, player_ct): (usize, usize, usize)) {
+    pub fn add(&mut self, (server, backup, player_ct): (usize, usize, usize)) {
         self.servers += server;
         self.unresponsive += backup;
         self.players += player_ct;
@@ -557,8 +559,31 @@ impl StatTrackStrategy {
     }
 }
 
-pub fn process_stats(filter: &mut [Server]) {
+pub struct FilterPreProcess {
+    pub addr_lens: Vec<usize>,
+    pub max_addr_len: usize,
+}
+
+impl FilterPreProcess {
+    pub const fn default() -> Self {
+        Self {
+            addr_lens: Vec::new(),
+            max_addr_len: 0,
+        }
+    }
+
+    fn new(addr_lens: Vec<usize>, max_addr_len: usize) -> Self {
+        Self {
+            addr_lens,
+            max_addr_len,
+        }
+    }
+}
+
+pub fn process_stats(filter: &mut [Server]) -> FilterPreProcess {
     global_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
+        let (mut addr_lens, mut max_addr_len) = (Vec::with_capacity(filter.len()), 0);
+
         for server in filter.iter_mut() {
             let pairs = [
                 (&mut server.info.map_name, map_ids, 17),
@@ -572,6 +597,12 @@ pub fn process_stats(filter: &mut [Server]) {
                     *field = Cow::Owned(elided);
                 }
             }
+
+            let ip = server.socket_addr().to_string();
+            addr_lens.push(ip.len());
+            max_addr_len = max_addr_len.max(ip.len());
         }
+
+        FilterPreProcess::new(addr_lens, max_addr_len)
     })
 }

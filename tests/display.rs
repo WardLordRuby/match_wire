@@ -2,11 +2,12 @@
 mod tests {
     use match_wire::{
         H2M_MAX_CLIENT_NUM,
-        commands::filter::{Server, Sourced, process_stats},
-        models::json_data::GetInfo,
+        commands::filter::{GameStats, Server, Sourced, process_stats},
+        models::{cli::Source, json_data::GetInfo},
         utils::{
             display::{
-                DisplayFilterStats, GAME_TYPE_IDS, Line, MAP_IDS, MIN_FILTER_COLS, count_digits,
+                DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner,
+                GAME_DISPLAY_NAMES, GAME_TYPE_IDS, Line, MAP_IDS, MIN_FILTER_COLS, count_digits,
             },
             global_state,
         },
@@ -77,10 +78,9 @@ mod tests {
         format!("{}.{}.{}", random_num(), random_num(), random_num())
     }
 
-    fn gen_test_servers() -> Vec<Server> {
+    fn gen_test_servers<R: Rng>(rng: &mut R) -> Vec<Server> {
         let map_names = MAP_IDS.iter().map(|&(_, v)| v).collect::<Vec<_>>();
         let game_types = GAME_TYPE_IDS.iter().map(|&(_, v)| v).collect::<Vec<_>>();
-        let rng = &mut rand::rng();
 
         let mut servers = Vec::with_capacity(60);
 
@@ -127,11 +127,70 @@ mod tests {
     #[test]
     fn display_servers() {
         global_state::Cache::set(global_state::Cache::default());
-        let mut servers = gen_test_servers();
-        process_stats(&mut servers);
+        let rng = &mut rand::rng();
+        let mut servers = gen_test_servers(rng);
+        let pre_process = process_stats(&mut servers);
 
         for i in 0..21 {
-            println!("{}", DisplayFilterStats(&servers, MIN_FILTER_COLS + i * 3))
+            let width = MIN_FILTER_COLS + i * 3;
+            println!("{}", DisplayFilterStats(&servers, &pre_process, width))
+        }
+    }
+
+    fn random_game_strings<R: Rng, B: IntoIterator<Item = usize>>(
+        rng: &mut R,
+        range: B,
+    ) -> Vec<String> {
+        let mut choose = || {
+            if rng.random_bool(0.8) {
+                GAME_DISPLAY_NAMES.choose(rng).unwrap().0.to_string()
+            } else {
+                random_string(rng)
+            }
+        };
+
+        range.into_iter().map(|_| choose()).collect()
+    }
+
+    fn gen_test_sources<R: Rng>(rng: &mut R) -> Vec<DisplaySourceStatsInner> {
+        let len = 0..14;
+        let mut hmw = GameStats::new(&random_game_strings(rng, len.clone()));
+        let mut hmw_total = GameStats::default();
+
+        let test_servers = len.map(|_| gen_test_servers(rng)).collect::<Vec<_>>();
+
+        for (i, servers) in test_servers.iter().map(Vec::as_slice).enumerate() {
+            for sourced_server in servers {
+                let entry = &mut hmw[i];
+                let (is_server, is_unresponsive, player_ct) = if rng.random_bool(0.9) {
+                    let player_ct = sourced_server.info.player_ct() as usize;
+
+                    entry.servers += 1;
+                    entry.players += player_ct;
+                    (1, 0, player_ct)
+                } else {
+                    entry.unresponsive += 1;
+                    (0, 1, 0)
+                };
+                hmw_total.add((is_server, is_unresponsive, player_ct));
+            }
+        }
+
+        vec![(
+            Source::HmwMaster,
+            hmw_total,
+            hmw,
+            Some(rng.random_range(0..200)),
+        )]
+    }
+
+    #[test]
+    fn display_sources() {
+        let rng = &mut rand::rng();
+        let sources = gen_test_sources(rng);
+
+        for _ in 0..10 {
+            println!("{}", DisplaySourceStats(&sources))
         }
     }
 }

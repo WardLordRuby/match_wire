@@ -1,8 +1,8 @@
 pub(crate) mod ops;
 pub(crate) mod strategies;
 
-pub use strategies::process_stats;
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
+pub use strategies::{FilterPreProcess, GameStats, process_stats};
 
 use crate::{
     LOG_ONLY, ResponseErr, STATUS_OK, Spinner, command_err,
@@ -426,7 +426,7 @@ impl HostMeta {
 }
 
 impl GetInfo {
-    pub(crate) fn player_ct(&self) -> u8 {
+    pub fn player_ct(&self) -> u8 {
         self.clients.checked_sub(self.bots).unwrap_or_else(|| {
             error!(name: LOG_ONLY, "Server: {}, found with invalid bot count. Bots: {} > Clients: {}",
                 parse_hostname(&self.host_name),

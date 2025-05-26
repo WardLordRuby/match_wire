@@ -6,7 +6,7 @@ use crate::{
     models::cli::HistoryArgs,
     try_fit_table,
     utils::{
-        display::{ConnectionHelp, DisplayHistory, DisplayHistoryErr},
+        display::{ConnectionHelp, DisplayHistory, DisplayHistoryErr, TABLE_PADDING},
         global_state::{self, PtyAccessErr},
     },
 };
@@ -46,7 +46,7 @@ fn display_history(
             },
         );
 
-    let width = (max_host_len + max_connect_len + 6).max(32);
+    let width = (max_host_len + max_connect_len + TABLE_PADDING as usize).max(32);
 
     try_fit_table(repl, repl.terminal_size(), width)?;
 

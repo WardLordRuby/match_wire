@@ -545,8 +545,9 @@ impl CommandContext {
             line_handle.remove_all_hooks_with_tag(self, HookTag::GameConsole)?;
         }
 
-        if let Some(hwnd) =
-            global_state::AppHWND::get().filter(|_| game_open == self.can_close_console)
+        if let Some(hwnd) = (game_open == self.can_close_console)
+            .then(global_state::AppHWND::get)
+            .flatten()
         {
             // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
             return Ok(unsafe { toggle_close_state(&mut self.can_close_console, hwnd) });
