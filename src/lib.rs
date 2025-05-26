@@ -65,7 +65,7 @@ pub const LOG_ONLY: &str = "log_only";
 const MOD_FILES_MODULE_NAME: &str = "mod";
 const MOD_FILES_LATEST_VER: &str = "1.1";
 
-pub(crate) const H2M_MAX_CLIENT_NUM: i64 = 18;
+pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
 
 pub const SAVED_HISTORY_CAP: usize = 20;
@@ -508,6 +508,16 @@ fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
 
 pub(crate) fn make_slice_ascii_lowercase(vec: &mut [String]) {
     vec.iter_mut().for_each(|s| s.make_ascii_lowercase());
+}
+
+pub(crate) fn elide(str: &str, at: usize) -> Option<String> {
+    let mut chars = str.char_indices();
+    let i = chars
+        .nth(at)
+        .and_then(|(i, _)| chars.next().is_some().then_some(i))?;
+    let mut elided = String::from(str[..i].trim_end());
+    elided.push('…');
+    Some(elided)
 }
 
 pub(crate) fn parse_hostname(name: &str) -> String {

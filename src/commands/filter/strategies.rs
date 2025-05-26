@@ -8,29 +8,23 @@ use crate::{
         filter::try_location_lookup,
         handler::{CmdErr, ReplHandle},
     },
-    display::{self, BoxBottom, BoxTop, Line, Space},
+    display::DisplaySourceStatsInner,
+    elide,
     models::{
         cli::{Filters, Source},
         json_data::{ContCode, GetInfo, HostData, ServerInfo},
     },
-    parse_hostname,
     utils::{caching::AddrMap, global_state},
 };
 
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    fmt::Display,
-    io,
     net::{IpAddr, SocketAddr},
 };
 
 use reqwest::Client;
 use tokio::task::JoinSet;
-
-const MIN_HOST_NAME_LEN: usize = 18;
-const FILTER_HEADER_LEN: usize = 107;
-pub(crate) const MIN_FILTER_COLS: usize = FILTER_HEADER_LEN + MIN_HOST_NAME_LEN;
 
 pub(crate) trait FilterStrategy:
     Default + Sized + Send + IntoIterator<Item = Sourced> + 'static
@@ -190,22 +184,26 @@ impl FilterStrategy for FastStrategy {
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct GameStats {
-    game: Cow<'static, str>,
-
-    servers: usize,
-    unresponsive: usize,
-    players: usize,
+    pub(crate) game: Cow<'static, str>,
+    pub(crate) servers: usize,
+    pub(crate) unresponsive: usize,
+    pub(crate) players: usize,
 }
 
 impl GameStats {
     fn new(games: &[String]) -> Vec<Self> {
-        games
-            .iter()
-            .map(|game| Self {
-                game: game_name_str(game),
-                ..Default::default()
-            })
-            .collect()
+        global_state::GameDisplayMap::with_borrow(|map| {
+            games
+                .iter()
+                .map(|game| Self {
+                    game: map
+                        .get(game.as_str())
+                        .map(|&id| Cow::Borrowed(id))
+                        .unwrap_or_else(|| Cow::Owned(game.to_owned())),
+                    ..Default::default()
+                })
+                .collect()
+        })
     }
 
     fn update(
@@ -236,7 +234,7 @@ impl GameStats {
         self.players += player_ct;
     }
 
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.servers + self.unresponsive == 0
     }
 }
@@ -377,7 +375,8 @@ impl FilterStrategy for StatTrackStrategy {
 
         spinner.finish();
 
-        process_stats(repl, source_stats, servers)?;
+        global_state::LastServerStats::set(source_stats, servers);
+        global_state::LastServerStats::display(repl)?;
 
         Ok(FilterData {
             servers: out,
@@ -558,11 +557,7 @@ impl StatTrackStrategy {
     }
 }
 
-fn process_stats(
-    repl: &mut ReplHandle,
-    source: Vec<DisplaySourceStatsInner>,
-    mut filter: Vec<Server>,
-) -> io::Result<()> {
+pub fn process_stats(filter: &mut [Server]) {
     global_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
         for server in filter.iter_mut() {
             let pairs = [
@@ -578,337 +573,5 @@ fn process_stats(
                 }
             }
         }
-    });
-
-    display::stats(repl, &source, &filter)?;
-
-    global_state::LastServerStats::set(source, filter);
-
-    Ok(())
-}
-
-fn parse_ver(ver: &str) -> Cow<'_, str> {
-    let trim = ver.trim_start_matches('v');
-
-    if trim.len() <= 5 {
-        return Cow::Borrowed(trim);
-    }
-
-    let mut chars = trim.char_indices();
-
-    if let Some(pre) = chars
-        .nth(5)
-        .and_then(|(i, c)| (c == '-').then_some(&trim[..i]))
-    {
-        return Cow::Owned(format!(
-            "{pre}{}",
-            chars
-                .next()
-                .map(|(_, c)| c.to_ascii_lowercase())
-                .unwrap_or_default()
-        ));
-    }
-
-    if let Some(elided) = elide(trim, 6) {
-        return Cow::Owned(elided);
-    }
-
-    Cow::Borrowed(trim)
-}
-
-fn elide(str: &str, at: usize) -> Option<String> {
-    let mut chars = str.char_indices();
-    let i = chars
-        .nth(at)
-        .and_then(|(i, _)| chars.next().is_some().then_some(i))?;
-    let mut elided = String::from(str[..i].trim_end());
-    elided.push('…');
-    Some(elided)
-}
-
-fn count_digits(mut n: usize) -> usize {
-    if n == 0 {
-        return 1;
-    }
-
-    let mut digits = 0;
-    while n > 0 {
-        digits += 1;
-        n /= 10;
-    }
-    digits
-}
-
-fn server_disp_len(servers: usize, unresponsive: usize) -> usize {
-    count_digits(servers) + count_digits(unresponsive) + 2
-}
-
-pub(crate) type DisplaySourceStatsInner = (Source, GameStats, Vec<GameStats>, Option<usize>);
-
-pub(crate) struct DisplaySourceStats<'a>(pub(crate) &'a [DisplaySourceStatsInner]);
-
-impl Display for DisplaySourceStats<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        const SOURCE_STAT_WIDTH: usize = 73;
-        const GAME_HOST_SERVERS_WIDTH: usize = 62;
-        const GAME_HOST_WIDTH: usize = 34;
-        const HOST_SERVERS_WIDTH: usize = 23;
-        const PLAYERS_WIDTH: usize = 9;
-
-        for (source, total, stats, host_ct) in self
-            .0
-            .iter()
-            .map(|(s, t, stats, h)| (s, t, stats.as_slice(), h))
-        {
-            writeln!(f, " {}", BoxTop(Some(source.to_str()), SOURCE_STAT_WIDTH))?;
-            writeln!(
-                f,
-                " │ Game                        Id    {}  Servers(unresponsive)  Players │",
-                if host_ct.is_some() { "Hosts" } else { "     " }
-            )?;
-            writeln!(f, " │{}│", Space(SOURCE_STAT_WIDTH))?;
-
-            for game_stats in stats.iter() {
-                if game_stats.is_empty() {
-                    continue;
-                }
-
-                let col_1_spacing = GAME_HOST_SERVERS_WIDTH
-                    - game_stats.game.len()
-                    - server_disp_len(game_stats.servers, game_stats.unresponsive);
-                let col_2_spacing = PLAYERS_WIDTH - count_digits(game_stats.players);
-
-                writeln!(
-                    f,
-                    " │ {}{}{}({}){}{} │",
-                    game_stats.game,
-                    Space(col_1_spacing),
-                    game_stats.servers,
-                    game_stats.unresponsive,
-                    Space(col_2_spacing),
-                    game_stats.players
-                )?;
-            }
-            writeln!(f, " │ {} │", Line(SOURCE_STAT_WIDTH - 2))?;
-
-            let col_1_spacing = GAME_HOST_WIDTH - host_ct.map(count_digits).unwrap_or_default();
-            write!(f, " │ Total{}", Space(col_1_spacing))?;
-
-            if let Some(host_total) = *host_ct {
-                write!(f, "{host_total}")?;
-            }
-
-            let col_2_spacing =
-                HOST_SERVERS_WIDTH - server_disp_len(total.servers, total.unresponsive);
-            let col_3_spacing = PLAYERS_WIDTH - count_digits(total.players);
-
-            writeln!(
-                f,
-                "{}{}({}){}{} │",
-                Space(col_2_spacing),
-                total.servers,
-                total.unresponsive,
-                Space(col_3_spacing),
-                total.players
-            )?;
-
-            writeln!(f, " {}", BoxBottom(SOURCE_STAT_WIDTH))?;
-        }
-        Ok(())
-    }
-}
-
-fn player_disp_len(players: u8, bots: u8, max: u8) -> usize {
-    count_digits(players as usize) + count_digits(bots as usize) + count_digits(max as usize) + 3
-}
-
-/// `(Filtered data, width)`
-pub(crate) struct DisplayFilterStats<'a>(pub(crate) &'a [Server], pub(crate) usize);
-
-impl Display for DisplayFilterStats<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        const MODE_WIDTH: usize = 16;
-        const MAP_PLAYERS_WIDTH: usize = 28;
-        const PASS_WIDTH: usize = 6;
-        const VERSION_WIDTH: usize = 9;
-        const REGION_WIDTH: usize = 37;
-
-        let width = self.1;
-        let (ips, max_addr_len) = self.0.iter().fold(
-            (Vec::with_capacity(self.0.len()), 0),
-            |(mut lens, acc), server| {
-                let ip = server.socket_addr().to_string();
-                lens.push(ip.len());
-                (lens, acc.max(ip.len()))
-            },
-        );
-        let max_host_len = width - FILTER_HEADER_LEN + 2 + (REGION_WIDTH - (max_addr_len + 13));
-
-        writeln!(f, " {}", BoxTop(Some("Servers"), width))?;
-        writeln!(
-            f,
-            " │ Name{}Game Mode       Map  Players(bots)/Max Slots  Pass  Version  Region{}IP │",
-            Space(max_host_len - 2),
-            Space(max_addr_len + 8),
-        )?;
-        writeln!(f, " │{}│", Space(width))?;
-
-        let (total_servers, mut total_players) = (self.0.len(), 0);
-
-        global_state::Cache::with_borrow(|cache| {
-            for (server, addr_len) in self.0.iter().zip(ips) {
-                let mut name = parse_hostname(&server.info.host_name);
-
-                if let Some(elided) = elide(&name, max_host_len - 1) {
-                    name = elided
-                }
-
-                let game_type = server.info.game_type.as_ref();
-                let map_name = server.info.map_name.as_ref();
-                let player_ct = server.info.player_ct();
-                let bots = server.info.bots;
-                let max_players = server.info.max_public_slots();
-                let private = server.info.private.then_some("X").unwrap_or_default();
-                let version = parse_ver(&server.info.game_version);
-                let addr = server.socket_addr();
-                writeln!(
-                    f,
-                    " │ {name}{}{game_type}{}{map_name}{}{player_ct}({bots})/{max_players}{}{private}{}{version}    {}    {}connect {addr} │",
-                    Space(max_host_len + 2 - name.chars().count()),
-                    Space(MODE_WIDTH - game_type.len()),
-                    Space(
-                        MAP_PLAYERS_WIDTH
-                            - player_disp_len(player_ct, bots, max_players)
-                            - map_name.len()
-                    ),
-                    Space(PASS_WIDTH - private.len()),
-                    Space(VERSION_WIDTH - version.chars().count()),
-                    cache
-                        .ip_to_region
-                        .get(&addr.ip())
-                        .map(|code| code.iter().map(|&i| i as char).collect::<String>())
-                        .unwrap_or_else(|| String::from("??")),
-                    Space(max_addr_len - addr_len),
-                )?;
-
-                total_players += player_ct as usize
-            }
-            Ok(())
-        })?;
-        let digit_ct = count_digits(total_servers) + count_digits(total_players);
-
-        writeln!(f, " │ {} │", Line(width - 2))?;
-        writeln!(
-            f,
-            " │ {}Total servers: {}  Total players: {} │",
-            Space(width - 34 - digit_ct),
-            total_servers,
-            total_players
-        )?;
-        writeln!(f, " {}", BoxBottom(width))?;
-
-        Ok(())
-    }
-}
-
-fn game_name_str(name: &str) -> Cow<'static, str> {
-    Cow::Borrowed(match name {
-        "COD" => "Modern Warfare             (COD)",
-        "H1" => "Modern Warfare Remastered  (H1)",
-        "HMW" => "Horizon Modern Warfare     (HMW)",
-        "IW3" => "Modern Warfare             (IW3)",
-        "IW4" => "Modern Warfare II          (IW4)",
-        "IW5" => "Modern Warfare III         (IW3)",
-        "IW6" => "Ghosts                     (IW6)",
-        "IW7" => "Infinite Warfare           (IW7)",
-        "T4" => "World at War               (T4)",
-        "T5" => "Black Ops I                (T5)",
-        "T6" => "Black Ops II               (T6)",
-        "T7" => "Black Ops III              (T7)",
-        "SHG1" => "Advanced Warfare           (SHG1)",
-        "L4D2" => "Left for Dead II           (L4D2)",
-        rest => return Cow::Owned(rest.to_owned()),
     })
 }
-
-pub(crate) const MAP_IDS: [(&str, &str); 62] = [
-    // MWR
-    ("mp_convoy", "Ambush"),
-    ("mp_backlot", "Backlot"),
-    ("mp_bloc", "Bloc"),
-    ("mp_bog", "Bog"),
-    ("mp_bog_summer", "Beach Bog"),
-    ("mp_broadcast", "Broadcast"),
-    ("mp_carentan", "Chinatown"),
-    ("mp_countdown", "Countdown"),
-    ("mp_crash", "Crash"),
-    ("mp_crash_snow", "Winter Crash"),
-    ("mp_creek", "Creek"),
-    ("mp_crossfire", "Crossfire"),
-    ("mp_citystreets", "District"),
-    ("mp_farm", "Downpour"),
-    ("mp_farm_spring", "Daybreak"),
-    ("mp_killhouse", "Killhouse"),
-    ("mp_overgrown", "Overgrown"),
-    ("mp_pipeline", "Pipeline"),
-    ("mp_shipment", "Shipment"),
-    ("mp_showdown", "Showdown"),
-    ("mp_strike", "Strike"),
-    ("mp_vacant", "Vacant"),
-    ("mp_cargoship", "Wet Work"),
-    // MW2
-    ("mp_afghan", "Afghan"),
-    ("mp_complex", "Bailout"),
-    ("mp_abandon", "Carnival"),
-    ("mp_derail", "Derail"),
-    ("mp_estate", "Estate"),
-    ("mp_favela", "Favela"),
-    ("mp_fuel2", "Fuel"),
-    ("mp_highrise", "Highrise"),
-    ("mp_invasion", "Invasion"),
-    ("mp_checkpoint", "Karachi"),
-    ("mp_quarry", "Quarry"),
-    ("mp_rundown", "Rundown"),
-    ("mp_rust", "Rust"),
-    ("mp_compact", "Salvage"),
-    ("mp_boneyard", "Scrapyard"),
-    ("mp_nightshift", "Skidrow"),
-    ("mp_storm", "Storm"),
-    ("mp_subbase", "Sub Base"),
-    ("mp_terminal", "Terminal"),
-    ("mp_trailerpark", "Trailer Park"),
-    ("mp_underpass", "Underpass"),
-    ("mp_brecourt", "Wasteland"),
-    // MW3
-    ("mp_bootleg", "Bootleg"),
-    ("mp_dome", "Dome"),
-    ("mp_courtyard_ss", "Erosion"),
-    ("mp_lambeth", "Fallen"),
-    ("mp_hardhat", "Hardhat"),
-    ("mp_alpha", "Lockdown"),
-    ("mp_bravo", "Mission"),
-    ("mp_paris", "Resistance"),
-    ("mp_underground", "Underground"),
-    //MW2CR
-    ("airport", "Airport"),
-    ("boneyard", "Dumpsite"),
-    ("cliffhanger", "Blizzard"),
-    ("contingency", "Contingency"),
-    ("dc_whitehouse", "Whiskey Hotel"),
-    ("dcburning", "DC Burning"),
-    ("estate", "Safehouse"),
-    ("gulag", "Gulag"),
-];
-
-pub(crate) const GAME_TYPE_IDS: [(&str, &str); 10] = [
-    ("war", "Ground War"),
-    ("dom", "Domination"),
-    ("conf", "Kill Confirmed"),
-    ("sd", "S&D"),
-    ("dm", "TDM"),
-    ("hp", "Hard Point"),
-    ("gun", "Gun Game"),
-    ("koth", "Headquarters"),
-    ("sab", "Sabotage"),
-    ("infect", "Infection"),
-];

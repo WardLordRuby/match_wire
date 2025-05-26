@@ -6,36 +6,17 @@ use crate::{
     models::cli::HistoryArgs,
     try_fit_table,
     utils::{
-        display::{BoxBottom, BoxTop, ConnectionHelp, DisplayHistoryErr, Line, Space},
+        display::{ConnectionHelp, DisplayHistory, DisplayHistoryErr},
         global_state::{self, PtyAccessErr},
     },
 };
 
-use std::{borrow::Cow, collections::HashMap, fmt::Display, io, net::SocketAddr};
+use std::{borrow::Cow, collections::HashMap, io, net::SocketAddr};
 
 use repl_oxide::ansi_code::{RESET, YELLOW};
 use tracing::{error, info};
 
 pub const HISTORY_MAX: usize = 6;
-
-struct DisplayHistory<'a>(&'a [(&'a str, usize, usize, &'a str)], usize);
-
-impl Display for DisplayHistory<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let width = self.1;
-        let interior_width = width - 4;
-
-        writeln!(f)?;
-        writeln!(f, " {}", BoxTop(Some("History"), width))?;
-        writeln!(f, " │ Server Name{}Connection Command │", Space(width - 31))?;
-        writeln!(f, " │ {} │", Line(width - 2))?;
-        for (i, (host_name, host_len, ip_len, ip)) in self.0.iter().copied().enumerate() {
-            let spacing = interior_width - host_len - ip_len;
-            writeln!(f, " │ {}.{host_name}{}{ip} │", i + 1, Space(spacing))?;
-        }
-        writeln!(f, " {}", BoxBottom(width))
-    }
-}
 
 fn display_history(
     repl: &mut ReplHandle,

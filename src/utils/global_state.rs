@@ -1,16 +1,19 @@
-use super::{caching::AddrMap, display};
+use super::{
+    caching::AddrMap,
+    display::{
+        self, DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, GAME_DISPLAY_NAMES,
+        GAME_TYPE_IDS, MAP_IDS, MIN_FILTER_COLS, TABLE_PADDING,
+    },
+};
 use crate::{
     LOG_ONLY, STATUS_OK, Spinner, StartupInfo, client_with_timeout,
     commands::{
-        filter::{
-            Server,
-            strategies::{DisplaySourceStatsInner, GAME_TYPE_IDS, MAP_IDS},
-        },
+        filter::{Server, process_stats},
         handler::{AppDetails, CommandSender, Message, ReplHandle},
         launch_h2m::{HostName, WinApiErr, game_open},
     },
     models::json_data::CacheFile,
-    splash_screen,
+    splash_screen, try_fit_table,
 };
 
 use std::{
@@ -46,6 +49,7 @@ thread_local! {
         .unwrap_or_default();
     static LAST_SERVER_STATS: RefCell<(Vec<DisplaySourceStatsInner>, Vec<Server>)> = const { RefCell::new((Vec::new(), Vec::new())) };
     static ID_MAPS: OnceCell<IDMapsInner> = const { OnceCell::new() };
+    static GAME_ID_MAP: OnceCell<HashMap<&'static str, &'static str>> = const { OnceCell::new() };
 }
 
 pub struct Cache {
@@ -85,7 +89,7 @@ impl Default for Cache {
 }
 
 impl Cache {
-    pub(crate) fn set(cache: Self) {
+    pub fn set(cache: Self) {
         CACHE.set(cache);
     }
 
@@ -416,11 +420,20 @@ impl LastServerStats {
                 return Ok(());
             }
 
-            display::stats(repl, source, filter)
+            let (cols, rows) = repl.terminal_size();
+            let width = (cols.saturating_sub(TABLE_PADDING) as usize).max(MIN_FILTER_COLS);
+            try_fit_table(repl, (cols, rows), width)?;
+
+            println!();
+            println!("{}", DisplaySourceStats(source));
+            println!("{}", DisplayFilterStats(filter, width));
+
+            Ok(())
         })
     }
 
-    pub(crate) fn set(source: Vec<DisplaySourceStatsInner>, filter: Vec<Server>) {
+    pub(crate) fn set(source: Vec<DisplaySourceStatsInner>, mut filter: Vec<Server>) {
+        process_stats(&mut filter);
         LAST_SERVER_STATS.set((source, filter));
     }
 }
@@ -437,5 +450,13 @@ impl IDMaps {
                 cell.get_or_init(|| (HashMap::from(MAP_IDS), HashMap::from(GAME_TYPE_IDS)));
             f(map_ids, game_type_ids)
         })
+    }
+}
+
+pub(crate) struct GameDisplayMap;
+
+impl GameDisplayMap {
+    pub(crate) fn with_borrow<R>(f: impl FnOnce(&HashMap<&str, &'static str>) -> R) -> R {
+        GAME_ID_MAP.with(|cell| f(cell.get_or_init(|| HashMap::from(GAME_DISPLAY_NAMES))))
     }
 }

@@ -41,32 +41,32 @@ pub(crate) struct ServerInfo {
 }
 
 #[derive(Deserialize, Debug, Default)]
-pub(crate) struct GetInfo {
+pub struct GetInfo {
     #[serde(deserialize_with = "from_string::<_, u8>")]
-    pub(crate) clients: u8,
+    pub clients: u8,
     #[serde(rename = "sv_maxclients")]
     #[serde(deserialize_with = "from_string::<_, u8>")]
-    pub(crate) max_clients: u8,
+    pub max_clients: u8,
     // #[serde(rename = "gamename")]
-    // pub(crate) game_name: String,
+    // pub game_name: String,
     #[serde(rename = "gametype")]
-    pub(crate) game_type: Cow<'static, str>,
+    pub game_type: Cow<'static, str>,
     #[serde(rename = "hostname")]
-    pub(crate) host_name: String,
+    pub host_name: String,
     #[serde(rename = "mapname")]
-    pub(crate) map_name: Cow<'static, str>,
+    pub map_name: Cow<'static, str>,
 
     // Does not appear in the iw4 master server
     #[serde(deserialize_with = "from_string::<_, u8>")]
-    pub(crate) bots: u8,
+    pub bots: u8,
     #[serde(rename = "isPrivate")]
     #[serde(deserialize_with = "from_bool_string::<_>")]
-    pub(crate) private: bool,
+    pub private: bool,
     #[serde(rename = "sv_privateClients")]
     #[serde(deserialize_with = "from_string::<_, i8>")]
-    pub(crate) private_clients: i8,
+    pub private_clients: i8,
     #[serde(rename = "gameversion")]
-    pub(crate) game_version: String,
+    pub game_version: String,
 }
 
 fn from_string<'de, D, T>(deserializer: D) -> Result<T, D::Error>

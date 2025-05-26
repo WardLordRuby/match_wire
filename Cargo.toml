@@ -39,3 +39,6 @@ repl-oxide = { git = "https://github.com/WardLordRuby/repl-oxide", features = ["
 
 [build-dependencies]
 winresource = "0.1.17"
+
+[dev-dependencies]
+rand = "0.9.1"

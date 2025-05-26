@@ -1,6 +1,7 @@
 pub(crate) mod ops;
 pub(crate) mod strategies;
 
+pub use strategies::process_stats;
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
         cli::{Filters, Region, Source},
         json_data::{ContCode, GetInfo, LocationApiResponse, ServerInfo},
     },
+    parse_hostname,
     utils::display::{DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural},
 };
 
@@ -215,9 +217,9 @@ async fn filter_server_list(
 }
 
 #[derive(Debug)]
-pub(crate) struct Server {
-    pub(crate) source: Sourced,
-    pub(crate) info: GetInfo,
+pub struct Server {
+    pub source: Sourced,
+    pub info: GetInfo,
 }
 
 impl From<HostMeta> for Server {
@@ -258,7 +260,7 @@ impl GetInfoMetaData {
             display_source: false,
             display_socket_addr: false,
             retries: 0,
-            url: format!("http://{}{server_info_endpoint}", meta.socket_addr(),),
+            url: format!("http://{}{server_info_endpoint}", meta.socket_addr()),
             meta,
         }
     }
@@ -410,6 +412,7 @@ impl HostMeta {
             .as_deref()
             .and_then(|ip_str| ip_str.parse::<IpAddr>().ok())
         {
+            trace!("used resolved from iw4: {set_resolved}");
             return Some(Self::from_ip(set_resolved, server));
         }
 
@@ -423,20 +426,40 @@ impl HostMeta {
 }
 
 impl GetInfo {
-    fn player_ct(&self) -> u8 {
-        self.clients - self.bots
+    pub(crate) fn player_ct(&self) -> u8 {
+        self.clients.checked_sub(self.bots).unwrap_or_else(|| {
+            error!(name: LOG_ONLY, "Server: {}, found with invalid bot count. Bots: {} > Clients: {}",
+                parse_hostname(&self.host_name),
+                self.bots,
+                self.clients
+            );
+            0
+        })
     }
 
-    fn max_public_slots(&self) -> u8 {
-        self.max_clients - self.private_clients.max(0) as u8
+    pub(crate) fn max_public_slots(&self) -> u8 {
+        self.max_clients
+            .checked_sub(self.private_clients.max(0) as u8).unwrap_or_else(|| {
+            error!(name: LOG_ONLY, "Server: {}, found with invalid private_client count. Private clients: {} > Clients: {}",
+                parse_hostname(&self.host_name),
+                self.private_clients,
+                self.clients
+            );
+            0
+        })
     }
 }
 
 #[derive(Debug)]
-pub(crate) enum Sourced {
+pub enum Sourced {
     Hmw(SocketAddr),
     HmwCached(SocketAddr),
+
+    // Only pub so we can write tests for ensuring proper table formatting, `HostMeta` does not
+    // need to be included, as it eventually gets converted to `Server` before it is displayed.
+    #[allow(private_interfaces)]
     Iw4(HostMeta),
+
     Iw4Cached(SocketAddr),
 }
 
