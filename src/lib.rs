@@ -235,13 +235,13 @@ pub mod splash_screen {
 #[derive(Debug)]
 pub enum ResponseErr {
     Reqwest(reqwest::Error),
-    Status(reqwest::StatusCode),
+    Status(&'static str, reqwest::StatusCode),
     Other(Cow<'static, str>),
 }
 
 impl ResponseErr {
-    fn bad_status(response: reqwest::Response) -> Self {
-        Self::Status(response.status())
+    fn bad_status(ctx: &'static str, response: reqwest::Response) -> Self {
+        Self::Status(ctx, response.status())
     }
     fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
         Self::Other(msg.into())
@@ -307,7 +307,7 @@ pub async fn get_latest_hmw_hash() -> Result<String, ResponseErr> {
         .await?;
 
     if response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status(response));
+        return Err(ResponseErr::bad_status("HMW manifest", response));
     }
 
     let latest = response.json::<Value>().await?;
@@ -355,7 +355,8 @@ pub(crate) enum Operation {
 
 pub(crate) enum OperationResult<'a> {
     Bool(bool),
-    Count((usize, HashSet<&'a str>)),
+    #[allow(dead_code)]
+    Count(usize, HashSet<&'a str>),
 }
 
 /// `Operation::All` and `Operation::Any` map to `OperationResult::bool(_result_)`  
@@ -387,15 +388,14 @@ where
             list.iter()
                 .any(|check_file| str_names.contains(check_file.borrow()))
         })),
-        Operation::Count => Ok(OperationResult::Count({
+        Operation::Count => {
             let collection = list
                 .iter()
                 .filter(|&check_file| str_names.contains(check_file.borrow()))
                 .map(|t| t.borrow())
                 .collect::<HashSet<_>>();
-            let num_found = collection.len();
-            (num_found, collection)
-        })),
+            Ok(OperationResult::Count(collection.len(), collection))
+        }
     }
 }
 
@@ -406,7 +406,7 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
     match does_dir_contain(exe_dir, Operation::Count, &GAME_ENTRIES)
         .expect("Failed to read contents of current dir")
     {
-        OperationResult::Count((_, files)) => {
+        OperationResult::Count(_, files) => {
             if !files.contains(FNAME_MWR) {
                 return Err(Cow::Borrowed(concat!(
                     "Move ",
@@ -489,7 +489,7 @@ fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     let local_dir = local.clone();
 
     match does_dir_contain(local, Operation::Count, &[CRATE_NAME, PREV_NAME]) {
-        Ok(OperationResult::Count((_, files))) => {
+        Ok(OperationResult::Count(_, files)) => {
             local.push(CRATE_NAME);
 
             if !files.contains(CRATE_NAME) {

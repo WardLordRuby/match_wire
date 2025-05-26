@@ -380,7 +380,7 @@ pub(crate) async fn try_get_info(
     };
 
     if server_response.status() != STATUS_OK {
-        return Err(meta_data.set_err_msg(server_response.status().to_string()));
+        return Err(meta_data.set_err_msg(format!("getInfo {}", server_response.status())));
     }
 
     match server_response.json::<GetInfo>().await {
@@ -546,7 +546,7 @@ pub(crate) async fn try_location_lookup(
     let api_response = client.get(location_api_url).send().await?;
 
     if api_response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status(api_response));
+        return Err(ResponseErr::bad_status("IP api", api_response));
     }
 
     let code = match api_response.json::<LocationApiResponse>().await? {

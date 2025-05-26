@@ -73,7 +73,7 @@ impl Source {
             .await?;
 
         if response.status() != STATUS_OK {
-            return Err(ResponseErr::bad_status(response));
+            return Err(ResponseErr::bad_status("Iw4 master", response));
         }
 
         Ok(response
@@ -91,7 +91,7 @@ impl Source {
             .await?;
 
         if response.status() != STATUS_OK {
-            return Err(ResponseErr::bad_status(response));
+            return Err(ResponseErr::bad_status("HMW master", response));
         }
 
         Ok(response

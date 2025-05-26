@@ -142,7 +142,7 @@ impl Display for ResponseErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResponseErr::Reqwest(err) => write!(f, "{err}"),
-            ResponseErr::Status(status_code) => write!(f, "{status_code}"),
+            ResponseErr::Status(ctx, status) => write!(f, "{ctx}: {status}"),
             ResponseErr::Other(msg) => write!(f, "{msg}"),
         }
     }
