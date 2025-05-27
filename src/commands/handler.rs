@@ -3,7 +3,7 @@ use crate::{
     commands::{
         filter::build_favorites,
         launch_h2m::{
-            LaunchError, WinApiErr, game_open, hide_pseudo_console, initialize_listener,
+            LaunchError, WinApiErr, game_open, hide_pseudo_console, init_listener,
             launch_h2m_pseudo, terminate_process_by_id, toggle_close_state,
         },
     },
@@ -272,6 +272,7 @@ pub struct CommandContext {
     pub game_state_change: Arc<Notify>,
     game: GameDetails,
     app: AppDetails,
+    queued_con_task: Option<JoinHandle<()>>,
 }
 
 pub enum HistoryTag {
@@ -414,6 +415,7 @@ impl CommandContext {
             game: startup_data.game,
             local_dir: startup_data.local_dir,
             can_close_console: true,
+            queued_con_task: None,
         };
 
         if console_set {
@@ -453,6 +455,24 @@ impl CommandContext {
     #[inline]
     pub(crate) fn game_name(&self) -> Cow<'static, str> {
         Cow::clone(&self.game.game_name)
+    }
+    pub(crate) fn try_abort_queued_con(&mut self) -> bool {
+        if let Some(prev) = self
+            .queued_con_task
+            .take()
+            .filter(|task| !task.is_finished())
+        {
+            prev.abort();
+            println!("{YELLOW}Previously queued connection attempt aborted{RESET}");
+            return true;
+        };
+        false
+    }
+    pub(crate) fn set_queued_con(&mut self, task: JoinHandle<()>) {
+        assert!(
+            self.queued_con_task.replace(task).is_none(),
+            "Task must be aborted prior to a new queued connection attempt is spawned"
+        )
     }
 
     fn try_open_game_dir(&self) -> io::Result<CommandHandle> {
@@ -558,7 +578,7 @@ impl CommandContext {
 
     /// if calling manually you are responsible for setting pty inside of context
     pub fn listener_routine(&mut self) -> Result<(), String> {
-        initialize_listener(self)?;
+        init_listener(self)?;
 
         let msg_sender = self.msg_sender();
         let game_name = self.game_name();

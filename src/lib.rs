@@ -572,6 +572,13 @@ pub fn print_help() {
     println!();
 }
 
+pub(crate) async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, message: Message) {
+    sender
+        .send(message)
+        .await
+        .unwrap_or_else(|returned| returned.0.log());
+}
+
 pub(crate) struct Spinner {
     task: std::thread::JoinHandle<io::Result<()>>,
     sender: mpsc::Sender<String>,

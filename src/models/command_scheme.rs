@@ -60,8 +60,8 @@ const FILTER_SHORT: [(usize, &str); 8] = [
 ];
 const FILTER_ALIAS: [(usize, usize); 1] = [(7, 12)];
 
-const RECONNECT_RECS: [&str; 2] = ["history", "connect"];
-const RECONNECT_SHORT: [(usize, &str); 2] = [(0, "H"), (1, "c")];
+const RECONNECT_RECS: [&str; 4] = ["history", "connect", "queue", "abort"];
+const RECONNECT_SHORT: [(usize, &str); 3] = [(0, "H"), (1, "c"), (2, "q")];
 
 const CACHE_RECS: [&str; 3] = ["reset", "update", "clear"];
 const CACHE_ALIAS: [(usize, usize); 1] = [(0, 2)];
@@ -201,8 +201,11 @@ const RECONNECT_INNER: &[InnerScheme] = &[
     // connect
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[1]))
-        .with_parsing_rule(|value| u8_bounds(value, |v| (1..=HISTORY_MAX as u8).contains(&v)))
-        .set_end(),
+        .with_parsing_rule(|value| u8_bounds(value, |v| (1..=HISTORY_MAX as u8).contains(&v))),
+    // queue
+    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[1])),
+    // abort
+    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[1])),
 ];
 
 const CONSOLE_INNER: &[InnerScheme] = &[

@@ -4,7 +4,7 @@ use crate::{
         filter::{Addressable, GetInfoMetaData, Request, Sourced, try_get_info},
         handler::{CommandContext, Message},
     },
-    parse_hostname, strip_ansi_private_modes,
+    parse_hostname, send_msg_over, strip_ansi_private_modes,
     utils::{
         display,
         global_state::{self, ThreadCopyState},
@@ -92,13 +92,6 @@ fn case_insensitive_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
     }
     *kind = Connection::Direct;
     true
-}
-
-async fn send_msg_over(sender: &Sender<Message>, message: Message) {
-    sender
-        .send(message)
-        .await
-        .unwrap_or_else(|returned| returned.0.log());
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -274,10 +267,10 @@ async fn add_to_history(
     }
 }
 
-pub fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
+pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
     global_state::PtyHandle::check_connection()?;
 
-    let msg_sender_arc = context.msg_sender();
+    let msg_sender = context.msg_sender();
     let game_state_change = context.game_state_change();
     let version = context.game_version().unwrap_or(1.0);
     let game_name = context.game_name();
@@ -317,7 +310,7 @@ pub fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
                     Ok(true) => break,
                     Ok(false) => tokio::task::yield_now().await,
                     Err(err) => {
-                        send_msg_over(&msg_sender_arc, Message::error(err)).await;
+                        send_msg_over(&msg_sender, Message::error(err)).await;
                         break 'task;
                     }
                 }
@@ -347,7 +340,7 @@ pub fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
                             .any(|window| window == connecting_bytes)
                     }
                 } {
-                    add_to_history(&msg_sender_arc, &wide_encode_buf, connect_kind, version).await;
+                    add_to_history(&msg_sender, &wide_encode_buf, connect_kind, version).await;
                 }
 
                 let cur = String::from_utf16_lossy(&wide_encode_buf);
@@ -382,7 +375,7 @@ pub fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
             }
 
             if let Some(msg_concat) = global_state::ConsoleHistory::concat_new() {
-                if msg_sender_arc.send(Message::str(msg_concat)).await.is_err() {
+                if msg_sender.send(Message::str(msg_concat)).await.is_err() {
                     global_state::ForwardLogs::set(false);
                 } else {
                     global_state::ConsoleHistory::with_borrow_mut(|history| history.displayed());
@@ -392,7 +385,7 @@ pub fn initialize_listener(context: &mut CommandContext) -> Result<(), String> {
             buffer = OsString::from_wide(&wide_encode_buf);
         }
         send_msg_over(
-            &msg_sender_arc,
+            &msg_sender,
             Message::warn(format!("No longer reading {game_name} console output")),
         )
         .await;

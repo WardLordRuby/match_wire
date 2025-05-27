@@ -1,10 +1,12 @@
 use crate::{
+    LOG_ONLY, client_with_timeout,
     commands::{
-        handler::{CmdErr, CommandContext, CommandHandle, CommandSender, ReplHandle},
+        filter::{Request, Sourced, try_get_info},
+        handler::{CmdErr, CommandContext, CommandHandle, CommandSender, Message, ReplHandle},
         launch_h2m::HostName,
     },
     models::cli::HistoryArgs,
-    try_fit_table,
+    parse_hostname, send_msg_over, try_fit_table,
     utils::{
         display::{ConnectionHelp, DisplayHistory, DisplayHistoryErr, TABLE_PADDING},
         global_state::{self, PtyAccessErr},
@@ -13,7 +15,7 @@ use crate::{
 
 use std::{borrow::Cow, collections::HashMap, io, net::SocketAddr};
 
-use repl_oxide::ansi_code::{RESET, YELLOW};
+use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use tracing::{error, info};
 
 pub const HISTORY_MAX: usize = 6;
@@ -60,6 +62,13 @@ impl CommandContext {
         repl: &mut ReplHandle,
         args: HistoryArgs,
     ) -> io::Result<CommandHandle> {
+        if args.abort {
+            if !self.try_abort_queued_con() {
+                println!("{RED}No queued connection attempt to abort{RESET}")
+            };
+            return Ok(CommandHandle::Processed);
+        }
+
         let ip_port = match global_state::Cache::with_borrow(|cache| {
             if cache.connection_history.is_empty() {
                 info!("No joined servers in history, connect to a server to add it to history");
@@ -100,6 +109,13 @@ impl CommandContext {
             Err(CmdErr::Critical(err)) => return Err(err),
         };
 
+        self.try_abort_queued_con();
+
+        if args.queue {
+            self.init_queued_connection(ip_port);
+            return Ok(CommandHandle::Processed);
+        }
+
         if let Err(err) =
             global_state::PtyHandle::try_if_alive(|game_console| game_console.send_connect(ip_port))
         {
@@ -114,5 +130,76 @@ impl CommandContext {
         // connection attempts.
 
         Ok(CommandHandle::Processed)
+    }
+
+    fn init_queued_connection(&mut self, addr: SocketAddr) {
+        let msg_sender = self.msg_sender();
+
+        let task = tokio::spawn(async move {
+            let client = client_with_timeout(4);
+            let info_endpoint = global_state::Endpoints::server_info_endpoint();
+
+            let mut hostname = None;
+            let mut attempts = 1_usize;
+
+            loop {
+                let server = match try_get_info(
+                    Request::New(Sourced::Hmw(addr)),
+                    client.clone(),
+                    info_endpoint,
+                )
+                .await
+                {
+                    Ok(info) => info,
+                    Err(err) => {
+                        error!(name: LOG_ONLY, "{err}");
+                        send_msg_over(&msg_sender, Message::error("Queued server did not respond"))
+                            .await;
+                        break;
+                    }
+                };
+
+                let player_ct = server.info.player_ct();
+                let max_public_slots = server.info.max_public_slots();
+
+                if player_ct < max_public_slots {
+                    if let Err(err) = global_state::PtyHandle::try_if_alive(|game_console| {
+                        game_console.send_connect(addr)
+                    }) {
+                        let connection_err = matches!(err, PtyAccessErr::ConnectionErr(_));
+                        send_msg_over(&msg_sender, Message::error(err)).await;
+                        if connection_err {
+                            send_msg_over(&msg_sender, Message::str(ConnectionHelp)).await;
+                        }
+                    } else if let Some(parsed) = hostname {
+                        let info_msg = format!(
+                            "{GREEN}Connecting to '{parsed}'! - {player_ct}/{max_public_slots} players{RESET}",
+                        );
+                        send_msg_over(&msg_sender, Message::str(info_msg)).await;
+                    }
+                    break;
+                }
+
+                if hostname.is_none() {
+                    let parsed = parse_hostname(&server.info.host_name);
+                    let info_msg = format!("{GREEN}Connection to '{parsed}' queued!{RESET}");
+                    send_msg_over(&msg_sender, Message::str(info_msg)).await;
+                    hostname = Some(parsed);
+                }
+
+                if attempts % 5 == 0 {
+                    let info_msg = format!(
+                        "{YELLOW}'{}' at capacity - {player_ct}/{max_public_slots} players",
+                        hostname.as_deref().unwrap()
+                    );
+                    send_msg_over(&msg_sender, Message::str(info_msg)).await;
+                }
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                attempts += 1;
+            }
+        });
+
+        self.set_queued_con(task);
     }
 }

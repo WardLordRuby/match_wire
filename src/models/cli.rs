@@ -1,6 +1,6 @@
 use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE, commands::reconnect::HISTORY_MAX};
 
-use clap::{ArgAction, Args, Parser, ValueEnum, value_parser};
+use clap::{Args, Parser, ValueEnum, value_parser};
 
 #[cfg(not(debug_assertions))]
 #[derive(Parser, Debug)]
@@ -67,11 +67,18 @@ pub(crate) enum Command {
 }
 
 #[derive(Args, Debug)]
-#[group(multiple = false)]
 pub(crate) struct HistoryArgs {
     /// Display previously connected servers
-    #[arg(short = 'H', long, action = ArgAction::SetTrue)]
+    #[arg(short = 'H', long, conflicts_with_all = ["abort", "queue", "connect"])]
     pub(crate) history: bool,
+
+    /// Aborts the queued connection attempt if one is pending
+    #[arg(long, conflicts_with_all = ["history", "queue", "connect"])]
+    pub(crate) abort: bool,
+
+    /// Queue a server connection attempt, waiting to connect until the server has free space
+    #[arg(short, long)]
+    pub(crate) queue: bool,
 
     /// Connect to numbered entry in history
     #[arg(short, long, value_name = "HISTORY_ENTRY", value_parser = value_parser!(u8).range(1..=HISTORY_MAX as i64))]

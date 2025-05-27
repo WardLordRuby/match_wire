@@ -128,17 +128,18 @@ Examples:
 - To add spaces to your search term surround it in quotations e.g. `filter -i "long search term"`
 
 ## Reconnect help
-<div align="center">
+| Options               | Arguments | Short | Description                                                                           |
+| :-------------------- | :-------- | :---- | :------------------------------------------------------------------------------------ |
+| `--history`           | -         | `-H`  | Display previously connected servers                                                  |
+| `--queue`             | -         | `-q`  | Queue a server connection attempt, waiting to connect until the server has free space |
+| `--abort`             | -         | -     | Aborts the queued connection attempt if one is pending                                |
+| `--connect <CONNECT>` | Number    | `-c`  | Connect to a numbered entry in history                                                |
+| `--help`              | -         | `-h`  | Print help                                                                            |
 
-  | Options               | Arguments | Short | Description                            |
-  | :-------------------- | :-------- | :---- | :------------------------------------- |
-  | `--history`           | -         | `-H`  | Display previously connected servers   |
-  | `--connect <CONNECT>` | Number    | `-c`  | Connect to a numbered entry in history |
-  | `--help`              | -         | `-h`  | Print help                             |
-
-</div>
-
-Executing the reconnect command with no additional options will connect you to the most recently connected server.  
+Executing the reconnect command with no additional options will connect you to the most recently connected server. If a server is
+full you can include the `--queue` argument to wait for an open player slot. Queueing a connection can be used in combination with
+`--connect` as well. Once an open slot is available the connection command will be sent. Queued connection attempts can be canceled
+by using `--abort`.  
 
 Examples:
 
