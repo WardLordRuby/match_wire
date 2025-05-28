@@ -16,7 +16,6 @@ use crate::{
         cli::Source,
         json_data::{CacheFile, ContCode, ContCodeMap},
     },
-    new_io_error,
     utils::global_state::{self, ThreadCopyState},
 };
 
@@ -289,7 +288,7 @@ pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
 #[instrument(level = "trace", skip_all)]
 pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Result<()> {
     let Some(local_path) = context.local_dir() else {
-        return new_io_error!(io::ErrorKind::Other, "No valid location to save cache to");
+        return Err(io::Error::other("No valid location to save cache to"));
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
 

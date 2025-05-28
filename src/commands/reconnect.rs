@@ -126,8 +126,8 @@ impl CommandContext {
         }
 
         // Success notification and cache modification taken care of by `HostName::from_request` in launch_h2m.rs.
-        // Since other parts of the process is always scanning the game console when active looking for direct
-        // connection attempts.
+        // Since other parts of the process are always scanning the game console looking for direct connection
+        // attempts when it is alive.
 
         Ok(CommandHandle::Processed)
     }
@@ -150,7 +150,7 @@ impl CommandContext {
                 )
                 .await
                 {
-                    Ok(info) => info,
+                    Ok(server) => server.info,
                     Err(err) => {
                         error!(name: LOG_ONLY, "{err}");
                         send_msg_over(&msg_sender, Message::error("Queued server did not respond"))
@@ -159,8 +159,8 @@ impl CommandContext {
                     }
                 };
 
-                let player_ct = server.info.player_ct();
-                let max_public_slots = server.info.max_public_slots();
+                let player_ct = server.player_ct();
+                let max_public_slots = server.max_public_slots();
 
                 if player_ct < max_public_slots {
                     if let Err(err) = global_state::PtyHandle::try_if_alive(|game_console| {
@@ -181,7 +181,7 @@ impl CommandContext {
                 }
 
                 if hostname.is_none() {
-                    let parsed = parse_hostname(&server.info.host_name);
+                    let parsed = parse_hostname(&server.host_name);
                     let info_msg = format!("{GREEN}Connection to '{parsed}' queued!{RESET}");
                     send_msg_over(&msg_sender, Message::str(info_msg)).await;
                     hostname = Some(parsed);

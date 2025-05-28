@@ -103,13 +103,6 @@ use files::*;
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
 
-#[macro_export]
-macro_rules! new_io_error {
-    ($kind:expr, $msg:expr) => {
-        Err(std::io::Error::new($kind, $msg))
-    };
-}
-
 pub mod splash_screen {
     use crate::commands::handler::Message;
     use std::io;

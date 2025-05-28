@@ -457,16 +457,18 @@ impl CommandContext {
         Cow::clone(&self.game.game_name)
     }
     pub(crate) fn try_abort_queued_con(&mut self) -> bool {
-        if let Some(prev) = self
+        let Some(prev) = self
             .queued_con_task
             .take()
             .filter(|task| !task.is_finished())
-        {
-            prev.abort();
-            println!("{YELLOW}Previously queued connection attempt aborted{RESET}");
-            return true;
+        else {
+            return false;
         };
-        false
+
+        prev.abort();
+        println!("{YELLOW}Previously queued connection attempt aborted{RESET}");
+
+        true
     }
     pub(crate) fn set_queued_con(&mut self, task: JoinHandle<()>) {
         assert!(

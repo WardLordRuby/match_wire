@@ -109,13 +109,16 @@ impl Cache {
     }
 }
 
-#[allow(dead_code)] // `hmw_download` only used on release builds
 #[derive(serde::Deserialize, Debug)]
 pub struct Endpoints {
     iw4_master_server: Cow<'static, str>,
     hmw_master_server: Cow<'static, str>,
     hmw_manifest: Cow<'static, str>,
+
+    // `hmw_download` only used on release builds
+    #[allow(dead_code)]
     hmw_download: Cow<'static, str>,
+
     manifest_hash_path: Option<String>,
     server_info_endpoint: Cow<'static, str>,
 }

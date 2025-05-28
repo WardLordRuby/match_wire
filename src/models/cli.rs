@@ -23,7 +23,7 @@ pub(crate) enum Command {
     #[command(alias = "Last")]
     Last,
 
-    /// Reconnect to last server joined
+    /// Reconnect or queue into a recently joined server
     #[command(alias = "Reconnect")]
     Reconnect {
         #[clap(flatten)]
