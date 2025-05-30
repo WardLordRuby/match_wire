@@ -148,6 +148,8 @@ pub(crate) const REGION_LEN: usize = 3;
 pub(crate) enum Region {
     #[value(aliases(["Na", "nA", "NorthAmerica", "northAmerica", "northamerica"]))]
     NA,
+    #[value(aliases(["Sa", "sA", "SouthAmerica", "southAmerica", "southamerica"]))]
+    SA,
     #[value(aliases(["Eu", "eU", "Europe", "europe"]))]
     EU,
     #[value(aliases(["APAC", "Asia", "AsiaPacific", "asia", "pacific"]))]

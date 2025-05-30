@@ -114,17 +114,19 @@ const COMMAND_INNER: &[InnerScheme] = &[
     InnerScheme::end(Parent::Root),
 ];
 
-const FILTER_REGIONS: [&str; 8] = [
+const FILTER_REGIONS: [&str; 10] = [
     "na",
+    "sa",
     "eu",
     "apac",
     "northamerica",
+    "southamerica",
     "europe",
     "asia",
     "pacific",
     "asiapacific",
 ];
-const FILTER_REGIONS_ALIAS: [(usize, usize); 5] = [(0, 3), (1, 4), (2, 5), (2, 6), (2, 7)];
+const FILTER_REGIONS_ALIAS: [(usize, usize); 6] = [(0, 4), (1, 5), (2, 6), (3, 7), (3, 8), (3, 9)];
 const FILTER_SOURCE_RECS: [&str; 4] = ["iw4-master", "hmw-master", "iw4", "hmw"];
 const FILTER_SOURCE_ALIAS: [(usize, usize); 2] = [(0, 2), (1, 3)];
 

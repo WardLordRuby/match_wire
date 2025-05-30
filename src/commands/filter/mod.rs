@@ -49,8 +49,9 @@ pub(crate) const H2M_ID: &str = GAME_ID[0];
 pub(crate) const HMW_ID: &str = GAME_ID[1];
 
 const NA_CONT_CODE: [ContCode; 1] = [[b'N', b'A']];
-const EU_CONT_CODE: [ContCode; 1] = [[b'E', b'U']];
-const APAC_CONT_CODES: [ContCode; 3] = [[b'A', b'F'], [b'A', b'S'], [b'O', b'C']];
+const SA_CONT_CODE: [ContCode; 1] = [[b'S', b'A']];
+const EU_CONT_CODES: [ContCode; 2] = [[b'E', b'U'], [b'A', b'F']];
+const APAC_CONT_CODES: [ContCode; 2] = [[b'A', b'S'], [b'O', b'C']];
 
 fn serialize_json(f: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
@@ -149,8 +150,9 @@ impl Region {
     fn to_bytes(self) -> &'static [ContCode] {
         match self {
             Region::Apac => &APAC_CONT_CODES,
-            Region::EU => &EU_CONT_CODE,
+            Region::EU => &EU_CONT_CODES,
             Region::NA => &NA_CONT_CODE,
+            Region::SA => &SA_CONT_CODE,
         }
     }
 
