@@ -65,7 +65,7 @@ Modern Warfare.
 | Commands                     | Alias     | Description                                                                     |
 | ---------------------------- | --------- | ------------------------------------------------------------------------------- |
 | [filter](#filter-help)       | Filter    | Create a new favourites.json using various filter options                       |
-| last                         | Last      | Displays the results from the last filter command that included '--stats'       |
+| last                         | Last      | Displays the results from the last filter command that included `--stats`       |
 | [reconnect](#reconnect-help) | Reconnect | Reconnect to last server joined (or specified entry in history)                 |
 | launch                       | Launch    | Launch Mw2 Remastered (reconnect only works if the game is spawned by this app) |
 | cache                        | Cache     | Update / Reset cache (useful if reconnect can not find server name in cache)    |
@@ -79,21 +79,21 @@ Modern Warfare.
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
 
 ## Filter help
-| Options                           | Arguments      | Short | Description                                                          |
-| --------------------------------- | -------------- | ----- | -------------------------------------------------------------------- |
-| `--limit <LIMIT>`[^1]             | Number         | `-l`  | Specify the maximum number of servers added to favourites.json       |
-| `--player-min <MIN_PLAYERS>`      | Number         | `-p`  | Specify a minimum number of players a server must have [Default: 0]  |
-| `--team-size-max <MAX_TEAM_SIZE>` | Number         | `-t`  | Specify a maximum number of players a team can have [Default: 9]     |
-| `--with-bots`                     | -              | -     | Server _must_ contain bot players                                    |
-| `--without-bots`                  | -              | -     | Server can _not_ contain bot players                                 |
-| `--include-unresponsive`          | -              | -     | Include servers that do not respond to a 'getInfo' request           |
-| `--region <REGION>...`            | [na, eu, apac] | `-r`  | Specify region(s) server _must_ be located in [Default: include all] |
-| `--source <SOURCE>...`            | [iw4, hmw]     | `-s`  | Specify source(s) to populate from [Default: include all]            |
-| `--includes <INCLUDES>...`[^2]    | String(s)      | `-i`  | Server name _must_ contain any 1 of the given term(s)                |
-| `--excludes <EXCLUDES>...`[^2]    | String(s)      | `-e`  | Server name _must not_ contain any 1 of the given term(s)            |
-| `--retry-max <RETRY_MAX>`         | Number         | -     | Specify a maximum number of 'getInfo' retries [Default: 3]           |
-| `--stats`                         | -              | `-S`  | Display statistics about the servers found in the current filter     |
-| `--help`                          | -              | `-h`  | Print help                                                           |
+| Options                           | Arguments          | Short | Description                                                          |
+| --------------------------------- | ------------------ | ----- | -------------------------------------------------------------------- |
+| `--limit <LIMIT>`[^1]             | Number             | `-l`  | Specify the maximum number of servers added to favourites.json       |
+| `--player-min <MIN_PLAYERS>`      | Number             | `-p`  | Specify a minimum number of players a server must have [Default: 0]  |
+| `--team-size-max <MAX_TEAM_SIZE>` | Number             | `-t`  | Specify a maximum number of players a team can have [Default: 9]     |
+| `--with-bots`                     | -                  | -     | Server _must_ contain bot players                                    |
+| `--without-bots`                  | -                  | -     | Server can _not_ contain bot players                                 |
+| `--include-unresponsive`          | -                  | -     | Include servers that do not respond to a 'getInfo' request           |
+| `--region <REGION>...`            | [na, sa, eu, apac] | `-r`  | Specify region(s) server _must_ be located in [Default: include all] |
+| `--source <SOURCE>...`            | [iw4, hmw]         | `-s`  | Specify source(s) to populate from [Default: include all]            |
+| `--includes <INCLUDES>...`[^2]    | String(s)          | `-i`  | Server name _must_ contain any 1 of the given term(s)                |
+| `--excludes <EXCLUDES>...`[^2]    | String(s)          | `-e`  | Server name _must not_ contain any 1 of the given term(s)            |
+| `--retry-max <RETRY_MAX>`         | Number             | -     | Specify a maximum number of 'getInfo' retries [Default: 3]           |
+| `--stats`                         | -                  | `-S`  | Display statistics about the servers found in the current filter     |
+| `--help`                          | -                  | `-h`  | Print help                                                           |
 
 [^1]: The default server limit for **H2M users** is set to 100. Limiting favourites.json will fix the 'join random servers' bug
   when trying to connect via the in game server browser. On **Horizon MW** this issue is fixed and no limit is applied to the
@@ -129,7 +129,7 @@ Examples:
 
 ## Reconnect help
 | Options               | Arguments | Short | Description                                                                           |
-| :-------------------- | :-------- | :---- | :------------------------------------------------------------------------------------ |
+| --------------------- | --------- | ----- | ------------------------------------------------------------------------------------- |
 | `--history`           | -         | `-H`  | Display previously connected servers                                                  |
 | `--queue`             | -         | `-q`  | Queue a server connection attempt, waiting to connect until the server has free space |
 | `--abort`             | -         | -     | Aborts the queued connection attempt if one is pending                                |
