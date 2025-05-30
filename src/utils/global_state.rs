@@ -157,7 +157,7 @@ impl Endpoints {
         };
 
         if response.status() != STATUS_OK {
-            return Self::set_default("Received bad response", response.status());
+            return Self::set_default("Startup endpoint returned", response.status());
         }
 
         match response.json::<StartupInfo>().await {

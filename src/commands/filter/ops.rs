@@ -196,7 +196,14 @@ pub(super) async fn join_info_requests<R>(
         let mut retries = JoinSet::new();
         while let Some(res) = requests.join_next().await {
             match res {
-                Ok(Ok(server)) => responses.push(server),
+                Ok(Ok(server)) => {
+                    // Server isn't running but management software is
+                    if server.info.max_clients == 0 {
+                        did_not_respond.add(&server.source)
+                    } else {
+                        responses.push(server)
+                    }
+                }
                 Ok(Err(mut err)) => {
                     if err.retries < max_attempts {
                         let client = client.clone();
@@ -360,12 +367,6 @@ pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters)
 
     for i in (0..servers.len()).rev() {
         let info = &servers[i].info;
-
-        // Server isn't running but management software is
-        if info.max_clients == 0 {
-            servers.swap_remove(i);
-            continue;
-        }
 
         if args
             .team_size_max

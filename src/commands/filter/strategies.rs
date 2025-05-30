@@ -198,7 +198,8 @@ impl GameStats {
                 .map(|game| Self {
                     game: map
                         .get(game.as_str())
-                        .map(|&id| Cow::Borrowed(id))
+                        .copied()
+                        .map(Cow::Borrowed)
                         .unwrap_or_else(|| {
                             elide(game, 32).unwrap_or_else(|| game.to_owned()).into()
                         }),
@@ -218,8 +219,6 @@ impl GameStats {
             .get(addr)
             .map(|i| (i.player_ct() as usize, i.max_clients))
             .or_else(|| backup.map(|b| (b.clients as usize, b.max_clients)))
-            // Server isn't running but management software is
-            .filter(|(_, m)| *m != 0)
         {
             self.servers += 1;
             self.players += player_ct;
