@@ -1,5 +1,4 @@
 /.vscode
 /target
 /players2
-/src/location_api_key.rs
 Cargo.lock
