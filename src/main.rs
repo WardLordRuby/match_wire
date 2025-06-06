@@ -114,7 +114,10 @@ async fn run_eval_print_loop(
 
 #[instrument(level = "trace", skip_all)]
 fn app_startup((local_dir, cache_res): LoggerRes) -> Result<StartupData, Cow<'static, str>> {
-    let (game, no_launch) = GameDetails::get()?;
+    let (game, no_launch) = GameDetails::get(cache_res.as_ref().and_then(|res| match res {
+        Ok(cache) => Some(cache),
+        Err(backup) => backup.cache.as_ref(),
+    }))?;
 
     let splash_task = tokio::spawn(splash_screen::enter());
     let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());

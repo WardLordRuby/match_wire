@@ -13,7 +13,7 @@ use crate::{
     get_latest_hmw_manifest, hash_file_hex,
     models::{
         cli::{CacheCmd, Command, Filters},
-        json_data::{CondManifest, HmwManifest, Version},
+        json_data::{CacheFile, CondManifest, HmwManifest, Version},
     },
     open_dir, splash_screen,
     utils::{
@@ -182,7 +182,13 @@ pub struct GameDetails {
 }
 
 impl GameDetails {
-    pub fn get() -> Result<(Self, bool), Cow<'static, str>> {
+    pub fn get(cache: Option<&CacheFile>) -> Result<(Self, bool), Cow<'static, str>> {
+        let mod_verification = if cache.is_some_and(|cache| cache.hmw_manifest.verified) {
+            ModFileStatus::UpToDate
+        } else {
+            ModFileStatus::Initial
+        };
+
         let exe_dir = std::env::current_exe()
             .map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
         let exe_dir = exe_dir
@@ -205,11 +211,11 @@ impl GameDetails {
             let game = match crate::contains_required_files(&exe_dir) {
                 Ok(game_exe_path) => {
                     let (version, hash) = crate::exe_details(&game_exe_path);
-                    GameDetails::new(game_exe_path, version, hash)
+                    GameDetails::new(game_exe_path, version, hash, mod_verification)
                 }
                 Err(err) if no_launch => {
                     splash_screen::push_message(Message::error(err));
-                    GameDetails::default(&exe_dir)
+                    GameDetails::default(&exe_dir, mod_verification)
                 }
                 Err(err) => return Err(err),
             };
@@ -218,22 +224,27 @@ impl GameDetails {
         }
 
         #[cfg(debug_assertions)]
-        Ok((GameDetails::default(exe_dir), no_launch))
+        Ok((GameDetails::default(exe_dir, mod_verification), no_launch))
     }
 
-    fn default(exe_dir: &Path) -> Self {
+    fn default(exe_dir: &Path, mod_verification: ModFileStatus) -> Self {
         GameDetails {
             path: exe_dir.join(FNAME_HMW),
             game_name: Cow::Borrowed(DISP_NAME_HMW),
             version: None,
             hash_curr: None,
             hash_latest: None,
-            mod_verification: ModFileStatus::Initial,
+            mod_verification,
         }
     }
 
     #[cfg(not(debug_assertions))]
-    fn new(exe_path: PathBuf, version: Option<f64>, hash_curr: Option<String>) -> Self {
+    fn new(
+        exe_path: PathBuf,
+        version: Option<f64>,
+        hash_curr: Option<String>,
+        mod_verification: ModFileStatus,
+    ) -> Self {
         fn set_game_name(exe_path: &Path) -> Cow<'static, str> {
             let file_name = exe_path
                 .file_name()
@@ -253,7 +264,7 @@ impl GameDetails {
             version,
             hash_curr,
             hash_latest: None,
-            mod_verification: ModFileStatus::Initial,
+            mod_verification,
         }
     }
 
@@ -271,9 +282,6 @@ impl GameDetails {
             }
 
             if cache.hmw_manifest.guid == man.manifest_guid {
-                if cache.hmw_manifest.verified {
-                    self.mod_verification = ModFileStatus::UpToDate;
-                }
                 self.hash_latest = try_get_exe_hash(cache);
                 return false;
             }
@@ -310,7 +318,7 @@ impl GameDetails {
     fn prep_verification_state(&mut self) -> Result<(), ()> {
         let exe_dir = self.get_exe_dir();
 
-        let missing = global_state::Cache::with_borrow_mut(|cache| {
+        let missing = global_state::Cache::with_borrow(|cache| {
             let mut missing = Vec::new();
 
             for mod_file in cache.hmw_manifest.files_with_hashes.keys() {
@@ -320,16 +328,11 @@ impl GameDetails {
                 }
             }
 
-            if !missing.is_empty() {
-                cache.hmw_manifest.verified = false;
-            }
-
             missing
         });
 
         if !missing.is_empty() {
             error!(name: LOG_ONLY, "Missing HMW files: {}", missing.join(", "));
-            global_state::UpdateCache::set(true);
             self.mod_verification = ModFileStatus::MissingFiles(missing);
             return Err(());
         }
@@ -355,7 +358,7 @@ impl GameDetails {
         let exe_dir = self.get_exe_dir();
         let start = std::time::Instant::now();
 
-        let outdated = global_state::Cache::with_borrow_mut(|cache| {
+        let outdated = global_state::Cache::with_borrow(|cache| {
             if cache.hmw_manifest.files_with_hashes.is_empty() {
                 error!("No manifest data available to verify files");
                 return Vec::new();
@@ -384,8 +387,6 @@ impl GameDetails {
                 })
                 .collect::<Vec<_>>();
 
-            cache.hmw_manifest.verified = outdated.is_empty();
-
             progress.finish();
             outdated
         });
@@ -399,7 +400,6 @@ impl GameDetails {
         self.mod_verification = ModFileStatus::UpToDate;
         info!(name: LOG_ONLY, "Verified files in {:#?}", start.elapsed());
 
-        global_state::UpdateCache::set(true);
         Ok(())
     }
 
@@ -630,6 +630,10 @@ impl CommandContext {
         self.game.version
     }
     #[inline]
+    pub(crate) fn mod_files_verified(&self) -> bool {
+        matches!(self.game.mod_verification, ModFileStatus::UpToDate)
+    }
+    #[inline]
     pub(crate) fn game_name(&self) -> Cow<'static, str> {
         Cow::clone(&self.game.game_name)
     }
@@ -833,6 +837,10 @@ impl CommandContext {
                 info!("Found latest HMW version")
             }
 
+            let _ = self.game.prep_verification_state();
+        }
+
+        if let ModFileStatus::Initial = self.game.mod_verification {
             let _ = self.game.prep_verification_state();
         }
 

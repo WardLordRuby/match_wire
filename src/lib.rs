@@ -67,17 +67,15 @@ pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
 pub const SAVED_HISTORY_CAP: usize = 20;
 
 pub(crate) mod files {
-    pub(crate) const GAME_ENTRIES: [&str; 7] = [
+    pub(crate) const GAME_ENTRIES: [&str; 5] = [
         "h1_mp64_ship.exe",
-        "h2m-mod",
+        "hmw-mod.exe",
         "players2",
         "h2m-mod.exe",
         "h2m-revived.exe",
-        "hmw-mod",
-        "hmw-mod.exe",
     ];
 
-    pub(crate) const FNAME_HMW: &str = GAME_ENTRIES[6];
+    pub(crate) const FNAME_HMW: &str = GAME_ENTRIES[1];
 
     #[cfg(not(debug_assertions))]
     pub(crate) use release::*;
@@ -87,10 +85,8 @@ pub(crate) mod files {
         use super::*;
 
         pub(crate) const FNAME_MWR: &str = GAME_ENTRIES[0];
-        pub(crate) const DIR_NAME_HMW: &str = GAME_ENTRIES[5];
         pub(crate) const FNAME_H2M_1: &str = GAME_ENTRIES[3];
         pub(crate) const FNAME_H2M_2: &str = GAME_ENTRIES[4];
-        pub(crate) const DIR_NAME_H2M: &str = GAME_ENTRIES[1];
     }
 }
 
@@ -308,21 +304,15 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
         )));
     }
 
-    let (found_game, mod_files_dir) = if exe_dir.join(FNAME_HMW).exists() {
-        (FNAME_HMW, exe_dir.join(DIR_NAME_HMW))
+    let found_game = if exe_dir.join(FNAME_HMW).exists() {
+        FNAME_HMW
     } else if exe_dir.join(FNAME_H2M_1).exists() {
-        (FNAME_H2M_1, exe_dir.join(DIR_NAME_H2M))
+        FNAME_H2M_1
     } else if exe_dir.join(FNAME_H2M_2).exists() {
-        (FNAME_H2M_2, exe_dir.join(DIR_NAME_H2M))
+        FNAME_H2M_2
     } else {
-        return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}",)));
+        return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}")));
     };
-
-    if !mod_files_dir.exists() {
-        return Err(Cow::Owned(format!(
-            "Mw2 Remastered mod files not found, {HmwDownloadHint}",
-        )));
-    }
 
     Ok(exe_dir.join(found_game))
 }

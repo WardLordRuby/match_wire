@@ -262,6 +262,7 @@ impl From<serde_json::Error> for ReadCacheErr {
 }
 
 #[instrument(level = "trace", skip_all)]
+#[allow(clippy::result_large_err)]
 pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
     let file = match std::fs::read(local_env_dir.join(CACHED_DATA)) {
         Ok(data) => data,
@@ -314,7 +315,11 @@ pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Resu
                     "regions": ContCodeMapWrapper(&cache.ip_to_region),
                     "host_names": cache.host_to_connect,
                 },
-                "hmw_manifest": cache.hmw_manifest
+                "hmw_manifest": {
+                    "guid": cache.hmw_manifest.guid,
+                    "files_with_hashes": cache.hmw_manifest.files_with_hashes,
+                    "verified": context.mod_files_verified(),
+                }
             }),
         )
         .map_err(io::Error::other)
