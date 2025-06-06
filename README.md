@@ -73,7 +73,7 @@ Modern Warfare.
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                       |
 | local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)          |
 | quit                         | Quit      | Closes game and launcher                                                        |
-| version                      | Version   | Displays version of MatchWire and Mw2 Remastered                                |
+| [version](#version-help)     | Version   | Displays version of MatchWire and Mw2 Remastered                                |
 | help                         | -         | Displays helpful information                                                    |
 
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
@@ -158,6 +158,12 @@ just as it normally would, simply type the command and press enter to send. Pres
 <kbd>C</kbd> when the input line is empty will leave the game console and return back to MatchWire.  
 
 To re-print all game client logs from the current session you can add the argument `--all`.  
+
+## Version help
+The `version` command will notify you of any updates either with MatchWire or HMW. It will also display the verification status of
+HMW mod files. By default the existence of all HMW mod files will be checked, however _only_ hmw-mod.exe will be verified. This is a
+quick way to check if a new update for HMW has been released. You can also verify _all_ HMW mod files by using `version` with the
+argument `--verify-all`. 
 
 ## Build from source
 If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 
