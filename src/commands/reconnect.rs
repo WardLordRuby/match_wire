@@ -23,6 +23,9 @@ use tracing::{error, info};
 
 pub const HISTORY_MAX: usize = 6;
 
+/// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
+///
+/// [`CmdErr::Critical`]: crate::commands::handler::CmdErr::Critical
 fn display_history(
     repl: &mut ReplHandle,
     history: &[HostName],

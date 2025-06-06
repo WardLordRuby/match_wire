@@ -114,7 +114,9 @@ pub(crate) struct Filters {
     pub(crate) without_bots: bool,
 
     /// Include servers that do not respond to a 'getInfo' request
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = [
+        "excludes", "includes", "player_min", "team_size_max", "with_bots", "without_bots", "stats"
+    ])]
     pub(crate) include_unresponsive: bool,
 
     /// Specify region(s) [Default: include all]

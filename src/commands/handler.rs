@@ -334,7 +334,12 @@ impl GameDetails {
             return Err(());
         }
 
-        self.mod_verification = ModFileStatus::VerifyReady;
+        if matches!(
+            self.mod_verification,
+            ModFileStatus::Initial | ModFileStatus::MissingFiles(_)
+        ) {
+            self.mod_verification = ModFileStatus::VerifyReady;
+        }
         Ok(())
     }
 

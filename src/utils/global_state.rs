@@ -416,6 +416,9 @@ impl PtyHandle {
 pub(crate) struct LastServerStats;
 
 impl LastServerStats {
+    /// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
+    ///
+    /// [`CmdErr::Critical`]: crate::commands::handler::CmdErr::Critical
     pub(crate) fn display(repl: &mut ReplHandle) -> io::Result<()> {
         LAST_SERVER_STATS.with_borrow(|(source, filter, pre_process)| {
             if source.is_empty() {

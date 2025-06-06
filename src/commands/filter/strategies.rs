@@ -341,8 +341,6 @@ impl FilterStrategy for StatTrackStrategy {
                 .map(Sourced::addr_copy),
         );
 
-        args.include_unresponsive = false;
-
         let ((info_map, mod_info), mod_region) = tokio::join!(
             join_info_requests(
                 requests.info,

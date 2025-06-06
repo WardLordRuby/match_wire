@@ -540,6 +540,8 @@ impl Source {
     }
 }
 
+// MARK: TODO
+// Current api provider limits to 45 requests per min, we need a way to limit batch sizes
 #[instrument(level = "trace", skip_all)]
 pub(crate) async fn try_location_lookup(
     ip: IpAddr,
