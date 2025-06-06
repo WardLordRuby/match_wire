@@ -4,7 +4,7 @@ use match_wire::{
         handler::{CommandContext, GameDetails, HistoryTag, Message, ReplHandle, StartupData},
         launch_h2m::launch_h2m_pseudo,
     },
-    get_latest_hmw_hash, print_help, splash_screen, startup_cache_task, try_init_logger,
+    get_latest_hmw_manifest, print_help, splash_screen, startup_cache_task, try_init_logger,
     utils::{
         display::{self, DisplayPanic},
         global_state,
@@ -117,7 +117,7 @@ fn app_startup((local_dir, cache_res): LoggerRes) -> Result<StartupData, Cow<'st
     let (game, no_launch) = GameDetails::get()?;
 
     let splash_task = tokio::spawn(splash_screen::enter());
-    let hmw_hash_task = tokio::spawn(get_latest_hmw_hash());
+    let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
 
     let launch_task = tokio::spawn({
         let game_exe_path = game.path.clone();
@@ -137,6 +137,6 @@ fn app_startup((local_dir, cache_res): LoggerRes) -> Result<StartupData, Cow<'st
         cache_task: tokio::spawn(startup_cache_task(cache_res)),
         splash_task,
         launch_task,
-        hmw_hash_task,
+        hmw_manifest_task,
     })
 }

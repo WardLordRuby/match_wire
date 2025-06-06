@@ -164,6 +164,15 @@ pub struct CacheFile {
     pub connection_history: Vec<HostName>,
     #[serde(default)]
     pub cache: ServerCache,
+    #[serde(default)]
+    pub hmw_manifest: CondManifest,
+}
+
+#[derive(Deserialize, Serialize, Default, Debug)]
+pub struct CondManifest {
+    pub guid: String,
+    pub files_with_hashes: FileHashes,
+    pub verified: bool,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
@@ -174,13 +183,11 @@ pub struct ServerCache {
         deserialize_with = "deserialize_country_code_map",
         serialize_with = "serialize_country_code_map"
     )]
-    pub regions: HashMap<IpAddr, ContCode>,
+    pub regions: ContCodeMap,
     pub host_names: HashMap<String, SocketAddr>,
 }
 
-fn deserialize_country_code_map<'de, D>(
-    deserializer: D,
-) -> Result<HashMap<IpAddr, ContCode>, D::Error>
+fn deserialize_country_code_map<'de, D>(deserializer: D) -> Result<ContCodeMap, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -192,10 +199,7 @@ where
         .collect()
 }
 
-fn serialize_country_code_map<S>(
-    map: &HashMap<IpAddr, ContCode>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_country_code_map<S>(map: &ContCodeMap, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -206,9 +210,11 @@ where
     }
     map_serializer.end()
 }
-pub(crate) struct ContCodeMap<'a>(pub &'a HashMap<IpAddr, ContCode>);
 
-impl Serialize for ContCodeMap<'_> {
+pub(crate) type ContCodeMap = HashMap<IpAddr, ContCode>;
+pub(crate) struct ContCodeMapWrapper<'a>(pub &'a ContCodeMap);
+
+impl Serialize for ContCodeMapWrapper<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -217,21 +223,23 @@ impl Serialize for ContCodeMap<'_> {
     }
 }
 
+pub(crate) type FileHashes = HashMap<String, String>;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
-pub(crate) struct HmwManifest {
-    pub(crate) modules: Vec<Module>,
+pub struct HmwManifest {
+    pub modules: Vec<Module>,
     // pub(crate) ignore_paths: Vec<String>,
-    // pub(crate) manifest_guid: String,
+    pub manifest_guid: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
-pub(crate) struct Module {
-    pub(crate) name: String,
-    pub(crate) version: String,
-    pub(crate) files_with_hashes: HashMap<String, String>,
-    // pub(crate) download_info: DownloadInfo,
+pub struct Module {
+    pub name: String,
+    pub version: String,
+    pub files_with_hashes: FileHashes,
+    // pub download_info: DownloadInfo,
 }
 
 // #[derive(Deserialize)]

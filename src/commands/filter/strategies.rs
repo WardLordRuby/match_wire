@@ -3,12 +3,12 @@ use super::{
     Request, Server, Sourced, ops::*, try_get_info,
 };
 use crate::{
-    ResponseErr, Spinner, client_with_timeout, command_err,
+    ResponseErr, client_with_timeout, command_err,
     commands::{
         filter::try_location_lookup,
         handler::{CmdErr, ReplHandle},
     },
-    display::DisplaySourceStatsInner,
+    display::{indicator::Spinner, table::DisplaySourceStatsInner},
     elide,
     models::{
         cli::{Filters, Source},

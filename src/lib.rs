@@ -27,7 +27,7 @@ use crate::{
     },
     utils::{
         caching::{ReadCacheErr, build_cache, read_cache},
-        display::{self, TABLE_PADDING},
+        display::{self, table::TABLE_PADDING},
         global_state,
         subscriber::init_subscriber,
     },
@@ -35,20 +35,16 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    collections::HashSet,
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader},
     path::{Path, PathBuf},
-    sync::mpsc::{self, TryRecvError},
     time::Duration,
 };
 
 use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
-use repl_oxide::ansi_code::{CLEAR_LINE, RED, RESET};
+use repl_oxide::ansi_code::{RED, RESET};
 use reqwest::Client;
-use serde_json::{Value, from_value};
-use serde_json_path::JsonPath;
 use sha2::{Digest, Sha256};
 use tracing::{error, info};
 
@@ -63,7 +59,7 @@ pub(crate) const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
 const MOD_FILES_MODULE_NAME: &str = "mod";
-const MOD_FILES_LATEST_VER: &str = "1.1";
+// const MOD_FILES_LATEST_VER: &str = "1.1";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -98,6 +94,7 @@ pub(crate) mod files {
     }
 }
 
+#[cfg(not(debug_assertions))]
 use files::*;
 
 pub const LOCAL_DATA: &str = "LOCALAPPDATA";
@@ -126,7 +123,7 @@ pub mod splash_screen {
         use tracing_subscriber::fmt::format::Writer;
 
         thread_local! {
-            pub(super) static SPLASH_SCREEN_VIS: Cell<bool> = const { Cell::new(true) };
+            pub(super) static SPLASH_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
             pub(super) static SPLASH_SCREEN_EVENT_BUFFER:
                 RefCell<SplashScreenEvents> = RefCell::new(SplashScreenEvents::default());
         }
@@ -179,6 +176,7 @@ pub mod splash_screen {
 
             let mut stdout = std::io::stdout();
 
+            SPLASH_SCREEN_VIS.set(true);
             execute!(stdout, terminal::EnterAlternateScreen)?;
 
             let (columns, rows) = terminal::size()?;
@@ -236,6 +234,7 @@ impl ResponseErr {
     fn bad_status(ctx: &'static str, response: reqwest::Response) -> Self {
         Self::Status(ctx, response.status())
     }
+    #[allow(dead_code)]
     fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
         Self::Other(msg.into())
     }
@@ -277,22 +276,7 @@ pub(crate) fn client_with_timeout(secs: u64) -> Client {
     )
 }
 
-fn try_query_json_path(value: &Value, path: &str) -> Result<String, String> {
-    let json_query = JsonPath::parse(path)
-        .map_err(|err| format!("Failed to parse JSONPath string: {path}, {err}"))?;
-    let value = json_query
-        .query(value)
-        .exactly_one()
-        .map_err(|err| format!("Failed to query hmw_manifest: {err}"))?;
-    match value {
-        Value::String(hash) => Ok(hash.clone()),
-        v => Err(format!(
-            "Incorrect JSONPath: {path}, expected `String` got, {v:?}"
-        )),
-    }
-}
-
-pub async fn get_latest_hmw_hash() -> Result<String, ResponseErr> {
+pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
     let client = client_with_timeout(6);
     let response = client
         .get(global_state::Endpoints::hmw_manifest())
@@ -303,34 +287,7 @@ pub async fn get_latest_hmw_hash() -> Result<String, ResponseErr> {
         return Err(ResponseErr::bad_status("HMW manifest", response));
     }
 
-    let latest = response.json::<Value>().await?;
-
-    if let Some(json_path) = global_state::Endpoints::manifest_hash_path() {
-        match try_query_json_path(&latest, json_path) {
-            Ok(hash) => return Ok(hash),
-            Err(err) => splash_screen::push_message(Message::error(err)),
-        }
-    }
-
-    let mut hmw_manifest = match from_value::<HmwManifest>(latest) {
-        Ok(manifest) => manifest,
-        Err(_) => {
-            return Err(ResponseErr::other(
-                "hmw manifest.json formatting has changed",
-            ));
-        }
-    };
-
-    hmw_manifest
-        .modules
-        .iter_mut()
-        .find(|module| {
-            module.name == MOD_FILES_MODULE_NAME && module.version == MOD_FILES_LATEST_VER
-        })
-        .and_then(|module| module.files_with_hashes.remove(FNAME_HMW))
-        .ok_or(ResponseErr::other(
-            "hmw manifest.json formatting has changed",
-        ))
+    response.json::<HmwManifest>().await.map_err(Into::into)
 }
 
 pub(crate) fn open_dir(path: &Path) {
@@ -339,108 +296,41 @@ pub(crate) fn open_dir(path: &Path) {
     }
 }
 
-#[allow(dead_code)]
-pub(crate) enum Operation {
-    All,
-    Any,
-    Count,
-}
-
-pub(crate) enum OperationResult<'a> {
-    Bool(bool),
-    #[allow(dead_code)]
-    Count(usize, HashSet<&'a str>),
-}
-
-/// `Operation::All` and `Operation::Any` map to `OperationResult::bool(_result_)`  
-/// `Operation::Count` maps to `OperationResult::Count((_num_found_, _HashSet<_&input_list_>))`  
-/// when matching you will always have to `_ => unreachable()` for the return type you will never get
-pub(crate) fn does_dir_contain<'a, T>(
-    dir: &Path,
-    operation: Operation,
-    list: &'a [T],
-) -> io::Result<OperationResult<'a>>
-where
-    T: std::borrow::Borrow<str> + std::cmp::Eq + std::hash::Hash,
-{
-    let entries = std::fs::read_dir(dir)?;
-    let file_names = entries
-        .filter_map(|entry| Some(entry.ok()?.file_name()))
-        .collect::<Vec<_>>();
-    let str_names = file_names
-        .iter()
-        .filter_map(|f| f.to_str())
-        .collect::<HashSet<_>>();
-
-    match operation {
-        Operation::All => Ok(OperationResult::Bool({
-            list.iter()
-                .all(|check_file| str_names.contains(check_file.borrow()))
-        })),
-        Operation::Any => Ok(OperationResult::Bool({
-            list.iter()
-                .any(|check_file| str_names.contains(check_file.borrow()))
-        })),
-        Operation::Count => {
-            let collection = list
-                .iter()
-                .filter(|&check_file| str_names.contains(check_file.borrow()))
-                .map(|t| t.borrow())
-                .collect::<HashSet<_>>();
-            Ok(OperationResult::Count(collection.len(), collection))
-        }
-    }
-}
-
 #[cfg(not(debug_assertions))]
 fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
     use crate::utils::display::HmwDownloadHint;
 
-    match does_dir_contain(exe_dir, Operation::Count, &GAME_ENTRIES)
-        .expect("Failed to read contents of current dir")
-    {
-        OperationResult::Count(_, files) => {
-            if !files.contains(FNAME_MWR) {
-                return Err(Cow::Borrowed(concat!(
-                    "Move ",
-                    CRATE_NAME,
-                    ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
-                )));
-            }
-            if !files.contains(DIR_NAME_HMW) && !files.contains(DIR_NAME_H2M) {
-                return Err(Cow::Owned(format!(
-                    "Mw2 Remastered mod files not found, {HmwDownloadHint}",
-                )));
-            }
-            let found_game = if files.contains(FNAME_HMW) {
-                FNAME_HMW
-            } else if files.contains(FNAME_H2M_1) {
-                FNAME_H2M_1
-            } else if files.contains(FNAME_H2M_2) {
-                FNAME_H2M_2
-            } else {
-                return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}",)));
-            };
-            Ok(exe_dir.join(found_game))
-        }
-        _ => unreachable!(),
+    if !exe_dir.join(FNAME_MWR).exists() {
+        return Err(Cow::Borrowed(concat!(
+            "Move ",
+            CRATE_NAME,
+            ".exe into your 'Call of Duty Modern Warfare Remastered' directory",
+        )));
     }
+
+    let (found_game, mod_files_dir) = if exe_dir.join(FNAME_HMW).exists() {
+        (FNAME_HMW, exe_dir.join(DIR_NAME_HMW))
+    } else if exe_dir.join(FNAME_H2M_1).exists() {
+        (FNAME_H2M_1, exe_dir.join(DIR_NAME_H2M))
+    } else if exe_dir.join(FNAME_H2M_2).exists() {
+        (FNAME_H2M_2, exe_dir.join(DIR_NAME_H2M))
+    } else {
+        return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}",)));
+    };
+
+    if !mod_files_dir.exists() {
+        return Err(Cow::Owned(format!(
+            "Mw2 Remastered mod files not found, {HmwDownloadHint}",
+        )));
+    }
+
+    Ok(exe_dir.join(found_game))
 }
 
 fn hash_file_hex(path: &Path) -> io::Result<String> {
-    let file = std::fs::File::open(path)?;
-    let mut reader = BufReader::new(file);
+    let file = std::fs::read(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0; 8192];
-
-    loop {
-        let bytes_read = reader.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
-    }
-
+    hasher.update(&file);
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -479,24 +369,17 @@ pub fn await_user_for_end() {
 /// Validates local/app_dir exists and modifies input if valid
 fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     const PREV_NAME: &str = "h2m_favorites";
-    let local_dir = local.clone();
+    let prev_local_dir = local.join(PREV_NAME);
 
-    match does_dir_contain(local, Operation::Count, &[CRATE_NAME, PREV_NAME]) {
-        Ok(OperationResult::Count(_, files)) => {
-            local.push(CRATE_NAME);
-
-            if !files.contains(CRATE_NAME) {
-                std::fs::create_dir(&local)?;
-            }
-
-            if files.contains(PREV_NAME) {
-                std::fs::remove_dir_all(local_dir.join(PREV_NAME))?;
-            }
-            Ok(())
-        }
-        Err(err) => Err(err),
-        _ => unreachable!(),
+    local.push(CRATE_NAME);
+    if !local.exists() {
+        std::fs::create_dir(local)?;
     }
+
+    if prev_local_dir.exists() {
+        std::fs::remove_dir_all(prev_local_dir)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn make_slice_ascii_lowercase(vec: &mut [String]) {
@@ -570,54 +453,6 @@ pub(crate) async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, m
         .send(message)
         .await
         .unwrap_or_else(|returned| returned.0.log());
-}
-
-pub(crate) struct Spinner {
-    task: std::thread::JoinHandle<io::Result<()>>,
-    sender: mpsc::Sender<String>,
-}
-
-impl Spinner {
-    pub(crate) fn new(mut message: String) -> Self {
-        let (tx, rx) = mpsc::channel();
-
-        Self {
-            task: std::thread::spawn(move || {
-                const SPINNER_CHARS: &str = "-\\|/";
-                let mut stdout = std::io::stdout();
-                for ch in SPINNER_CHARS.chars().cycle() {
-                    match rx.try_recv() {
-                        Ok(new) => message = new,
-                        Err(TryRecvError::Empty) => (),
-                        Err(TryRecvError::Disconnected) => {
-                            write!(stdout, "{CLEAR_LINE}")?;
-                            break;
-                        }
-                    }
-                    write!(stdout, "{CLEAR_LINE}{ch} {message}")?;
-                    stdout.flush()?;
-                    std::thread::sleep(Duration::from_millis(60));
-                }
-                Ok(())
-            }),
-            sender: tx,
-        }
-    }
-
-    pub(crate) fn update_message(&self, message: String) {
-        self.sender
-            .send(message)
-            .unwrap_or_else(|err| println!("{CLEAR_LINE}{}...", err.0))
-    }
-
-    pub(crate) fn finish(self) {
-        drop(self.sender);
-        match self.task.join() {
-            Ok(Ok(())) => (),
-            Ok(Err(err)) => error!(name: LOG_ONLY, "{err}"),
-            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
-        }
-    }
 }
 
 pub async fn startup_cache_task(

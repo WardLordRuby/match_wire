@@ -1,6 +1,5 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY, Operation, OperationResult, ResponseErr, Spinner,
-    client_with_timeout,
+    CACHED_DATA, CRATE_VER, LOG_ONLY, ResponseErr, client_with_timeout,
     commands::{
         filter::{
             Addressable, DEFAULT_SOURCES, GetInfoMetaData, Server, Sourced,
@@ -11,18 +10,20 @@ use crate::{
         handler::CommandContext,
         reconnect::HISTORY_MAX,
     },
-    does_dir_contain,
     models::{
         cli::Source,
-        json_data::{CacheFile, ContCode, ContCodeMap},
+        json_data::{CacheFile, ContCode, ContCodeMapWrapper},
     },
-    utils::global_state::{self, ThreadCopyState},
+    utils::{
+        display::indicator::Spinner,
+        global_state::{self, ThreadCopyState},
+    },
 };
 
 use std::{
     borrow::Cow,
     collections::HashMap,
-    io,
+    io::{self, ErrorKind},
     net::{IpAddr, SocketAddr},
     path::Path,
     time::{Duration, SystemTime},
@@ -262,26 +263,29 @@ impl From<serde_json::Error> for ReadCacheErr {
 
 #[instrument(level = "trace", skip_all)]
 pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
-    match does_dir_contain(local_env_dir, Operation::All, &[CACHED_DATA]) {
-        Ok(OperationResult::Bool(true)) => {
-            let file = std::fs::File::open(local_env_dir.join(CACHED_DATA))?;
-            let reader = io::BufReader::new(file);
-            let file_contents = serde_json::from_reader::<_, CacheFile>(reader)?;
-            trace!("Cache read from file");
-            let curr_time = std::time::SystemTime::now();
-            match curr_time.duration_since(file_contents.created) {
-                Ok(time) if time > Duration::new(60 * 60 * 24, 0) => {
-                    Err(ReadCacheErr::with_old("cache is too old", file_contents))
-                }
-                Err(err) => Err(ReadCacheErr::with_old(err.to_string(), file_contents)),
-                _ => Ok(file_contents),
+    let file = match std::fs::read(local_env_dir.join(CACHED_DATA)) {
+        Ok(data) => data,
+        Err(err) => {
+            return if err.kind() == ErrorKind::NotFound {
+                Err(ReadCacheErr::new(concat!(CACHED_DATA, " not found")))
+            } else {
+                Err(err.into())
+            };
+        }
+    };
+
+    let cache = serde_json::from_slice::<CacheFile>(&file)?;
+    trace!("Cache read from file");
+
+    match std::time::SystemTime::now().duration_since(cache.created) {
+        Ok(time_since_update) => {
+            if time_since_update > Duration::new(60 * 60 * 24, 0) {
+                return Err(ReadCacheErr::with_old("cache is too old", cache));
             }
+
+            Ok(cache)
         }
-        Ok(OperationResult::Bool(false)) => {
-            Err(ReadCacheErr::new(concat!(CACHED_DATA, " not found")))
-        }
-        Err(err) => Err(err.into()),
-        _ => unreachable!(),
+        Err(err) => Err(ReadCacheErr::with_old(err.to_string(), cache)),
     }
 }
 
@@ -307,9 +311,10 @@ pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Resu
                 "cache": {
                     "iw4m": cache.iw4m,
                     "hmw": cache.hmw,
-                    "regions": ContCodeMap(&cache.ip_to_region),
+                    "regions": ContCodeMapWrapper(&cache.ip_to_region),
                     "host_names": cache.host_to_connect,
                 },
+                "hmw_manifest": cache.hmw_manifest
             }),
         )
         .map_err(io::Error::other)

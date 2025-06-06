@@ -109,7 +109,13 @@ const COMMAND_INNER: &[InnerScheme] = &[
     // quit
     InnerScheme::end(Parent::Root),
     // version
-    InnerScheme::end(Parent::Root),
+    InnerScheme::new(
+        RecData::new(RecKind::argument_with_no_required_inputs())
+            .with_parent(Parent::Root)
+            .with_recommendations(&VERSION_RECS)
+            .with_alias(&VERSION_ALIAS),
+        Some(VERSION_INNER),
+    ),
     // last
     InnerScheme::end(Parent::Root),
 ];
@@ -213,4 +219,12 @@ const RECONNECT_INNER: &[InnerScheme] = &[
 const CONSOLE_INNER: &[InnerScheme] = &[
     // all
     InnerScheme::end(Parent::Entry(COMMAND_RECS[4])),
+];
+
+const VERSION_RECS: [&str; 2] = ["verify-all", "verify"];
+const VERSION_ALIAS: [(usize, usize); 1] = [(0, 1)];
+
+const VERSION_INNER: &[InnerScheme] = &[
+    // verify-all
+    InnerScheme::end(Parent::Entry(COMMAND_RECS[8])),
 ];

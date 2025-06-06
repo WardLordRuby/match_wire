@@ -4,16 +4,19 @@ mod tests {
         H2M_MAX_CLIENT_NUM,
         commands::filter::{GameStats, Server, Sourced, process_stats},
         models::{cli::Source, json_data::GetInfo},
-        utils::{
-            display::{
-                DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner,
-                GAME_DISPLAY_NAMES, GAME_TYPE_IDS, Line, MAP_IDS, MIN_FILTER_COLS, count_digits,
+        utils::display::{
+            GAME_DISPLAY_NAMES, GAME_TYPE_IDS, Line, MAP_IDS,
+            table::{
+                DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, MIN_FILTER_COLS,
+                count_digits,
             },
-            global_state,
         },
     };
 
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::{
+        collections::HashMap,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    };
 
     use rand::{Rng, distr::Alphanumeric, seq::IndexedRandom};
 
@@ -126,14 +129,16 @@ mod tests {
 
     #[test]
     fn display_servers() {
-        global_state::Cache::set(global_state::Cache::default());
         let rng = &mut rand::rng();
         let mut servers = gen_test_servers(rng);
         let pre_process = process_stats(&mut servers);
 
         for i in 0..21 {
             let width = MIN_FILTER_COLS + i * 3;
-            println!("{}", DisplayFilterStats(&servers, &pre_process, width))
+            println!(
+                "{}",
+                DisplayFilterStats(&servers, &pre_process, &HashMap::new(), width)
+            )
         }
     }
 

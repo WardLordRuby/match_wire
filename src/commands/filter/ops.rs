@@ -3,7 +3,7 @@ use super::{
     UnresponsiveCounter, strategies::FilterStrategy, try_get_info, try_location_lookup,
 };
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, make_slice_ascii_lowercase,
+    LOG_ONLY, ResponseErr, STATUS_OK, make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Source},
         json_data::{ContCode, HostData},
@@ -12,6 +12,7 @@ use crate::{
     utils::{
         display::{
             DisplayCachedServerUse, DisplayGetInfoCount, DisplayServerCount, SingularPlural,
+            indicator::Spinner,
         },
         global_state,
     },

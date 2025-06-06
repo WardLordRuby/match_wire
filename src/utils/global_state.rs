@@ -1,18 +1,22 @@
 use super::{
     caching::AddrMap,
     display::{
-        self, DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, GAME_DISPLAY_NAMES,
-        GAME_TYPE_IDS, MAP_IDS, MIN_FILTER_COLS, TABLE_PADDING,
+        self, GAME_DISPLAY_NAMES, GAME_TYPE_IDS, MAP_IDS,
+        indicator::Spinner,
+        table::{
+            DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, MIN_FILTER_COLS,
+            TABLE_PADDING,
+        },
     },
 };
 use crate::{
-    LOG_ONLY, STATUS_OK, Spinner, StartupInfo, client_with_timeout,
+    LOG_ONLY, STATUS_OK, StartupInfo, client_with_timeout,
     commands::{
         filter::{FilterPreProcess, Server, process_stats},
         handler::{AppDetails, CommandSender, Message, ReplHandle},
         launch_h2m::{HostName, WinApiErr, game_open},
     },
-    models::json_data::CacheFile,
+    models::json_data::{CacheFile, CondManifest},
     splash_screen, try_fit_table,
 };
 
@@ -61,6 +65,7 @@ pub struct Cache {
     pub connection_history: Vec<HostName>,
     pub iw4m: AddrMap,
     pub hmw: AddrMap,
+    pub hmw_manifest: CondManifest,
     pub created: SystemTime,
 }
 
@@ -72,6 +77,7 @@ impl From<CacheFile> for Cache {
             connection_history: value.connection_history,
             iw4m: value.cache.iw4m,
             hmw: value.cache.hmw,
+            hmw_manifest: value.hmw_manifest,
             created: value.created,
         }
     }
@@ -85,6 +91,7 @@ impl Default for Cache {
             connection_history: Vec::new(),
             iw4m: HashMap::new(),
             hmw: HashMap::new(),
+            hmw_manifest: CondManifest::default(),
             created: SystemTime::now(),
         }
     }
@@ -119,7 +126,6 @@ pub struct Endpoints {
     #[allow(dead_code)]
     hmw_download: Cow<'static, str>,
 
-    manifest_hash_path: Option<String>,
     server_info_endpoint: Cow<'static, str>,
 }
 
@@ -137,7 +143,6 @@ impl Endpoints {
             hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
             hmw_manifest: Cow::Borrowed("https://price.horizonmw.org/manifest.json"),
             hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
-            manifest_hash_path: None,
             server_info_endpoint: Cow::Borrowed("/getInfo"),
         })
         .expect("only called if failed to reach `STARTUP_INFO_URL`");
@@ -198,10 +203,6 @@ impl Endpoints {
     #[inline]
     pub(crate) fn hmw_manifest() -> &'static str {
         Self::get(|endpoints| &endpoints.hmw_manifest)
-    }
-    #[inline]
-    pub(crate) fn manifest_hash_path() -> Option<&'static str> {
-        Self::get(|endpoints| endpoints.manifest_hash_path.as_deref())
     }
     #[inline]
     pub(crate) fn iw4_master_server() -> &'static str {
@@ -431,7 +432,13 @@ impl LastServerStats {
 
             println!();
             println!("{}", DisplaySourceStats(source));
-            println!("{}", DisplayFilterStats(filter, pre_process, width));
+
+            Cache::with_borrow(|cache| {
+                println!(
+                    "{}",
+                    DisplayFilterStats(filter, pre_process, &cache.ip_to_region, width)
+                );
+            });
 
             Ok(())
         })

@@ -59,7 +59,11 @@ pub(crate) enum Command {
 
     /// Print version
     #[command(alias = "Version")]
-    Version,
+    Version {
+        /// Verify all HMW mod files are up-to-date
+        #[arg(long, alias = "verify")]
+        verify_all: bool,
+    },
 
     /// Open the current local data directory
     #[command(aliases(["Localenv", "localenv", "LocalEnv"]), hide = true)]

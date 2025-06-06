@@ -8,7 +8,10 @@ use crate::{
     models::cli::HistoryArgs,
     parse_hostname, send_msg_over, try_fit_table,
     utils::{
-        display::{ConnectionHelp, DisplayHistory, DisplayHistoryErr, TABLE_PADDING},
+        display::{
+            ConnectionHelp, DisplayHistoryErr,
+            table::{DisplayHistory, TABLE_PADDING},
+        },
         global_state::{self, PtyAccessErr},
     },
 };

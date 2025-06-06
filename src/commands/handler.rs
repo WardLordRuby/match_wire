@@ -1,5 +1,6 @@
 use crate::{
-    CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, ResponseErr, SAVED_HISTORY_CAP, Spinner,
+    CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, MOD_FILES_MODULE_NAME, ResponseErr,
+    SAVED_HISTORY_CAP,
     commands::{
         filter::build_favorites,
         launch_h2m::{
@@ -9,16 +10,19 @@ use crate::{
     },
     exe_details,
     files::*,
-    get_latest_hmw_hash,
+    get_latest_hmw_manifest, hash_file_hex,
     models::{
         cli::{CacheCmd, Command, Filters},
-        json_data::Version,
+        json_data::{CondManifest, HmwManifest, Version},
     },
     open_dir, splash_screen,
     utils::{
         caching::{build_cache, write_cache},
-        display::{self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp},
-        global_state::{self, ThreadCopyState},
+        display::{
+            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp,
+            indicator::{ProgressBar, Spinner},
+        },
+        global_state::{self, Cache, ThreadCopyState},
     },
 };
 
@@ -26,8 +30,9 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     fmt::Display,
-    io::{self, Stdout},
+    io::{self, ErrorKind, Stdout},
     net::SocketAddr,
+    num::NonZero,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -37,6 +42,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::SetTitle,
 };
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use repl_oxide::{
     Repl,
     ansi_code::{GREEN, RED, RESET, YELLOW},
@@ -55,6 +61,12 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 use winptyrs::PTY;
+
+macro_rules! hmw_hash_err {
+    ($($arg:tt)*) => {
+        error!("Could not get latest HMW version: {}", format_args!($($arg)*))
+    }
+}
 
 pub(crate) enum CmdErr {
     Critical(io::Error),
@@ -151,18 +163,31 @@ impl Display for Message {
 }
 
 #[derive(Debug)]
+pub enum ModFileStatus {
+    Initial,
+    MissingFiles(Vec<String>),
+    VerifyReady,
+    Outdated(Vec<String>),
+    UpToDate,
+}
+
+#[derive(Debug)]
 pub struct GameDetails {
     pub path: PathBuf,
     pub game_name: Cow<'static, str>,
     pub version: Option<f64>,
     pub hash_curr: Option<String>,
     pub hash_latest: Option<String>,
+    pub mod_verification: ModFileStatus,
 }
 
 impl GameDetails {
     pub fn get() -> Result<(Self, bool), Cow<'static, str>> {
-        let exe_dir =
-            std::env::current_dir().map_err(|err| format!("Failed to get current dir, {err:?}"))?;
+        let exe_dir = std::env::current_exe()
+            .map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
+        let exe_dir = exe_dir
+            .parent()
+            .ok_or("Failed to get exe parent directory")?;
 
         let no_launch = {
             #[cfg(not(debug_assertions))]
@@ -193,7 +218,7 @@ impl GameDetails {
         }
 
         #[cfg(debug_assertions)]
-        Ok((GameDetails::default(&exe_dir), no_launch))
+        Ok((GameDetails::default(exe_dir), no_launch))
     }
 
     fn default(exe_dir: &Path) -> Self {
@@ -203,6 +228,7 @@ impl GameDetails {
             version: None,
             hash_curr: None,
             hash_latest: None,
+            mod_verification: ModFileStatus::Initial,
         }
     }
 
@@ -227,7 +253,149 @@ impl GameDetails {
             version,
             hash_curr,
             hash_latest: None,
+            mod_verification: ModFileStatus::Initial,
         }
+    }
+
+    /// Returns `true` if `Cache` was modified / manifest was condensed
+    pub(crate) fn conditional_condense_manifest(&mut self, mut man: HmwManifest) -> bool {
+        fn try_get_exe_hash(cache: &Cache) -> Option<String> {
+            cache.hmw_manifest.files_with_hashes.get(FNAME_HMW).cloned()
+        }
+
+        global_state::Cache::with_borrow_mut(|cache| {
+            if man.modules.is_empty() {
+                error!("HMW manifest formatting has changed, failed to verify version");
+                self.hash_latest = None;
+                return false;
+            }
+
+            if cache.hmw_manifest.guid == man.manifest_guid {
+                if cache.hmw_manifest.verified {
+                    self.mod_verification = ModFileStatus::UpToDate;
+                }
+                self.hash_latest = try_get_exe_hash(cache);
+                return false;
+            }
+
+            self.mod_verification = ModFileStatus::Initial;
+
+            man.modules.retain(|m| m.name == MOD_FILES_MODULE_NAME);
+            man.modules.sort_unstable_by_key(|m| m.version.clone());
+
+            let mut files_with_hashes = std::mem::take(&mut man.modules[0].files_with_hashes);
+
+            man.modules
+                .into_iter()
+                .skip(1)
+                .for_each(|m| files_with_hashes.extend(m.files_with_hashes));
+
+            cache.hmw_manifest = CondManifest {
+                guid: man.manifest_guid,
+                files_with_hashes,
+                verified: false,
+            };
+
+            self.hash_latest = try_get_exe_hash(cache);
+            true
+        })
+    }
+
+    pub(crate) fn get_exe_dir(&self) -> &Path {
+        self.path
+            .parent()
+            .expect("self can not be created without a file added to path")
+    }
+
+    fn prep_verification_state(&mut self) -> Result<(), ()> {
+        let exe_dir = self.get_exe_dir();
+
+        let missing = global_state::Cache::with_borrow_mut(|cache| {
+            let mut missing = Vec::new();
+
+            for mod_file in cache.hmw_manifest.files_with_hashes.keys() {
+                let file_path = exe_dir.join(mod_file);
+                if !file_path.exists() {
+                    missing.push(mod_file.clone())
+                }
+            }
+
+            if !missing.is_empty() {
+                cache.hmw_manifest.verified = false;
+            }
+
+            missing
+        });
+
+        if !missing.is_empty() {
+            error!(name: LOG_ONLY, "Missing HMW files: {}", missing.join(", "));
+            global_state::UpdateCache::set(true);
+            self.mod_verification = ModFileStatus::MissingFiles(missing);
+            return Err(());
+        }
+
+        self.mod_verification = ModFileStatus::VerifyReady;
+        Ok(())
+    }
+
+    fn verify_hmw_files(&mut self) -> Result<(), ()> {
+        if matches!(
+            self.mod_verification,
+            ModFileStatus::Initial | ModFileStatus::MissingFiles(_)
+        ) && self.prep_verification_state().is_err()
+        {
+            return Ok(());
+        }
+
+        let exe_dir = self.get_exe_dir();
+        let start = std::time::Instant::now();
+
+        let outdated = global_state::Cache::with_borrow_mut(|cache| {
+            if cache.hmw_manifest.files_with_hashes.is_empty() {
+                error!("No manifest data available to verify files");
+                return Vec::new();
+            }
+
+            let file_ct =
+                NonZero::new(cache.hmw_manifest.files_with_hashes.len()).expect("early return");
+
+            let progress = ProgressBar::new("Verifying", "Files", file_ct);
+
+            let outdated = cache
+                .hmw_manifest
+                .files_with_hashes
+                .par_iter()
+                .filter_map(|(file, expected)| {
+                    let hash = hash_file_hex(&exe_dir.join(file)).unwrap_or_else(|err| {
+                        if err.kind() == ErrorKind::NotFound {
+                            error!("file: {file}, not found",);
+                        } else {
+                            error!("file: {file}, {err}",);
+                        }
+                        String::new()
+                    });
+                    progress.tick();
+                    (hash != *expected).then(|| file.clone())
+                })
+                .collect::<Vec<_>>();
+
+            cache.hmw_manifest.verified = outdated.is_empty();
+
+            progress.finish();
+            outdated
+        });
+
+        if !outdated.is_empty() {
+            error!(name: LOG_ONLY, "Outdated HMW files: {}", outdated.join(", "));
+            self.mod_verification = ModFileStatus::Outdated(outdated);
+            return Err(());
+        }
+
+        self.mod_verification = ModFileStatus::UpToDate;
+        info!(name: LOG_ONLY, "Verified files in {:#?}", start.elapsed());
+
+        global_state::UpdateCache::set(true);
+        Ok(())
     }
 
     pub fn game_file_name(&self) -> Cow<'_, str> {
@@ -313,7 +481,7 @@ impl Executor<Stdout> for CommandContext {
             Command::Console { all } => self.open_game_console(all),
             Command::GameDir => self.try_open_game_dir(),
             Command::LocalEnv => self.try_open_local_dir(),
-            Command::Version => self.print_version().await,
+            Command::Version { verify_all } => self.print_version(verify_all).await,
             Command::Quit => self.quit().await,
         }
     }
@@ -325,7 +493,7 @@ pub struct StartupData {
     pub cache_task: JoinHandle<StartupCacheContents>,
     pub splash_task: JoinHandle<io::Result<()>>,
     pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
-    pub hmw_hash_task: JoinHandle<Result<String, ResponseErr>>,
+    pub hmw_manifest_task: JoinHandle<Result<HmwManifest, ResponseErr>>,
 }
 
 #[derive(Default)]
@@ -352,7 +520,7 @@ impl CommandContext {
     ) -> (ReplHandle, Self, Receiver<Message>) {
         let (launch_res, hmw_hash_res, cache_res) = tokio::join!(
             startup_data.launch_task,
-            startup_data.hmw_hash_task,
+            startup_data.hmw_manifest_task,
             startup_data.cache_task
         );
 
@@ -380,20 +548,24 @@ impl CommandContext {
             }
         }
 
-        macro_rules! hmw_hash_err {
-            ($($arg:tt)*) => {
-                error!("Could not get latest HMW version: {}", format_args!($($arg)*))
-            }
-        }
-
         match hmw_hash_res {
-            Ok(Ok(hash_latest)) => {
-                if let Some(hash_curr) = startup_data.game.hash_curr.as_deref() {
+            Ok(Ok(latest_manifest)) => {
+                startup_data
+                    .game
+                    .conditional_condense_manifest(latest_manifest);
+
+                if startup_data.game.prep_verification_state().is_err() {
+                    splash_screen::push_message(Message::str(
+                        startup_data.game.mod_verification.to_string(),
+                    ));
+                } else if let (Some(hash_curr), Some(hash_latest)) = (
+                    startup_data.game.hash_curr.as_deref(),
+                    startup_data.game.hash_latest.as_deref(),
+                ) {
                     if hash_curr != hash_latest {
                         info!("{HmwUpdateHelp}")
                     }
                 }
-                startup_data.game.hash_latest = Some(hash_latest);
             }
             Ok(Err(err)) => hmw_hash_err!("{err}"),
             Err(err) => hmw_hash_err!("{err}"),
@@ -644,23 +816,32 @@ impl CommandContext {
         Ok(CommandHandle::Processed)
     }
 
-    async fn print_version(&mut self) -> io::Result<CommandHandle> {
+    async fn print_version(&mut self, verify_all: bool) -> io::Result<CommandHandle> {
         if self.game.hash_latest.is_none() {
             println!("{GREEN}Trying to get latest HMW version..{RESET}");
 
-            self.game.hash_latest = get_latest_hmw_hash().await.map_err(display::error).ok();
+            if let Ok(latest_manifest) = get_latest_hmw_manifest().await.map_err(display::error) {
+                self.game.conditional_condense_manifest(latest_manifest);
+            }
 
             if self.game.hash_latest.is_some() {
                 info!("Found latest HMW version")
             }
+
+            let _ = self.game.prep_verification_state();
+        }
+
+        if verify_all {
+            let _ = self.game.verify_hmw_files();
         }
 
         println!("{}", self.app);
+        println!();
         println!("{}", self.game);
         Ok(CommandHandle::Processed)
     }
 
-    async fn modify_cache(&self, arg: CacheCmd) -> io::Result<CommandHandle> {
+    async fn modify_cache(&mut self, arg: CacheCmd) -> io::Result<CommandHandle> {
         if self.local_dir.is_none() {
             error!("Can not create cache with out a valid save directory");
             return Ok(CommandHandle::Processed);
@@ -670,10 +851,20 @@ impl CommandContext {
             global_state::Cache::clear();
         }
 
-        let cache_modified = build_cache()
+        let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
+
+        let mut cache_modified = build_cache()
             .await
             .map_err(|err| error!("{err}, cache remains unchanged"))
             .is_ok();
+
+        match hmw_manifest_task.await {
+            Ok(Ok(latest_manifest)) => {
+                cache_modified |= self.game.conditional_condense_manifest(latest_manifest);
+            }
+            Ok(Err(err)) => hmw_hash_err!("{err}"),
+            Err(err) => hmw_hash_err!("{err}"),
+        };
 
         global_state::UpdateCache::and_modify(|curr| curr || cache_modified);
 

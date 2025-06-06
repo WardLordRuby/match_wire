@@ -5,14 +5,16 @@ use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 pub use strategies::{FilterPreProcess, GameStats, process_stats};
 
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, Spinner, command_err,
+    LOG_ONLY, ResponseErr, STATUS_OK, command_err,
     commands::handler::{CmdErr, ReplHandle},
     models::{
         cli::{Filters, Region, Source},
         json_data::{ContCode, GetInfo, LocationApiResponse, ServerInfo},
     },
     parse_hostname,
-    utils::display::{DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural},
+    utils::display::{
+        DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural, indicator::Spinner,
+    },
 };
 
 use std::{
