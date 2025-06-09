@@ -268,11 +268,13 @@ pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes
         }
     });
 
-    info!(
-        "Found region data for {} new {}",
-        found_ct,
-        SingularPlural(found_ct, "hoster", "hosters")
-    );
+    if found_ct > 0 {
+        info!(
+            "Cached region data for {} new {}",
+            found_ct,
+            SingularPlural(found_ct, "hoster", "hosters")
+        );
+    }
 
     let failure_ct = ips_requested - found_ct;
     if failure_ct > 0 {

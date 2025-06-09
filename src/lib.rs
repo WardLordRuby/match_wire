@@ -534,11 +534,17 @@ impl NonZeroDuration {
 /// `($ident:ident, $limit:usize, $interval:Duration)`
 ///
 /// ```compile_fail
-/// match_wire::impl_rate_limit_config!(LimitZero, 0, std::time::Duration::from_secs(60)); // shouldn't compile!
+/// # use match_wire::impl_rate_limit_config;
+/// # use std::time::Duration;
+/// // Limit must be non-zero
+/// impl_rate_limit_config!(LimitZero, 0, Duration::from_secs(60)); // doesn't compile!
 /// ```
 ///
 /// ```compile_fail
-/// match_wire::impl_rate_limit_config!(IntervalZero, 60, std::time::Duration::from_secs(0)); // shouldn't compile!
+/// # use match_wire::impl_rate_limit_config;
+/// # use std::time::Duration;
+/// // Interval must be non-zero
+/// impl_rate_limit_config!(IntervalZero, 60, Duration::from_secs(0)); // doesn't compile!
 /// ```
 #[macro_export]
 macro_rules! impl_rate_limit_config {
@@ -573,6 +579,11 @@ impl<T: RateLimitConfig> RateLimiter<T> {
     #[inline]
     fn elapsed(&self) -> Option<Duration> {
         self.start.map(|start| start.elapsed())
+    }
+
+    pub fn remainder(&self) -> Option<Duration> {
+        self.start
+            .and_then(|start| self.interval.checked_sub(start.elapsed()))
     }
 
     /// This method is used to advance the internal state and return if it is ok to send an API request. Do

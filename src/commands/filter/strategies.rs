@@ -14,7 +14,7 @@ use crate::{
         cli::{Filters, Source},
         json_data::{GetInfo, HostData, ServerInfo},
     },
-    utils::{caching::AddrMap, global_state},
+    utils::global_state,
 };
 
 use std::{
@@ -240,6 +240,7 @@ impl GameStats {
     }
 }
 
+#[derive(Default)]
 struct Requests {
     info: JoinSet<Result<Server, GetInfoMetaData>>,
     unseen_ips: Vec<IpAddr>,
@@ -429,58 +430,32 @@ impl StatTrackStrategy {
     }
 
     fn queue_requests(client: &Client, servers: impl Iterator<Item = Sourced>) -> Requests {
-        fn insert(map: &mut AddrMap, ip: IpAddr, port: u16) -> (bool, bool) {
-            let (mut unique_ip, mut unique_socket) = (false, false);
-            map.entry(ip)
-                .and_modify(|ports| {
-                    if !ports.contains(&port) {
-                        unique_socket = true;
-                        ports.push(port);
-                    }
-                })
-                .or_insert_with(|| {
-                    (unique_ip, unique_socket) = (true, true);
-                    vec![port]
-                });
-            (unique_ip, unique_socket)
-        }
-
         let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
 
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
+        let mut res = Requests::default();
 
-        let (info, unseen_ips, server_ct) = global_state::Cache::with_borrow(|cache| {
-            servers.fold(
-                (JoinSet::new(), Vec::new(), 0),
-                |(mut info_set, mut unseen_ips, ct), server| {
-                    let socket_addr = server.socket_addr();
-                    let (unique_ip, unique_socket) =
-                        insert(&mut seen, socket_addr.ip(), socket_addr.port());
+        global_state::Cache::with_borrow(|cache| {
+            for server in servers {
+                let socket_addr = server.socket_addr();
+                if seen.insert(socket_addr) {
+                    res.info.spawn(try_get_info(
+                        Request::New(server),
+                        client.clone(),
+                        server_info_endpoint,
+                    ));
+                } else {
+                    res.duplicates += 1;
+                }
 
-                    if unique_socket {
-                        info_set.spawn(try_get_info(
-                            Request::New(server),
-                            client.clone(),
-                            server_info_endpoint,
-                        ));
-                    }
-                    if unique_ip {
-                        let ip = socket_addr.ip();
-                        if !cache.ip_to_region.contains_key(&ip) {
-                            unseen_ips.push(ip);
-                        }
-                    }
-
-                    (info_set, unseen_ips, ct + 1)
-                },
-            )
+                let ip = socket_addr.ip();
+                if !cache.ip_to_region.contains_key(&ip) {
+                    res.unseen_ips.push(ip);
+                }
+            }
         });
 
-        Requests {
-            duplicates: server_ct - info.len(),
-            info,
-            unseen_ips,
-        }
+        res
     }
 
     fn collect_to_servers(

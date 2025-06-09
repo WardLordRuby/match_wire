@@ -578,13 +578,15 @@ pub(crate) async fn try_batched_location_lookup<'a>(
     let mut limiter = LOCATION_API_LIMITER.get();
 
     for batch in ips.chunks(BATCH_CAP) {
-        if limiter.within_limit() {
-            ips_requested += batch.len();
-            requests.push(tokio::spawn(location_requests(
-                serde_json::to_string(batch).expect("`[IpAddr]` is always fine to serialize"),
-                client.clone(),
-            )));
+        if !limiter.within_limit() {
+            break;
         }
+
+        ips_requested += batch.len();
+        requests.push(tokio::spawn(location_requests(
+            serde_json::to_string(batch).expect("`[IpAddr]` is always fine to serialize"),
+            client.clone(),
+        )));
     }
 
     let mut responses = Vec::with_capacity(requests.len());
