@@ -99,7 +99,10 @@ where
 pub(crate) type ContCode = [u8; 2];
 
 #[derive(Deserialize, Debug)]
-pub(crate) struct LocationApiResponse {
+pub(crate) struct LocationApiResponse(pub(crate) Vec<IpLocation>);
+
+#[derive(Deserialize, Debug)]
+pub(crate) struct IpLocation {
     #[serde(rename = "continentCode")]
     #[serde(deserialize_with = "deserialize_country_code")]
     pub(crate) cont_code: Option<ContCode>,

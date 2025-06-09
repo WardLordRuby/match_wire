@@ -2,7 +2,7 @@ pub(crate) mod indicator;
 pub mod table;
 
 use crate::{
-    CRATE_NAME, CRATE_VER, LOG_ONLY, ResponseErr,
+    CRATE_NAME, CRATE_VER, LOG_ONLY, RateLimitConfig, RateLimiter, ResponseErr,
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, GameDetails, ModFileStatus},
@@ -551,6 +551,21 @@ pub(crate) struct Space(pub(crate) usize);
 impl Display for Space {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write_div_str!(f, ' ', self.0)
+    }
+}
+
+impl<T: RateLimitConfig> Display for RateLimiter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.limited() {
+            write!(
+                f,
+                "{} service rate limited for another {} seconds",
+                T::DISP_NAME,
+                (self.interval - self.elapsed().unwrap_or_default()).as_secs()
+            )
+        } else {
+            write!(f, "{} service not currently rate limited", T::DISP_NAME)
+        }
     }
 }
 

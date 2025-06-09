@@ -1,9 +1,11 @@
 use super::{
-    Addressable, DEFAULT_INFO_RETRIES, GetInfoMetaData, RETRY_TIME_SCALE, Request, Server, Sourced,
-    UnresponsiveCounter, strategies::FilterStrategy, try_get_info, try_location_lookup,
+    Addressable, DEFAULT_INFO_RETRIES, GetInfoMetaData, LocationBatchRes, RETRY_TIME_SCALE,
+    Request, Server, Sourced, UnresponsiveCounter, strategies::FilterStrategy, try_get_info,
 };
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, make_slice_ascii_lowercase,
+    LOG_ONLY, ResponseErr, STATUS_OK,
+    commands::filter::try_batched_location_lookup,
+    make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Source},
         json_data::{ContCode, HostData},
@@ -18,10 +20,7 @@ use crate::{
     },
 };
 
-use std::{
-    collections::HashSet,
-    net::{IpAddr, SocketAddr},
-};
+use std::{collections::HashSet, net::SocketAddr};
 
 use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RED, RESET};
 use reqwest::Client;
@@ -247,50 +246,39 @@ pub(super) async fn join_info_requests<R>(
 }
 
 /// Returns if [`global_state::Cache`] was modified
-pub(super) async fn join_region_requests(
-    mut requests: JoinSet<Result<(IpAddr, ContCode), ResponseErr>>,
-) -> bool {
-    if requests.is_empty() {
+pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes) -> bool {
+    if results.is_empty() {
         return false;
     }
 
-    let task_ct = requests.len();
-    let mut failure_count = 0_usize;
-    let mut new_cont_codes = Vec::with_capacity(task_ct);
-
-    while let Some(res) = requests.join_next().await {
-        match res {
-            Ok(Ok(addr_map)) => {
-                new_cont_codes.push(addr_map);
-            }
-            Ok(Err(err)) => {
-                error!(name: LOG_ONLY, "{err}");
-                failure_count += 1
-            }
-            Err(err) => {
-                error!(name: LOG_ONLY, "{err:?}");
-                failure_count += 1
+    let mut found_ct = 0;
+    let mut cache_modified = false;
+    global_state::Cache::with_borrow_mut(|cache| {
+        for (ips, results) in results {
+            for (ip, location_res) in ips.iter().zip(results) {
+                if let Some(code) = location_res.cont_code {
+                    found_ct += 1;
+                    cache_modified |= cache.ip_to_region.insert(*ip, code).is_none();
+                } else if let Some(err) = location_res.message {
+                    error!(name: LOG_ONLY, "API err: {err}, for Ip: {ip}")
+                } else {
+                    error!(name: LOG_ONLY, "Unknown API error, for Ip: {ip}")
+                }
             }
         }
-    }
-
-    let cache_modified = !new_cont_codes.is_empty();
-    if cache_modified {
-        global_state::Cache::with_borrow_mut(|cache| {
-            cache.ip_to_region.extend(new_cont_codes);
-        });
-    }
+    });
 
     info!(
-        "Made {} new location {}",
-        task_ct,
-        SingularPlural(task_ct, "request", "requests")
+        "Found region data for {} new {}",
+        found_ct,
+        SingularPlural(found_ct, "hoster", "hosters")
     );
 
-    if failure_count > 0 {
+    let failure_ct = ips_requested - found_ct;
+    if failure_ct > 0 {
         println!(
-            "{CLEAR_LINE}{RED}Failed to resolve location for {failure_count} server {}{RESET}",
-            SingularPlural(failure_count, "hoster", "hosters")
+            "{CLEAR_LINE}{RED}Failed to resolve location for {failure_ct} server {}{RESET}",
+            SingularPlural(failure_ct, "hoster", "hosters")
         )
     }
 
@@ -317,9 +305,9 @@ where
         sourced_servers,
         Vec::with_capacity((sourced_servers.len() as f32 * 0.6).round() as usize),
     );
-    let mut tasks = JoinSet::new();
     let mut check_again = Vec::new();
     let mut new_lookups = HashSet::new();
+    let mut new_lookups_vec = Vec::new();
 
     global_state::Cache::with_borrow(|cache| {
         for sourced_data in servers {
@@ -331,26 +319,28 @@ where
                 continue;
             }
             if new_lookups.insert(socket_addr.ip()) {
-                trace!("Requesting location data for: {}", socket_addr.ip());
-                tasks.spawn(try_location_lookup(socket_addr.ip(), client.clone()));
+                new_lookups_vec.push(socket_addr.ip());
             }
             check_again.push(sourced_data)
         }
     });
 
-    let cache_modified = join_region_requests(tasks).await;
+    let cache_modified =
+        process_region_requests(try_batched_location_lookup(&new_lookups_vec, client).await);
 
-    global_state::Cache::with_borrow(|cache| {
-        for sourced_data in check_again {
-            if cache
-                .ip_to_region
-                .get(&sourced_data.socket_addr().ip())
-                .is_some_and(|cached_region| regions.contains(cached_region))
-            {
-                sourced_servers.push(sourced_data)
+    if cache_modified {
+        global_state::Cache::with_borrow(|cache| {
+            for sourced_data in check_again {
+                if cache
+                    .ip_to_region
+                    .get(&sourced_data.socket_addr().ip())
+                    .is_some_and(|cached_region| regions.contains(cached_region))
+                {
+                    sourced_servers.push(sourced_data)
+                }
             }
-        }
-    });
+        });
+    }
 
     println!(
         "{CLEAR_LINE}{} match the input {}",

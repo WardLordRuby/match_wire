@@ -1,18 +1,18 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY, ResponseErr, client_with_timeout,
+    CACHED_DATA, CRATE_VER, LOG_ONLY, client_with_timeout,
     commands::{
         filter::{
             Addressable, DEFAULT_SOURCES, GetInfoMetaData, Server, Sourced,
-            ops::{get_sourced_servers, spawn_info_requests},
+            ops::{get_sourced_servers, process_region_requests, spawn_info_requests},
             strategies::FastStrategy,
-            try_location_lookup,
+            try_batched_location_lookup,
         },
         handler::CommandContext,
         reconnect::HISTORY_MAX,
     },
     models::{
         cli::Source,
-        json_data::{CacheFile, ContCode, ContCodeMapWrapper},
+        json_data::{CacheFile, ContCodeMapWrapper},
     },
     utils::{
         display::indicator::Spinner,
@@ -22,7 +22,7 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{self, ErrorKind},
     net::{IpAddr, SocketAddr},
     path::Path,
@@ -125,20 +125,6 @@ pub async fn build_cache() -> Result<(), &'static str> {
         servers
     }
 
-    async fn join_region_requests(
-        mut requests: JoinSet<Result<(IpAddr, ContCode), ResponseErr>>,
-    ) -> Vec<(IpAddr, ContCode)> {
-        let mut regions = Vec::with_capacity(requests.len());
-        while let Some(res) = requests.join_next().await {
-            match res {
-                Ok(Ok(server)) => regions.push(server),
-                Ok(Err(err)) => error!(name: LOG_ONLY, "{err}"),
-                Err(err) => error!(name: LOG_ONLY, "{err:?}"),
-            }
-        }
-        regions
-    }
-
     let splash_screen_visible = {
         #[cfg(debug_assertions)]
         {
@@ -173,7 +159,9 @@ pub async fn build_cache() -> Result<(), &'static str> {
         }
     };
 
-    let mut region_requests = JoinSet::new();
+    let mut new_lookups = HashSet::new();
+    let mut new_lookups_vec = Vec::new();
+
     global_state::Cache::with_borrow_mut(|cache| {
         let mut ip_to_region = servers
             .iter()
@@ -184,7 +172,9 @@ pub async fn build_cache() -> Result<(), &'static str> {
                     .get(&server_ip)
                     .map(|&region| (server_ip, region))
                     .or_else(|| {
-                        region_requests.spawn(try_location_lookup(server_ip, client.clone()));
+                        if new_lookups.insert(server_ip) {
+                            new_lookups_vec.push(server_ip);
+                        }
                         None
                     })
             })
@@ -195,20 +185,18 @@ pub async fn build_cache() -> Result<(), &'static str> {
 
     let (_, info_requests) = spawn_info_requests(servers.into_iter(), false, &client);
 
-    let (regions, servers) = tokio::join!(
-        join_region_requests(region_requests),
+    let (region_data, servers) = tokio::join!(
+        try_batched_location_lookup(&new_lookups_vec, &client),
         join_info_requests(info_requests)
     );
+
+    process_region_requests(region_data);
 
     global_state::Cache::with_borrow_mut(|cache| {
         cache.clear_servers();
 
         for server in servers {
             cache.push(server);
-        }
-
-        for (ip, region) in regions {
-            cache.ip_to_region.insert(ip, region);
         }
 
         cache.created = SystemTime::now();

@@ -5,11 +5,12 @@ use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 pub use strategies::{FilterPreProcess, GameStats, process_stats};
 
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK, command_err,
+    LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, command_err,
     commands::handler::{CmdErr, ReplHandle},
+    impl_rate_limit_config,
     models::{
         cli::{Filters, Region, Source},
-        json_data::{ContCode, GetInfo, LocationApiResponse, ServerInfo},
+        json_data::{ContCode, GetInfo, IpLocation, LocationApiResponse, ServerInfo},
     },
     parse_hostname,
     utils::display::{
@@ -18,7 +19,7 @@ use crate::{
 };
 
 use std::{
-    borrow::Cow,
+    cell::Cell,
     collections::HashSet,
     fmt::Display,
     fs::File,
@@ -28,12 +29,12 @@ use std::{
     time::Duration,
 };
 
-use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RESET, YELLOW};
+use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RED, RESET, YELLOW};
 use reqwest::Client;
 use tracing::{error, info, instrument, trace, warn};
 
-const MASTER_LOCATION_URL: &str = "http://ip-api.com/json/";
-const REQUESTED_FIELDS: &str = "?fields=message,continentCode";
+const BATCH_LOCATION_URL: &str = "http://ip-api.com/batch?fields=message,continentCode";
+impl_rate_limit_config!(Location, 15, Duration::from_secs(60));
 
 const FAVORITES_LOC: &str = "players2";
 const FAVORITES: &str = "favourites.json";
@@ -99,7 +100,9 @@ pub(crate) async fn build_favorites(
 
     if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
         println!(
-            "{CLEAR_LINE}{YELLOW}NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites{RESET}"
+            "{CLEAR_LINE}{YELLOW}\
+            NOTE: Currently the in game server browser breaks when you add more than 100 servers to favorites\
+            {RESET}"
         )
     }
 
@@ -540,36 +543,75 @@ impl Source {
     }
 }
 
-// MARK: TODO
-// Current api provider limits to 45 requests per min, we need a way to limit batch sizes
+pub(super) type LocationBatchRes<'a> = (Vec<(&'a [IpAddr], Vec<IpLocation>)>, usize);
+
+/// This API request is rate limited, see: [`Location`] for set limits. Returns the aligned data and the number of
+/// `IpAddr`s that were included in the batched API requests. The return type is what [`process_region_requests`] expects.
+///
+/// [`process_region_requests`]: ops::process_region_requests
 #[instrument(level = "trace", skip_all)]
-pub(crate) async fn try_location_lookup(
-    ip: IpAddr,
-    client: Client,
-) -> Result<(IpAddr, ContCode), ResponseErr> {
-    let location_api_url = format!("{MASTER_LOCATION_URL}{ip}{REQUESTED_FIELDS}");
-
-    let api_response = client.get(location_api_url).send().await?;
-
-    if api_response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status("IP api", api_response));
+pub(crate) async fn try_batched_location_lookup<'a>(
+    ips: &'a [IpAddr],
+    client: &Client,
+) -> LocationBatchRes<'a> {
+    const BATCH_CAP: usize = 100;
+    thread_local! {
+        static LOCATION_API_LIMITER: Cell<RateLimiter<Location>> = const { Cell::new(RateLimiter::<Location>::new()) };
     }
 
-    let code = match api_response.json::<LocationApiResponse>().await? {
-        LocationApiResponse {
-            cont_code: Some(code),
-            ..
-        } => code,
-        LocationApiResponse { message, .. } => {
-            return Err(ResponseErr::Other(
-                message
-                    .map(Cow::Owned)
-                    .unwrap_or(Cow::Borrowed("unknown error")),
-            ));
-        }
-    };
+    async fn location_requests(
+        batch: String,
+        client: Client,
+    ) -> Result<Vec<IpLocation>, ResponseErr> {
+        let api_response = client.post(BATCH_LOCATION_URL).body(batch).send().await?;
 
-    Ok((ip, code))
+        if api_response.status() != STATUS_OK {
+            return Err(ResponseErr::bad_status("IP api", api_response));
+        }
+
+        let LocationApiResponse(api_data) = api_response.json::<LocationApiResponse>().await?;
+        Ok(api_data)
+    }
+
+    let mut requests = Vec::with_capacity(ips.len().div_ceil(BATCH_CAP));
+    let mut ips_requested = 0;
+    let mut limiter = LOCATION_API_LIMITER.get();
+
+    for batch in ips.chunks(BATCH_CAP) {
+        if limiter.within_limit() {
+            ips_requested += batch.len();
+            requests.push(tokio::spawn(location_requests(
+                serde_json::to_string(batch).expect("`[IpAddr]` is always fine to serialize"),
+                client.clone(),
+            )));
+        }
+    }
+
+    let mut responses = Vec::with_capacity(requests.len());
+    for (request, batch) in requests.into_iter().zip(ips.chunks(BATCH_CAP)) {
+        match request.await {
+            Ok(Ok(data)) => {
+                if batch.len() == data.len() {
+                    responses.push((batch, data));
+                } else {
+                    error!(
+                        "Location API returned unexpected data, discarded data for: {}",
+                        DisplayCountOf(batch.len(), "hoster", "hosters")
+                    );
+                    error!(name: LOG_ONLY, "requested data for: {} ips, got data for: {} ips", batch.len(), data.len());
+                }
+            }
+            Ok(Err(err)) => error!(name: LOG_ONLY, "{err}"),
+            Err(err) => error!(name: LOG_ONLY, "{err}"),
+        }
+    }
+
+    if limiter.limited() {
+        println!("{CLEAR_LINE}{RED}{limiter}{RESET}")
+    }
+
+    LOCATION_API_LIMITER.set(limiter);
+    (responses, ips_requested)
 }
 
 #[instrument(level = "trace", skip_all)]

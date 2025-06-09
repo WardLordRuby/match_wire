@@ -36,8 +36,10 @@ use crate::{
 use std::{
     borrow::Cow,
     io::{self, BufRead, BufReader},
+    marker::PhantomData,
+    num::NonZero,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use clap::CommandFactory;
@@ -494,4 +496,105 @@ pub(crate) fn try_fit_table(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+pub struct RateLimiter<T> {
+    ct: usize,
+    start: Option<Instant>,
+    limit: usize,
+    interval: Duration,
+    _marker: PhantomData<T>,
+}
+
+pub trait RateLimitConfig {
+    const LIMIT: NonZero<usize>;
+    const INTERVAL: NonZeroDuration;
+    const DISP_NAME: &str;
+}
+
+#[derive(Clone, Copy)]
+pub struct NonZeroDuration(Duration);
+
+impl NonZeroDuration {
+    pub const fn new(duration: Duration) -> Option<Self> {
+        if duration.is_zero() {
+            None
+        } else {
+            Some(Self(duration))
+        }
+    }
+
+    pub const fn get(&self) -> Duration {
+        self.0
+    }
+}
+
+/// `$ident` is the struct and display name of the generated `RateLimitConfig`\
+/// `($ident:ident, $limit:usize, $interval:Duration)`
+///
+/// ```compile_fail
+/// match_wire::impl_rate_limit_config!(LimitZero, 0, std::time::Duration::from_secs(60)); // shouldn't compile!
+/// ```
+///
+/// ```compile_fail
+/// match_wire::impl_rate_limit_config!(IntervalZero, 60, std::time::Duration::from_secs(0)); // shouldn't compile!
+/// ```
+#[macro_export]
+macro_rules! impl_rate_limit_config {
+    ($ident:ident, $limit:expr, $interval:expr) => {
+        #[derive(Clone, Copy)]
+        pub(crate) struct $ident;
+
+        impl $crate::RateLimitConfig for $ident {
+            const LIMIT: std::num::NonZero<usize> = std::num::NonZero::new($limit).unwrap();
+            const INTERVAL: $crate::NonZeroDuration =
+                $crate::NonZeroDuration::new($interval).unwrap();
+            const DISP_NAME: &str = stringify!($ident);
+        }
+
+        const _: () = assert!(!$interval.is_zero(), "Interval must be non-zero");
+        const _: () = assert!($limit != 0, "Limit must be non-zero");
+    };
+}
+
+impl<T: RateLimitConfig> RateLimiter<T> {
+    #[allow(clippy::new_without_default)] // prefer new since it can be const
+    pub const fn new() -> Self {
+        Self {
+            ct: 0,
+            start: None,
+            limit: T::LIMIT.get(),
+            interval: T::INTERVAL.get(),
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn elapsed(&self) -> Option<Duration> {
+        self.start.map(|start| start.elapsed())
+    }
+
+    /// This method is used to advance the internal state and return if it is ok to send an API request. Do
+    /// **NOT** use to find if the limit has been reached when not also attempting to send a request.
+    /// Limited status can be found with [`Self::limited`].
+    pub fn within_limit(&mut self) -> bool {
+        if self.ct == 0 {
+            self.start = Some(Instant::now())
+        } else if self.ct >= self.limit {
+            return if self.elapsed().unwrap() > self.interval {
+                self.ct = 0;
+                self.within_limit()
+            } else {
+                false
+            };
+        }
+
+        self.ct += 1;
+        true
+    }
+
+    pub fn limited(&self) -> bool {
+        !(self.ct < self.limit || self.elapsed().expect("limit can not be 0") > self.interval)
+    }
 }

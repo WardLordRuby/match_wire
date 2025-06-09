@@ -3,16 +3,16 @@ use super::{
     Request, Server, Sourced, ops::*, try_get_info,
 };
 use crate::{
-    ResponseErr, client_with_timeout, command_err,
+    client_with_timeout, command_err,
     commands::{
-        filter::try_location_lookup,
+        filter::try_batched_location_lookup,
         handler::{CmdErr, ReplHandle},
     },
     display::{indicator::Spinner, table::DisplaySourceStatsInner},
     elide,
     models::{
         cli::{Filters, Source},
-        json_data::{ContCode, GetInfo, HostData, ServerInfo},
+        json_data::{GetInfo, HostData, ServerInfo},
     },
     utils::{caching::AddrMap, global_state},
 };
@@ -242,7 +242,7 @@ impl GameStats {
 
 struct Requests {
     info: JoinSet<Result<Server, GetInfoMetaData>>,
-    region: JoinSet<Result<(IpAddr, ContCode), ResponseErr>>,
+    unseen_ips: Vec<IpAddr>,
     duplicates: usize,
 }
 
@@ -341,7 +341,7 @@ impl FilterStrategy for StatTrackStrategy {
                 .map(Sourced::addr_copy),
         );
 
-        let ((info_map, mod_info), mod_region) = tokio::join!(
+        let ((info_map, mod_info), regions) = tokio::join!(
             join_info_requests(
                 requests.info,
                 &args,
@@ -352,10 +352,10 @@ impl FilterStrategy for StatTrackStrategy {
                     map.insert(server.socket_addr(), server.info);
                 },
             ),
-            join_region_requests(requests.region)
+            try_batched_location_lookup(&requests.unseen_ips, &client)
         );
 
-        let mut cache_modified = mod_info || mod_region;
+        let mut cache_modified = process_region_requests(regions) || mod_info;
 
         let source_stats = stat_track.get_source_stats(&info_map);
         let mut servers = stat_track.collect_to_servers(&[HMW_ID], info_map);
@@ -449,10 +449,10 @@ impl StatTrackStrategy {
 
         let mut seen = HashMap::new();
 
-        let (info, region, server_ct) = global_state::Cache::with_borrow(|cache| {
+        let (info, unseen_ips, server_ct) = global_state::Cache::with_borrow(|cache| {
             servers.fold(
-                (JoinSet::new(), JoinSet::new(), 0),
-                |(mut info_set, mut region_set, ct), server| {
+                (JoinSet::new(), Vec::new(), 0),
+                |(mut info_set, mut unseen_ips, ct), server| {
                     let socket_addr = server.socket_addr();
                     let (unique_ip, unique_socket) =
                         insert(&mut seen, socket_addr.ip(), socket_addr.port());
@@ -467,11 +467,11 @@ impl StatTrackStrategy {
                     if unique_ip {
                         let ip = socket_addr.ip();
                         if !cache.ip_to_region.contains_key(&ip) {
-                            region_set.spawn(try_location_lookup(ip, client.clone()));
+                            unseen_ips.push(ip);
                         }
                     }
 
-                    (info_set, region_set, ct + 1)
+                    (info_set, unseen_ips, ct + 1)
                 },
             )
         });
@@ -479,7 +479,7 @@ impl StatTrackStrategy {
         Requests {
             duplicates: server_ct - info.len(),
             info,
-            region,
+            unseen_ips,
         }
     }
 

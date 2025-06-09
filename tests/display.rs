@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod test {
     use match_wire::{
         H2M_MAX_CLIENT_NUM,
         commands::filter::{GameStats, Server, Sourced, process_stats},

@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod test {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use match_wire::{commands::launch_h2m::HostName, strip_ansi_private_modes};
