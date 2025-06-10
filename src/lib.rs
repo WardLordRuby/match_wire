@@ -45,6 +45,7 @@ use std::{
 use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
+use pgp::composed::{CleartextSignedMessage, Deserializable, SignedPublicKey};
 use repl_oxide::ansi_code::{RED, RESET};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -61,7 +62,6 @@ pub(crate) const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
 const MOD_FILES_MODULE_NAME: &str = "mod";
-// const MOD_FILES_LATEST_VER: &str = "1.1";
 
 pub const H2M_MAX_CLIENT_NUM: i64 = 18;
 pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
@@ -225,6 +225,8 @@ pub mod splash_screen {
 pub enum ResponseErr {
     Reqwest(reqwest::Error),
     Status(&'static str, reqwest::StatusCode),
+    Pgp(pgp::errors::Error),
+    Serialize(&'static str, serde_json::Error),
     Other(Cow<'static, str>),
 }
 
@@ -241,6 +243,12 @@ impl ResponseErr {
 impl From<reqwest::Error> for ResponseErr {
     fn from(err: reqwest::Error) -> Self {
         Self::Reqwest(err)
+    }
+}
+
+impl From<pgp::errors::Error> for ResponseErr {
+    fn from(err: pgp::errors::Error) -> Self {
+        Self::Pgp(err)
     }
 }
 
@@ -276,16 +284,48 @@ pub(crate) fn client_with_timeout(secs: u64) -> Client {
 
 pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
     let client = client_with_timeout(6);
-    let response = client
-        .get(global_state::Endpoints::hmw_manifest())
-        .send()
-        .await?;
 
-    if response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status("HMW manifest", response));
+    let (manifest_response, public_key_response) = tokio::try_join!(
+        client.get(global_state::Endpoints::hmw_manifest()).send(),
+        client
+            .get(global_state::Endpoints::hmw_pgp_public_key())
+            .send()
+    )?;
+
+    if manifest_response.status() != STATUS_OK {
+        return Err(ResponseErr::bad_status("HMW manifest", manifest_response));
     }
 
-    response.json::<HmwManifest>().await.map_err(Into::into)
+    if public_key_response.status() != STATUS_OK {
+        return Err(ResponseErr::bad_status(
+            "HMW public PGP key",
+            manifest_response,
+        ));
+    }
+
+    let (mut manifest_string, key_string) =
+        tokio::try_join!(manifest_response.text(), public_key_response.text())?;
+
+    // MARK: XXX
+    // Remove this manual addition of the rfc9580 7.1 Cleartext header once HMW manifest is compliant
+    const CLEARTEXT_HEADER: &str = "-----BEGIN PGP SIGNED MESSAGE-----";
+    const PGP_SIG_HEADER: &str = "-----BEGIN PGP SIGNATURE-----";
+    if !manifest_string.starts_with(CLEARTEXT_HEADER) {
+        let split_i = manifest_string
+            .find(PGP_SIG_HEADER)
+            .ok_or_else(|| ResponseErr::other("Manifest did not contain PGP signature"))?;
+
+        let (signed_msg, signature) = manifest_string.split_at(split_i);
+        manifest_string = format!("{CLEARTEXT_HEADER}\nHash: SHA256\n\n{signed_msg}\n{signature}");
+    }
+
+    let (public_key, _headers_public) = SignedPublicKey::from_string(&key_string)?;
+    let (msg, _headers_msg) = CleartextSignedMessage::from_string(&manifest_string)?;
+
+    msg.verify(&public_key)?;
+
+    serde_json::from_str::<HmwManifest>(&msg.signed_text())
+        .map_err(|err| ResponseErr::Serialize("HMW Manifest", err))
 }
 
 pub(crate) fn open_dir(path: &Path) {

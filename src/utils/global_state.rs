@@ -120,7 +120,8 @@ impl Cache {
 pub struct Endpoints {
     iw4_master_server: Cow<'static, str>,
     hmw_master_server: Cow<'static, str>,
-    hmw_manifest: Cow<'static, str>,
+    hmw_manifest_signed: Cow<'static, str>,
+    hmw_pgp_public_key: Cow<'static, str>,
 
     // `hmw_download` only used on release builds
     #[allow(dead_code)]
@@ -141,7 +142,8 @@ impl Endpoints {
         Self::set(Self {
             iw4_master_server: Cow::Borrowed("https://master.iw4.zip/instance"),
             hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
-            hmw_manifest: Cow::Borrowed("https://price.horizonmw.org/manifest.json"),
+            hmw_manifest_signed: Cow::Borrowed("https://ms.horizonmw.org/manifest"),
+            hmw_pgp_public_key: Cow::Borrowed("https://raw.githubusercontent.com/HMW-mod/hmw-distribution/refs/heads/master/HorizonMW_0x40C3E02A_public.asc"),
             hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
             server_info_endpoint: Cow::Borrowed("/getInfo"),
         })
@@ -202,7 +204,11 @@ impl Endpoints {
     }
     #[inline]
     pub(crate) fn hmw_manifest() -> &'static str {
-        Self::get(|endpoints| &endpoints.hmw_manifest)
+        Self::get(|endpoints| &endpoints.hmw_manifest_signed)
+    }
+    #[inline]
+    pub(crate) fn hmw_pgp_public_key() -> &'static str {
+        Self::get(|endpoints| &endpoints.hmw_pgp_public_key)
     }
     #[inline]
     pub(crate) fn iw4_master_server() -> &'static str {

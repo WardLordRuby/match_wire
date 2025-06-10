@@ -122,6 +122,8 @@ impl Display for ResponseErr {
             ResponseErr::Reqwest(err) => write!(f, "{err}"),
             ResponseErr::Status(ctx, status) => write!(f, "{ctx}: {status}"),
             ResponseErr::Other(msg) => write!(f, "{msg}"),
+            ResponseErr::Pgp(err) => write!(f, "PGP verification failed: {err}"),
+            ResponseErr::Serialize(ctx, err) => write!(f, "{ctx} formatting has changed: {err}"),
         }
     }
 }
