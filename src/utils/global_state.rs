@@ -10,14 +10,14 @@ use super::{
     },
 };
 use crate::{
-    LOG_ONLY, STATUS_OK, StartupInfo, client_with_timeout,
+    LOG_ONLY, StartupInfo,
     commands::{
         filter::{FilterPreProcess, Server, process_stats},
-        handler::{AppDetails, CommandSender, Message, ReplHandle},
+        handler::{CommandSender, Message, ReplHandle},
         launch_h2m::{HostName, WinApiErr, game_open},
     },
-    models::json_data::{CacheFile, CondManifest},
-    splash_screen, try_fit_table,
+    models::json_data::{CacheFile, CondManifest, Version},
+    splash_screen, try_fit_table, try_parse_signed_json,
 };
 
 use std::{
@@ -35,6 +35,11 @@ use repl_oxide::ansi_code::{RESET, YELLOW};
 use tracing::{error, info};
 use windows_sys::Win32::Foundation::HWND;
 use winptyrs::PTY;
+
+const MATCH_WIRE_PUBLIC_PGP_KEY: &str =
+    "https://gist.githubusercontent.com/WardLordRuby/ca630bae78429d56a9484a099ddbefde/raw";
+const SIGNED_STARTUP_INFO: &str =
+    "https://gist.githubusercontent.com/WardLordRuby/795d840e208df2de08735c152889b2e4/raw";
 
 type IDMapsInner = (
     HashMap<&'static str, &'static str>,
@@ -120,8 +125,8 @@ impl Cache {
 pub struct Endpoints {
     iw4_master_server: Cow<'static, str>,
     hmw_master_server: Cow<'static, str>,
-    hmw_manifest_signed: Cow<'static, str>,
-    hmw_pgp_public_key: Cow<'static, str>,
+    hmw_manifest_signed: Option<String>,
+    hmw_pgp_public_key: Option<String>,
 
     // `hmw_download` only used on release builds
     #[allow(dead_code)]
@@ -136,43 +141,38 @@ impl Endpoints {
         ENDPOINTS.with(|cell| cell.set(endpoints))
     }
 
-    fn set_default<D: Display>(ctx: &'static str, err: D) -> AppDetails {
-        splash_screen::push_message(Message::error(format!("{ctx}: {err}")));
-
+    fn set_default() {
         Self::set(Self {
             iw4_master_server: Cow::Borrowed("https://master.iw4.zip/instance"),
             hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
-            hmw_manifest_signed: Cow::Borrowed("https://ms.horizonmw.org/manifest"),
-            hmw_pgp_public_key: Cow::Borrowed("https://raw.githubusercontent.com/HMW-mod/hmw-distribution/refs/heads/master/HorizonMW_0x40C3E02A_public.asc"),
+            hmw_manifest_signed: None,
+            hmw_pgp_public_key: None,
             hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
             server_info_endpoint: Cow::Borrowed("/getInfo"),
         })
-        .expect("only called if failed to reach `STARTUP_INFO_URL`");
-        AppDetails::default()
+        .expect("only called if failed to reach `STARTUP_INFO_URL`")
     }
 
-    pub async fn init() -> AppDetails {
-        const STARTUP_INFO_URL: &str =
-            "https://gist.githubusercontent.com/WardLordRuby/15920ff68ae348933636a5c18bc51709/raw";
-
-        let client = client_with_timeout(6);
-        let response = match client.get(STARTUP_INFO_URL).send().await {
-            Ok(data) => data,
-            Err(err) => {
-                return Self::set_default("Could not reach MatchWire startup json", err);
-            }
-        };
-
-        if response.status() != STATUS_OK {
-            return Self::set_default("Startup endpoint returned", response.status());
-        }
-
-        match response.json::<StartupInfo>().await {
+    pub async fn init() -> Option<Version> {
+        match try_parse_signed_json::<StartupInfo>(
+            SIGNED_STARTUP_INFO,
+            "MatchWire startup json",
+            MATCH_WIRE_PUBLIC_PGP_KEY,
+            "MatchWire PGP public key",
+        )
+        .await
+        {
             Ok(startup) => {
                 Self::set(startup.endpoints).expect("only valid set");
-                AppDetails::from(startup.version)
+                Some(startup.version)
             }
-            Err(err) => Self::set_default("Failed to parse MatchWire startup json", err),
+            Err(err) => {
+                splash_screen::push_message(Message::error(format!(
+                    "Failed to verify startup data: {err}"
+                )));
+                Self::set_default();
+                None
+            }
         }
     }
 
@@ -203,12 +203,12 @@ impl Endpoints {
         Self::get(|endpoints| &endpoints.hmw_master_server)
     }
     #[inline]
-    pub(crate) fn hmw_manifest() -> &'static str {
-        Self::get(|endpoints| &endpoints.hmw_manifest_signed)
+    pub(crate) fn hmw_signed_manifest() -> Option<&'static str> {
+        Self::get(|endpoints| endpoints.hmw_manifest_signed.as_deref())
     }
     #[inline]
-    pub(crate) fn hmw_pgp_public_key() -> &'static str {
-        Self::get(|endpoints| &endpoints.hmw_pgp_public_key)
+    pub(crate) fn hmw_pgp_public_key() -> Option<&'static str> {
+        Self::get(|endpoints| endpoints.hmw_pgp_public_key.as_deref())
     }
     #[inline]
     pub(crate) fn iw4_master_server() -> &'static str {
@@ -479,5 +479,66 @@ pub(crate) struct GameDisplayMap;
 impl GameDisplayMap {
     pub(crate) fn with_borrow<R>(f: impl FnOnce(&HashMap<&str, &'static str>) -> R) -> R {
         GAME_ID_MAP.with(|cell| f(cell.get_or_init(|| HashMap::from(GAME_DISPLAY_NAMES))))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{MATCH_WIRE_PUBLIC_PGP_KEY, SIGNED_STARTUP_INFO};
+    use crate::{ResponseErr, models::json_data::StartupInfo, pgp_verify_cleartext};
+    use reqwest::{StatusCode, blocking::get};
+
+    fn blocking_verify(
+        cleartext_json_url: &str,
+        cleartext_ctx: &'static str,
+        public_key_url: &str,
+        public_key_ctx: &'static str,
+    ) -> Result<String, ResponseErr> {
+        let cleartext_response = get(cleartext_json_url).unwrap();
+        let public_key_response = get(public_key_url).unwrap();
+
+        if cleartext_response.status() != StatusCode::OK {
+            panic!(
+                "{cleartext_ctx} returned status: {}",
+                cleartext_response.status()
+            )
+        }
+
+        if public_key_response.status() != StatusCode::OK {
+            panic!(
+                "{public_key_ctx} returned status: {}",
+                public_key_response.status()
+            )
+        }
+
+        let cleartext_string = cleartext_response.text().unwrap();
+        let public_key_string = public_key_response.text().unwrap();
+
+        pgp_verify_cleartext(cleartext_string, &public_key_string)
+    }
+
+    #[test]
+    fn pgp_verify_manifest() {
+        let remote_endpoints = blocking_verify(
+            SIGNED_STARTUP_INFO,
+            "MatchWire startup data",
+            MATCH_WIRE_PUBLIC_PGP_KEY,
+            "MatchWire PGP public key",
+        )
+        .map(|data| {
+            serde_json::from_str::<StartupInfo>(&data)
+                .unwrap()
+                .endpoints
+        })
+        .unwrap();
+
+        let hmw_manifest_res = blocking_verify(
+            remote_endpoints.hmw_manifest_signed.as_deref().unwrap(),
+            "HMW manifest",
+            remote_endpoints.hmw_pgp_public_key.as_deref().unwrap(),
+            "HMW PGP public key",
+        );
+
+        assert!(hmw_manifest_res.is_ok())
     }
 }

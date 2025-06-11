@@ -1,6 +1,5 @@
 use crate::{
-    CRATE_NAME, CRATE_VER, LOG_ONLY, MAIN_PROMPT, MOD_FILES_MODULE_NAME, ResponseErr,
-    SAVED_HISTORY_CAP,
+    CRATE_NAME, LOG_ONLY, MAIN_PROMPT, MOD_FILES_MODULE_NAME, ResponseErr, SAVED_HISTORY_CAP,
     commands::{
         filter::build_favorites,
         launch_h2m::{
@@ -182,18 +181,15 @@ pub struct GameDetails {
 }
 
 impl GameDetails {
-    pub fn get(cache: Option<&CacheFile>) -> Result<(Self, bool), Cow<'static, str>> {
+    pub fn get(
+        cache: Option<&CacheFile>,
+        exe_dir: &Path,
+    ) -> Result<(Self, bool), Cow<'static, str>> {
         let mod_verification = if cache.is_some_and(|cache| cache.hmw_manifest.verified) {
             ModFileStatus::UpToDate
         } else {
             ModFileStatus::Initial
         };
-
-        let exe_dir = std::env::current_exe()
-            .map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
-        let exe_dir = exe_dir
-            .parent()
-            .ok_or("Failed to get exe parent directory")?;
 
         let no_launch = {
             #[cfg(not(debug_assertions))]
@@ -268,8 +264,21 @@ impl GameDetails {
         }
     }
 
+    pub(crate) fn get_exe_dir(&self) -> &Path {
+        self.path
+            .parent()
+            .expect("self can not be created without a file added to path")
+    }
+
+    pub(crate) fn manifest_verified(&self) -> bool {
+        self.hash_latest.is_some()
+    }
+
     /// Returns `true` if `Cache` was modified / manifest was condensed
     pub(crate) fn conditional_condense_manifest(&mut self, mut man: HmwManifest) -> bool {
+        const NULL_256_HASH: &str =
+            "0000000000000000000000000000000000000000000000000000000000000000";
+
         fn try_get_exe_hash(cache: &Cache) -> Option<String> {
             cache.hmw_manifest.files_with_hashes.get(FNAME_HMW).cloned()
         }
@@ -298,6 +307,8 @@ impl GameDetails {
                 .skip(1)
                 .for_each(|m| files_with_hashes.extend(m.files_with_hashes));
 
+            files_with_hashes.retain(|_, hash| !hash.is_empty() && hash != NULL_256_HASH);
+
             cache.hmw_manifest = CondManifest {
                 guid: man.manifest_guid,
                 files_with_hashes,
@@ -307,12 +318,6 @@ impl GameDetails {
             self.hash_latest = try_get_exe_hash(cache);
             true
         })
-    }
-
-    pub(crate) fn get_exe_dir(&self) -> &Path {
-        self.path
-            .parent()
-            .expect("self can not be created without a file added to path")
     }
 
     fn prep_verification_state(&mut self) -> Result<(), ()> {
@@ -422,15 +427,21 @@ impl GameDetails {
 
 #[derive(Default)]
 pub struct AppDetails {
-    pub ver_latest: Option<String>,
+    pub hash_curr: Option<String>,
+    pub hash_latest: Option<String>,
     pub update_msg: Option<String>,
 }
 
-impl From<Version> for AppDetails {
-    fn from(value: Version) -> Self {
+impl AppDetails {
+    pub fn from(remote: Option<Version>, exe_dir: &Path) -> Self {
+        let (hash_latest, update_msg) = remote
+            .map(|ver| (Some(ver.latest), Some(ver.message)))
+            .unwrap_or_default();
+
         AppDetails {
-            ver_latest: Some(value.latest),
-            update_msg: Some(value.message),
+            hash_curr: hash_file_hex(exe_dir).map_err(display::error).ok(),
+            hash_latest,
+            update_msg,
         }
     }
 }
@@ -444,7 +455,7 @@ pub struct CommandContext {
     msg_sender: Sender<Message>,
     pub game_state_change: Arc<Notify>,
     game: GameDetails,
-    app: AppDetails,
+    appdata: AppDetails,
     queued_con_task: Option<JoinHandle<()>>,
 }
 
@@ -495,6 +506,7 @@ impl Executor<Stdout> for CommandContext {
 pub struct StartupData {
     pub local_dir: Option<PathBuf>,
     pub game: GameDetails,
+    pub appdata: AppDetails,
     pub cache_task: JoinHandle<StartupCacheContents>,
     pub splash_task: JoinHandle<io::Result<()>>,
     pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
@@ -520,7 +532,6 @@ impl From<HookTag> for i32 {
 impl CommandContext {
     pub async fn from(
         mut startup_data: StartupData,
-        app: AppDetails,
         term: Stdout,
     ) -> (ReplHandle, Self, Receiver<Message>) {
         let (launch_res, hmw_hash_res, cache_res) = tokio::join!(
@@ -547,9 +558,17 @@ impl CommandContext {
         let console_set = game_console.is_some();
         global_state::PtyHandle::set(game_console);
 
-        if let (Some(latest), Some(msg)) = (&app.ver_latest, &app.update_msg) {
-            if CRATE_VER != latest {
-                info!("{msg}")
+        if let (Some(curr), Some(latest)) = (
+            startup_data.appdata.hash_curr.as_deref(),
+            startup_data.appdata.hash_latest.as_deref(),
+        ) {
+            if curr != latest {
+                let msg = startup_data
+                    .appdata
+                    .update_msg
+                    .as_deref()
+                    .expect("Must be `Some` if `hash_latest` is `Some`");
+                info!("{msg}",)
             }
         }
 
@@ -588,7 +607,7 @@ impl CommandContext {
         let mut ctx = CommandContext {
             msg_sender: message_tx,
             game_state_change: Arc::new(Notify::const_new()),
-            app,
+            appdata: startup_data.appdata,
             game: startup_data.game,
             local_dir: startup_data.local_dir,
             can_close_console: true,
@@ -826,29 +845,20 @@ impl CommandContext {
     }
 
     async fn print_version(&mut self, verify_all: bool) -> io::Result<CommandHandle> {
-        if self.game.hash_latest.is_none() {
-            println!("{GREEN}Trying to get latest HMW version..{RESET}");
-
-            if let Ok(latest_manifest) = get_latest_hmw_manifest().await.map_err(display::error) {
-                self.game.conditional_condense_manifest(latest_manifest);
-            }
-
-            if self.game.hash_latest.is_some() {
-                info!("Found latest HMW version")
-            }
-
-            let _ = self.game.prep_verification_state();
-        }
-
         if let ModFileStatus::Initial = self.game.mod_verification {
             let _ = self.game.prep_verification_state();
         }
 
         if verify_all {
+            if !self.game.manifest_verified() {
+                println!("{RED}Failed to verify integrity of HMW manifest{RESET}");
+                return Ok(CommandHandle::Processed);
+            }
+
             let _ = self.game.verify_hmw_files();
         }
 
-        println!("{}", self.app);
+        println!("{}", self.appdata);
         println!();
         println!("{}", self.game);
         Ok(CommandHandle::Processed)

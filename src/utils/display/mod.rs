@@ -410,7 +410,7 @@ impl Display for ModFileStatus {
                 return write!(f, "{GREEN}All HMW files verified! GLHF{RESET}");
             }
             ModFileStatus::Initial => {
-                return write!(f, "{YELLOW}HMW files verification unchecked{RESET}");
+                return write!(f, "{YELLOW}HMW file verification unchecked{RESET}");
             }
             ModFileStatus::VerifyReady => {
                 return write!(
@@ -461,8 +461,6 @@ impl Display for GameDetails {
             return Ok(());
         }
 
-        writeln!(f, "{}", self.mod_verification)?;
-        write!(f, "{} ", self.game_file_name())?;
         let color = match (self.hash_curr.as_deref(), self.hash_latest.as_deref()) {
             (Some(curr), Some(latest)) => {
                 if curr == latest {
@@ -473,10 +471,16 @@ impl Display for GameDetails {
             }
             _ => "",
         };
+
+        if !color.is_empty() {
+            writeln!(f, "{}", self.mod_verification)?;
+        }
+
+        write!(f, "{} ", self.game_file_name())?;
         if let Some(version) = self.version {
             write!(f, "{color}v{version}{RESET}")?;
         }
-        if let Some(ref hash) = self.hash_curr {
+        if let Some(hash) = self.hash_curr.as_deref() {
             write!(
                 f,
                 "{}hash: {color}{hash}{RESET}",
@@ -492,13 +496,15 @@ impl Display for GameDetails {
 
 impl Display for AppDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let color = if let Some(ref latest) = self.ver_latest {
-            if CRATE_VER == latest { GREEN } else { YELLOW }
+        let color = if let (Some(curr), Some(latest)) =
+            (self.hash_curr.as_deref(), self.hash_latest.as_deref())
+        {
+            if curr == latest { GREEN } else { YELLOW }
         } else {
-            RESET
+            ""
         };
         write!(f, "{CRATE_NAME}.exe {color}v{CRATE_VER}{RESET}")?;
-        if let Some(ref msg) = self.update_msg {
+        if let Some(msg) = self.update_msg.as_deref() {
             if color == YELLOW {
                 write!(f, "\n{msg}")?;
             }

@@ -152,9 +152,9 @@ pub(crate) struct StartupInfo {
 }
 
 #[derive(Deserialize, Debug)]
-pub(crate) struct Version {
-    pub(crate) latest: String,
-    pub(crate) message: String,
+pub struct Version {
+    pub latest: String,
+    pub message: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
