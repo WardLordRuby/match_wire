@@ -368,7 +368,13 @@ pub(crate) fn open_dir(path: &Path) {
 fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
     use crate::utils::display::HmwDownloadHint;
 
-    if !exe_dir.join(FNAME_MWR).exists() {
+    macro_rules! exists {
+        ($file:expr) => {
+            $file.try_exists().map_err(|err| err.to_string())?
+        };
+    }
+
+    if !exists!(exe_dir.join(FNAME_MWR)) {
         return Err(Cow::Borrowed(concat!(
             "Move ",
             CRATE_NAME,
@@ -376,11 +382,11 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
         )));
     }
 
-    let found_game = if exe_dir.join(FNAME_HMW).exists() {
+    let found_game = if exists!(exe_dir.join(FNAME_HMW)) {
         FNAME_HMW
-    } else if exe_dir.join(FNAME_H2M_1).exists() {
+    } else if exists!(exe_dir.join(FNAME_H2M_1)) {
         FNAME_H2M_1
-    } else if exe_dir.join(FNAME_H2M_2).exists() {
+    } else if exists!(exe_dir.join(FNAME_H2M_2)) {
         FNAME_H2M_2
     } else {
         return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}")));
@@ -435,11 +441,11 @@ fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
     let prev_local_dir = local.join(PREV_NAME);
 
     local.push(CRATE_NAME);
-    if !local.exists() {
+    if !local.try_exists()? {
         std::fs::create_dir(local)?;
     }
 
-    if prev_local_dir.exists() {
+    if prev_local_dir.try_exists()? {
         std::fs::remove_dir_all(prev_local_dir)?;
     }
     Ok(())

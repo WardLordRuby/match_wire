@@ -77,11 +77,19 @@ pub(crate) async fn build_favorites(
     let mut ips = String::new();
 
     let mut favorites_path = curr_dir.join(FAVORITES_LOC);
-    if !favorites_path.exists() {
-        std::fs::create_dir(&favorites_path).map_err(|err| {
-            command_err!("Could not create missing {FAVORITES_LOC} directory, err: {err}")
-        })?;
-        info!("\"players2\" folder is missing, a new one was created");
+    match favorites_path.try_exists() {
+        Ok(true) => (),
+        Ok(false) => {
+            std::fs::create_dir(&favorites_path).map_err(|err| {
+                command_err!("Could not create missing {FAVORITES_LOC} directory, err: {err}")
+            })?;
+            info!("\"players2\" folder is missing, a new one was created");
+        }
+        Err(err) => {
+            return Err(command_err!(
+                "Could not confirm the existence of \"players2\" folder: {err}"
+            ));
+        }
     }
 
     favorites_path.push(FAVORITES);

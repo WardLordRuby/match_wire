@@ -124,15 +124,14 @@ fn app_startup(
 
     let exe_dir = exe_path
         .parent()
-        .ok_or("Failed to get exe parent directory")?
-        .to_path_buf();
+        .ok_or("Failed to get exe parent directory")?;
 
     let (game, no_launch) = GameDetails::get(
         cache_res.as_ref().and_then(|res| match res {
             Ok(cache) => Some(cache),
             Err(backup) => backup.cache.as_ref(),
         }),
-        &exe_dir,
+        exe_dir,
     )?;
 
     let splash_task = tokio::spawn(splash_screen::enter());

@@ -19,6 +19,7 @@ use constcat::concat;
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 
 pub(crate) const DISP_NAME_HMW: &str = "HMW";
+const HMW_LAUNCHER: &str = "HMW Launcher.exe";
 
 #[cfg(not(debug_assertions))]
 pub(crate) const DISP_NAME_H2M: &str = "H2M";
@@ -438,7 +439,7 @@ impl Display for ModFileStatus {
 
         write!(
             f,
-            "{GREEN}Use 'HMW Launcher.exe' to {} game files{RESET}",
+            "{GREEN}Use '{HMW_LAUNCHER}' to {} game files{RESET}",
             if outdated { "update" } else { "get missing" }
         )
     }
@@ -450,7 +451,7 @@ impl Display for HmwUpdateHelp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "A new version of HMW is available for download. Use 'HMW Launcher.exe' to update game files"
+            "A new version of HMW is available for download. Use '{HMW_LAUNCHER}' to update game files"
         )
     }
 }
@@ -487,7 +488,12 @@ impl Display for GameDetails {
                 if self.version.is_some() { ", " } else { "" }
             )?;
         }
-        if color == YELLOW {
+        if color == YELLOW
+            && !matches!(
+                self.mod_verification,
+                ModFileStatus::MissingFiles(_) | ModFileStatus::Outdated(_)
+            )
+        {
             write!(f, "\n{GREEN}{HmwUpdateHelp}{RESET}")?;
         }
         Ok(())

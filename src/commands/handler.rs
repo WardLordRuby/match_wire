@@ -270,6 +270,7 @@ impl GameDetails {
             .expect("self can not be created without a file added to path")
     }
 
+    /// Finds if the [`CondManifest`] stored in [`global_state::Cache`] has been verified genuine
     pub(crate) fn manifest_verified(&self) -> bool {
         self.hash_latest.is_some()
     }
@@ -328,9 +329,14 @@ impl GameDetails {
 
             for mod_file in cache.hmw_manifest.files_with_hashes.keys() {
                 let file_path = exe_dir.join(mod_file);
-                if !file_path.exists() {
-                    missing.push(mod_file.clone())
+
+                match file_path.try_exists() {
+                    Ok(true) => continue,
+                    Ok(false) => (),
+                    Err(err) => error!(name: LOG_ONLY, "{err}, path: {}", file_path.display()),
                 }
+
+                missing.push(mod_file.clone())
             }
 
             missing
@@ -587,6 +593,9 @@ impl CommandContext {
                     startup_data.game.hash_latest.as_deref(),
                 ) {
                     if hash_curr != hash_latest {
+                        if let ModFileStatus::UpToDate = startup_data.game.mod_verification {
+                            startup_data.game.mod_verification = ModFileStatus::VerifyReady;
+                        }
                         info!("{HmwUpdateHelp}")
                     }
                 }

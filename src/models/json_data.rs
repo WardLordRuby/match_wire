@@ -175,6 +175,14 @@ pub struct CacheFile {
 pub struct CondManifest {
     pub guid: String,
     pub files_with_hashes: FileHashes,
+
+    /// All files in `Self` have previously been known to exist locally. This field should not be used
+    /// for anything other than initializing the state of [`ModFileStatus`].\
+    ///
+    /// To find if `Self` has been verified genuine use [`GameDetails::manifest_verified`]
+    ///
+    /// [`ModFileStatus`]: crate::commands::handler::ModFileStatus
+    /// [`GameDetails::manifest_verified`]: crate::commands::handler::GameDetails::manifest_verified
     pub verified: bool,
 }
 
