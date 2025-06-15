@@ -4,7 +4,7 @@ use crate::{
         filter::build_favorites,
         launch_h2m::{
             LaunchError, WinApiErr, game_open, hide_pseudo_console, init_listener,
-            launch_h2m_pseudo, terminate_process_by_id, toggle_close_state,
+            launch_h2m_pseudo, toggle_close_state,
         },
     },
     exe_details,
@@ -18,8 +18,7 @@ use crate::{
     utils::{
         caching::{build_cache, write_cache},
         display::{
-            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp,
-            indicator::{ProgressBar, Spinner},
+            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp, indicator::ProgressBar,
         },
         global_state::{self, Cache, ThreadCopyState},
     },
@@ -504,7 +503,7 @@ impl Executor<Stdout> for CommandContext {
             Command::GameDir => self.try_open_game_dir(),
             Command::LocalEnv => self.try_open_local_dir(),
             Command::Version { verify_all } => self.print_version(verify_all).await,
-            Command::Quit => self.quit().await,
+            Command::Quit => self.quit(),
         }
     }
 }
@@ -1011,35 +1010,12 @@ impl CommandContext {
         Ok(CommandHandle::InsertHook(input_hook))
     }
 
-    async fn quit(&mut self) -> io::Result<CommandHandle> {
+    fn quit(&mut self) -> io::Result<CommandHandle> {
         if game_open()
             .unwrap_or_else(WinApiErr::resolve_to_open)
             .is_none()
         {
-            const TIMEOUT: Duration = Duration::from_secs(60);
-
-            let spinner = Spinner::new(format!("Waiting for {} to close", self.game_name()));
-            let start_time = std::time::Instant::now();
-            while global_state::PtyHandle::check_connection().is_ok() {
-                if start_time.elapsed() > TIMEOUT {
-                    if let Ok(pid) = global_state::PtyHandle::try_if_alive(|pty| Ok(pty.get_pid()))
-                        .map_err(display::log_error)
-                    {
-                        if terminate_process_by_id(pid)
-                            .map_err(display::log_error)
-                            .is_ok()
-                        {
-                            error!(name: LOG_ONLY, "Hang detected, {} terminated by windows api", self.game_name());
-                        }
-                    }
-
-                    break;
-                }
-
-                tokio::task::yield_now().await;
-            }
-
-            spinner.finish();
+            global_state::PtyHandle::wait_for_exit(&self.game_name());
             return Ok(CommandHandle::Exit);
         } else if global_state::PtyHandle::check_connection().is_err() {
             return Ok(CommandHandle::Exit);

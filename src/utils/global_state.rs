@@ -14,7 +14,7 @@ use crate::{
     commands::{
         filter::{FilterPreProcess, Server, process_stats},
         handler::{CommandSender, Message, ReplHandle},
-        launch_h2m::{HostName, WinApiErr, game_open},
+        launch_h2m::{HostName, WinApiErr, game_open, terminate_process_by_id},
     },
     models::json_data::{CacheFile, CondManifest, Version},
     splash_screen, try_fit_table, try_parse_signed_json,
@@ -28,7 +28,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     thread::LocalKey,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use repl_oxide::ansi_code::{RESET, YELLOW};
@@ -390,32 +390,62 @@ impl PtyHandle {
     }
 
     pub(crate) fn try_drop_pty(game_name: &str) {
-        PTY_HANDLE.with_borrow_mut(|handle| {
+        let sent_quit = PTY_HANDLE.with_borrow_mut(|handle| {
             let Some(game_console) = handle else {
-                return;
+                return false;
             };
 
-            if matches!(game_console.is_alive(), Ok(true))
+            let sent_quit = matches!(game_console.is_alive(), Ok(true))
                 && game_open()
                     .unwrap_or_else(WinApiErr::resolve_to_closed)
                     .is_some()
                 && game_console
                     .send_cmd("quit")
                     .map_err(display::log_error)
-                    .is_ok()
-            {
-                let spinner = Spinner::new(format!("Waiting for {game_name} to close"));
+                    .is_ok();
 
-                info!(name: LOG_ONLY, "{game_name}'s console accepted quit command");
-                if let Err(err) = game_console.wait_for_exit() {
-                    error!(name: LOG_ONLY, "{}", err.to_string_lossy())
+            if !sent_quit {
+                *handle = None;
+            }
+
+            sent_quit
+        });
+
+        if sent_quit {
+            info!(name: LOG_ONLY, "{game_name}'s console accepted quit command");
+            Self::wait_for_exit(game_name);
+        }
+    }
+
+    pub(crate) fn wait_for_exit(game_name: &str) {
+        const TIMEOUT: Duration = Duration::from_secs(60);
+
+        let spinner = Spinner::new(format!("Waiting for {game_name} to close"));
+        let start_time = std::time::Instant::now();
+
+        PTY_HANDLE.with_borrow_mut(|handle| {
+            let Some(game_console) = handle else { return };
+
+            while let Ok(true) = game_console.is_alive() {
+                if start_time.elapsed() > TIMEOUT {
+                    let pid = game_console.get_pid();
+                    if terminate_process_by_id(pid)
+                        .map_err(display::log_error)
+                        .is_ok()
+                    {
+                        error!(name: LOG_ONLY, "Hang detected, {game_name} terminated by windows api");
+                    }
+
+                    break;
                 }
 
-                spinner.finish();
+                std::thread::sleep(Duration::from_millis(600));
             }
 
             *handle = None;
         });
+
+        spinner.finish();
     }
 }
 
