@@ -6,7 +6,7 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::{AppDetails, GameDetails, ModFileStatus},
-        launch_h2m::{LaunchError, WinApiErr, game_open},
+        launch::{LaunchError, WinApiErr, game_open},
     },
     global_state,
     models::cli::Source,

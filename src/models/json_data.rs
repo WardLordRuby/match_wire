@@ -1,4 +1,4 @@
-use crate::{commands::launch_h2m::HostName, utils::caching::AddrMap};
+use crate::{commands::launch::HostName, utils::caching::AddrMap};
 
 use std::{
     borrow::Cow,
@@ -60,7 +60,7 @@ pub struct GetInfo {
     #[serde(deserialize_with = "from_string::<_, u8>")]
     pub bots: u8,
     #[serde(rename = "isPrivate")]
-    #[serde(deserialize_with = "from_bool_string::<_>")]
+    #[serde(deserialize_with = "from_bool_string")]
     pub private: bool,
     #[serde(rename = "sv_privateClients")]
     #[serde(deserialize_with = "from_string::<_, i8>")]

@@ -88,7 +88,7 @@ mod test {
         let mut servers = Vec::with_capacity(60);
 
         for _ in 0..60 {
-            let max_clients = rng.random_range(2..=H2M_MAX_CLIENT_NUM as u8);
+            let max_clients = rng.random_range(2..=H2M_MAX_CLIENT_NUM);
             let bots = rng
                 .random_bool(0.5)
                 .then(|| max_clients - rng.random_range(1..=max_clients))

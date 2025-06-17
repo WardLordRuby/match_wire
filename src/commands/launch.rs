@@ -439,7 +439,7 @@ impl WinApiErr {
     }
 }
 
-pub fn launch_h2m_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
+pub fn spawn_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     if let Some(game_name) = game_open()? {
         return Err(LaunchError::GameRunning(game_name));
     }

@@ -1,21 +1,23 @@
 use match_wire::{
-    CRATE_NAME, LOG_ONLY, LoggerRes, SAVED_HISTORY_CAP, await_user_for_end,
+    CRATE_NAME, LOG_ONLY, SAVED_HISTORY_CAP, await_user_for_end,
     commands::{
         handler::{
             AppDetails, CommandContext, GameDetails, HistoryTag, Message, ReplHandle, StartupData,
         },
-        launch_h2m::launch_h2m_pseudo,
+        launch::spawn_pseudo,
+        settings::Settings,
     },
     get_latest_hmw_manifest,
     models::json_data::Version,
     print_help, splash_screen, startup_cache_task, try_init_logger,
     utils::{
+        caching::read_cache,
         display::{self, DisplayPanic},
         global_state,
     },
 };
 
-use std::{borrow::Cow, io};
+use std::{borrow::Cow, io, path::PathBuf};
 
 use crossterm::{cursor, event::EventStream, execute, terminal::SetTitle};
 use repl_oxide::{executor::Executor, general_event_process};
@@ -37,12 +39,14 @@ async fn main() {
     let mut term = std::io::stdout();
     execute!(term, cursor::Hide, SetTitle(CRATE_NAME)).unwrap();
 
-    let logger_res = try_init_logger();
+    let splash_task = tokio::spawn(splash_screen::enter());
+
+    let appdata_local = try_init_logger();
     let latest_version_data = global_state::Endpoints::init().await;
 
     let (mut line_handle, mut command_context, message_rx) =
-        match app_startup(logger_res, latest_version_data) {
-            Ok(startup_data) => CommandContext::from(startup_data, term).await,
+        match app_startup(appdata_local, latest_version_data) {
+            Ok(startup_data) => CommandContext::from(startup_data, splash_task, term).await,
             Err(err) => {
                 await_user_for_end(err);
                 return;
@@ -114,7 +118,7 @@ async fn run_eval_print_loop(
 
 #[instrument(level = "trace", skip_all)]
 fn app_startup(
-    (local_dir, cache_res): LoggerRes,
+    local_dir: Option<PathBuf>,
     version_data: Option<Version>,
 ) -> Result<StartupData, Cow<'static, str>> {
     let exe_path =
@@ -126,15 +130,17 @@ fn app_startup(
         .parent()
         .ok_or("Failed to get exe parent directory")?;
 
+    let cache_res = local_dir.as_deref().map(read_cache);
+    let settings = Settings::init(local_dir.as_deref());
     let (game, no_launch) = GameDetails::get(
         cache_res.as_ref().and_then(|res| match res {
             Ok(cache) => Some(cache),
             Err(backup) => backup.cache.as_ref(),
         }),
         exe_dir,
+        &settings,
     )?;
 
-    let splash_task = tokio::spawn(splash_screen::enter());
     let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
 
     let launch_task = tokio::spawn({
@@ -145,7 +151,7 @@ fn app_startup(
             }
             // delay h2m doesn't block splash screen
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            Some(launch_h2m_pseudo(&game_exe_path))
+            Some(spawn_pseudo(&game_exe_path))
         }
     });
 
@@ -153,8 +159,8 @@ fn app_startup(
         local_dir,
         game,
         appdata,
+        settings,
         cache_task: tokio::spawn(startup_cache_task(cache_res)),
-        splash_task,
         launch_task,
         hmw_manifest_task,
     })

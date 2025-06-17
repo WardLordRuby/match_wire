@@ -133,7 +133,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
 
         #[cfg(not(debug_assertions))]
         {
-            crate::splash_screen::is_visible()
+            crate::global_state::AltScreen::is_visible()
         }
     };
 

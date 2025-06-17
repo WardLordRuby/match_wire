@@ -7,7 +7,7 @@ use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKin
 // HARD: this ideally would be done by a proc-macro
 pub const COMPLETION: CommandScheme = init_command_scheme();
 
-const COMMAND_RECS: [&str; 13] = [
+const COMMAND_RECS: [&str; 14] = [
     "filter",
     "reconnect",
     "launch",
@@ -18,11 +18,12 @@ const COMMAND_RECS: [&str; 13] = [
     "quit",
     "version",
     "last",
+    "settings",
     "logs",
     "gamedir",
     "localenv",
 ];
-const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 10), (5, 11), (6, 12)];
+const COMMANDS_ALIAS: [(usize, usize); 3] = [(4, 11), (5, 12), (6, 13)];
 
 const fn init_command_scheme() -> CommandScheme {
     CommandScheme::new(
@@ -118,6 +119,13 @@ const COMMAND_INNER: &[InnerScheme] = &[
     ),
     // last
     InnerScheme::end(Parent::Root),
+    // settings
+    InnerScheme::new(
+        RecData::new(RecKind::argument_with_no_required_inputs())
+            .with_parent(Parent::Root)
+            .with_recommendations(&SETTINGS_RECS),
+        Some(SETTINGS_INNER),
+    ),
 ];
 
 const FILTER_REGIONS: [&str; 10] = [
@@ -156,13 +164,11 @@ const FILTER_INNER: &[InnerScheme] = &[
     // player-min
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
-        .with_parsing_rule(|value| u8_bounds(value, |v| v <= H2M_MAX_CLIENT_NUM as u8)),
+        .with_parsing_rule(|value| u8_bounds(value, |v| v <= H2M_MAX_CLIENT_NUM)),
     // team-size-max
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
-        .with_parsing_rule(|value| {
-            u8_bounds(value, |v| (1..=H2M_MAX_TEAM_SIZE as u8).contains(&v))
-        }),
+        .with_parsing_rule(|value| u8_bounds(value, |v| (1..=H2M_MAX_TEAM_SIZE).contains(&v))),
     // region
     InnerScheme::new(
         RecData::new(RecKind::value_with_num_args(REGION_LEN))
@@ -227,4 +233,11 @@ const VERSION_ALIAS: [(usize, usize); 1] = [(0, 1)];
 const VERSION_INNER: &[InnerScheme] = &[
     // verify-all
     InnerScheme::end(Parent::Entry(COMMAND_RECS[8])),
+];
+
+const SETTINGS_RECS: [&str; 1] = ["use-default"];
+
+const SETTINGS_INNER: &[InnerScheme] = &[
+    // use-default
+    InnerScheme::end(Parent::Entry(COMMAND_RECS[10])),
 ];

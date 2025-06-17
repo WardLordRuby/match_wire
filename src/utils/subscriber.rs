@@ -71,7 +71,7 @@ where
         writer: Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        use crate::splash_screen;
+        use crate::global_state::AltScreen;
         use repl_oxide::ansi_code::{BLUE, CLEAR_LINE, GREEN, MAGENTA, RED, RESET, YELLOW};
 
         let line_color = match *event.metadata().level() {
@@ -88,8 +88,8 @@ where
             write!(writer, "{RESET}")
         };
 
-        if splash_screen::is_visible() {
-            return splash_screen::push_formatter(print);
+        if AltScreen::is_visible() {
+            return AltScreen::push_formatter(print);
         }
         print(writer)
     }

@@ -1,12 +1,12 @@
 use super::{
     Addressable, DEFAULT_SOURCES, FilterData, GAME_ID, GetInfoMetaData, H2M_ID, HMW_ID, HostMeta,
-    Request, Server, Sourced, ops::*, try_get_info,
+    Request, Server, Sourced, ops::*, try_batched_location_lookup, try_get_info,
 };
 use crate::{
     client_with_timeout, command_err,
     commands::{
-        filter::try_batched_location_lookup,
         handler::{CmdErr, ReplHandle},
+        settings::Settings,
     },
     display::{indicator::Spinner, table::DisplaySourceStatsInner},
     elide,
@@ -46,6 +46,7 @@ pub(crate) trait FilterStrategy:
     async fn execute(
         repl: &mut ReplHandle,
         args: Filters,
+        settings: &Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr>;
@@ -117,6 +118,7 @@ impl FilterStrategy for FastStrategy {
     async fn execute(
         _repl: &mut ReplHandle,
         mut args: Filters,
+        settings: &Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
@@ -125,7 +127,7 @@ impl FilterStrategy for FastStrategy {
         let mut sourced_servers = Self::new(sources, &client).await?;
         let mut cache_modified = false;
 
-        if let Some(regions) = args.regions() {
+        if let Some(regions) = args.regions(settings) {
             cache_modified =
                 filter_via_region(&mut sourced_servers.0, &regions, &client, &spinner).await
         }
@@ -137,6 +139,7 @@ impl FilterStrategy for FastStrategy {
             let (mut servers, mod_info) = join_info_requests(
                 requests,
                 &args,
+                settings,
                 &client,
                 &spinner,
                 Vec::with_capacity,
@@ -323,6 +326,7 @@ impl FilterStrategy for StatTrackStrategy {
     async fn execute(
         repl: &mut ReplHandle,
         mut args: Filters,
+        settings: &Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
@@ -346,6 +350,7 @@ impl FilterStrategy for StatTrackStrategy {
             join_info_requests(
                 requests.info,
                 &args,
+                settings,
                 &client,
                 &spinner,
                 HashMap::with_capacity,
@@ -361,8 +366,8 @@ impl FilterStrategy for StatTrackStrategy {
         let source_stats = stat_track.get_source_stats(&info_map);
         let mut servers = stat_track.collect_to_servers(&[HMW_ID], info_map);
 
-        if let Some(regions) = args.regions().as_ref() {
-            cache_modified |= filter_via_region(&mut servers, regions, &client, &spinner).await
+        if let Some(regions) = args.regions(settings) {
+            cache_modified |= filter_via_region(&mut servers, &regions, &client, &spinner).await
         }
 
         filter_via_get_info(&mut servers, &mut args);

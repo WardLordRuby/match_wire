@@ -1,8 +1,9 @@
 pub mod commands {
     pub mod filter;
     pub mod handler;
-    pub mod launch_h2m;
+    pub mod launch;
     pub mod reconnect;
+    pub mod settings;
 }
 pub mod models {
     pub mod cli;
@@ -19,16 +20,16 @@ pub mod utils {
 use crate::{
     commands::{
         handler::{Message, ReplHandle, StartupCacheContents},
-        launch_h2m::get_exe_version,
+        launch::get_exe_version,
     },
     models::{
         cli::Command,
         json_data::{CacheFile, HmwManifest, StartupInfo},
     },
     utils::{
-        caching::{ReadCacheErr, build_cache, read_cache},
+        caching::{ReadCacheErr, build_cache},
         display::{self, table::TABLE_PADDING},
-        global_state,
+        global_state::{self, AltScreen},
         subscriber::init_subscriber,
     },
 };
@@ -64,8 +65,8 @@ pub const LOG_ONLY: &str = "log_only";
 
 const MOD_FILES_MODULE_NAME: &str = "mod";
 
-pub const H2M_MAX_CLIENT_NUM: i64 = 18;
-pub(crate) const H2M_MAX_TEAM_SIZE: i64 = 9;
+pub const H2M_MAX_CLIENT_NUM: u8 = 18;
+pub(crate) const H2M_MAX_TEAM_SIZE: u8 = 9;
 
 pub const SAVED_HISTORY_CAP: usize = 20;
 
@@ -100,7 +101,6 @@ pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
 
 pub mod splash_screen {
-    use crate::commands::handler::Message;
     use std::io;
 
     #[cfg(not(debug_assertions))]
@@ -110,57 +110,7 @@ pub mod splash_screen {
     };
 
     #[cfg(not(debug_assertions))]
-    pub(crate) use release::*;
-
-    #[cfg(not(debug_assertions))]
-    mod release {
-
-        use super::*;
-
-        use std::cell::{Cell, RefCell};
-
-        use tracing_subscriber::fmt::format::Writer;
-
-        thread_local! {
-            pub(super) static SPLASH_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
-            pub(super) static SPLASH_SCREEN_EVENT_BUFFER:
-                RefCell<SplashScreenEvents> = RefCell::new(SplashScreenEvents::default());
-        }
-
-        #[derive(Default)]
-        pub(super) struct SplashScreenEvents {
-            pub(super) pre_subscriber: Vec<Message>,
-            pub(super) from_subscriber: String,
-        }
-
-        pub(crate) fn is_visible() -> bool {
-            SPLASH_SCREEN_VIS.get()
-        }
-
-        pub(crate) fn push_formatter<F>(print: F) -> std::fmt::Result
-        where
-            F: FnOnce(Writer<'_>) -> std::fmt::Result,
-        {
-            SPLASH_SCREEN_EVENT_BUFFER
-                .with_borrow_mut(|buf| print(Writer::new(&mut buf.from_subscriber)))
-        }
-    }
-
-    /// **Only** use for errors encountered before tracing subscriber has been initialized otherwise prefer a tracing
-    /// event as our subscriber format layer takes care of fn call behind the scenes
-    pub fn push_message(message: Message) {
-        #[cfg(debug_assertions)]
-        message.record();
-
-        #[cfg(not(debug_assertions))]
-        {
-            if !SPLASH_SCREEN_VIS.get() {
-                return message.record();
-            }
-
-            SPLASH_SCREEN_EVENT_BUFFER.with_borrow_mut(|buf| buf.pre_subscriber.push(message))
-        }
-    }
+    use crate::global_state::AltScreen;
 
     pub async fn enter() -> io::Result<()> {
         #[cfg(not(debug_assertions))]
@@ -175,7 +125,7 @@ pub mod splash_screen {
 
             let mut stdout = std::io::stdout();
 
-            SPLASH_SCREEN_VIS.set(true);
+            AltScreen::enter();
             execute!(stdout, terminal::EnterAlternateScreen)?;
 
             let (columns, rows) = terminal::size()?;
@@ -208,16 +158,7 @@ pub mod splash_screen {
         #[cfg(not(debug_assertions))]
         {
             execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
-            SPLASH_SCREEN_VIS.set(false);
-
-            let events = SPLASH_SCREEN_EVENT_BUFFER.take();
-
-            events
-                .pre_subscriber
-                .into_iter()
-                .for_each(|message| message.record());
-
-            print!("{}", events.from_subscriber)
+            AltScreen::leave();
         }
     }
 }
@@ -253,28 +194,32 @@ impl From<pgp::errors::Error> for ResponseErr {
     }
 }
 
-pub type LoggerRes = (Option<PathBuf>, Option<Result<CacheFile, ReadCacheErr>>);
+/// Returns the working `%localappdata%` for this program
+pub fn try_init_logger() -> Option<PathBuf> {
+    let local_dir = std::env::var_os(LOCAL_DATA);
+    let local_dir = local_dir.as_ref().map(Path::new);
 
-pub fn try_init_logger() -> LoggerRes {
-    let mut local_dir = std::env::var_os(LOCAL_DATA).map(PathBuf::from);
-    let mut cache_res = None;
-    if let Some(ref mut dir) = local_dir {
-        if let Err(err) = check_app_dir_exists(dir) {
-            splash_screen::push_message(Message::error(err.to_string()));
-        } else {
-            init_subscriber(dir)
-                .unwrap_or_else(|err| splash_screen::push_message(Message::error(err.to_string())));
-            info!(name: LOG_ONLY, "App startup");
-            cache_res = Some(read_cache(dir));
+    if let Some(local) = local_dir {
+        match check_app_dir_exists(local) {
+            Ok(app_dir_local) => {
+                init_subscriber(&app_dir_local)
+                    .unwrap_or_else(|err| AltScreen::push_message(Message::error(err.to_string())));
+                info!(name: LOG_ONLY, "App startup");
+                Some(app_dir_local)
+            }
+            Err(err) => {
+                AltScreen::push_message(Message::error(err.to_string()));
+                None
+            }
         }
     } else {
-        splash_screen::push_message(Message::error("Could not find %appdata%/local"));
+        AltScreen::push_message(Message::error("Could not find %appdata%/local"));
 
         #[cfg(debug_assertions)]
         init_subscriber(std::path::Path::new("")).unwrap();
-    }
 
-    (local_dir, cache_res)
+        None
+    }
 }
 
 pub(crate) fn client_with_timeout(secs: u64) -> Client {
@@ -435,20 +380,30 @@ pub fn await_user_for_end<D: Display>(err: D) {
     let _ = reader.read_line(&mut String::new());
 }
 
-/// Validates local/app_dir exists and modifies input if valid
-fn check_app_dir_exists(local: &mut PathBuf) -> io::Result<()> {
+/// Validates `%localappdata%` structure and returns an owned path to this programs own directory
+fn check_app_dir_exists(local: &Path) -> io::Result<PathBuf> {
     const PREV_NAME: &str = "h2m_favorites";
     let prev_local_dir = local.join(PREV_NAME);
+    let curr_local_dir = local.join(CRATE_NAME);
 
-    local.push(CRATE_NAME);
-    if !local.try_exists()? {
+    if !curr_local_dir.try_exists()? {
         std::fs::create_dir(local)?;
     }
 
-    if prev_local_dir.try_exists()? {
+    if prev_local_dir
+        .try_exists()
+        .map_err(|err| {
+            AltScreen::push_message(Message::error(format!(
+                "{err}, looking for {}",
+                prev_local_dir.display()
+            )))
+        })
+        .unwrap_or_default()
+    {
         std::fs::remove_dir_all(prev_local_dir)?;
     }
-    Ok(())
+
+    Ok(curr_local_dir)
 }
 
 pub(crate) fn make_slice_ascii_lowercase(vec: &mut [String]) {
@@ -518,10 +473,14 @@ pub fn print_help() {
 }
 
 pub(crate) async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, message: Message) {
-    sender
-        .send(message)
-        .await
-        .unwrap_or_else(|returned| returned.0.log());
+    if AltScreen::is_visible() {
+        AltScreen::push_message(message);
+    } else {
+        sender
+            .send(message)
+            .await
+            .unwrap_or_else(|returned| returned.0.log());
+    }
 }
 
 pub async fn startup_cache_task(

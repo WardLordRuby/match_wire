@@ -72,8 +72,9 @@ Modern Warfare.
 | [console](#console-help)     | Logs      | Display and interact with the Mw2 Remastered console                            |
 | game-dir                     | Gamedir   | Opens your game directory in explorer.exe                                       |
 | local-env                    | Localenv  | Opens the local environment directory (where logs and cache are saved)          |
-| quit                         | Quit      | Closes game and launcher                                                        |
+| [settings](#settings-help)   | Settings  | Modify MatchWire defaults                                                       |
 | [version](#version-help)     | Version   | Displays version of MatchWire and Mw2 Remastered                                |
+| quit                         | Quit      | Closes game and launcher                                                        |
 | help                         | -         | Displays helpful information                                                    |
 
 A help page is available for every command, to access it use: `<COMMAND_NAME> --help`
@@ -159,11 +160,17 @@ just as it normally would, simply type the command and press enter to send. Pres
 
 To re-print all game client logs from the current session you can add the argument `--all`.  
 
+## Settings help
+The `settings` command can be used to configure MatchWire settings and various default filter arguments. These defaults are always
+overridden when they are explicitly specified in a filter query. For example, if you set `Server retries` to `2`, then run a `filter`
+command with the argument `--retry-max 0`, the value `0` will be used. Settings can be restored to default by using the `--use-default`
+argument.  
+
 ## Version help
 The `version` command will notify you of any updates either with MatchWire or HMW. It will also display the verification status of
 HMW mod files. By default the existence of all HMW mod files will be checked, however _only_ hmw-mod.exe will be verified. This is a
 quick way to check if a new update for HMW has been released. You can also verify _all_ HMW mod files by using `version` with the
-argument `--verify-all`. 
+argument `--verify-all`.  
 
 ## Build from source
 If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 

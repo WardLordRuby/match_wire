@@ -6,7 +6,10 @@ pub use strategies::{FilterPreProcess, GameStats, process_stats};
 
 use crate::{
     LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, command_err,
-    commands::handler::{CmdErr, ReplHandle},
+    commands::{
+        handler::{CmdErr, CommandContext, ReplHandle},
+        settings::Settings,
+    },
     impl_rate_limit_config,
     models::{
         cli::{Filters, Region, Source},
@@ -25,7 +28,6 @@ use std::{
     fs::File,
     io::{self, Write},
     net::{AddrParseError, IpAddr, SocketAddr, ToSocketAddrs},
-    path::Path,
     time::Duration,
 };
 
@@ -41,7 +43,6 @@ const FAVORITES: &str = "favourites.json";
 
 pub(crate) const DEFAULT_SOURCES: [Source; 2] = [Source::Iw4Master, Source::HmwMaster];
 const DEFAULT_H2M_SERVER_CAP: usize = 100;
-const DEFAULT_INFO_RETRIES: u8 = 3;
 
 const RETRY_TIME_SCALE: Duration = Duration::from_millis(800);
 
@@ -51,10 +52,15 @@ pub(crate) const GAME_ID: [&str; 2] = ["H2M", "HMW"];
 pub(crate) const H2M_ID: &str = GAME_ID[0];
 pub(crate) const HMW_ID: &str = GAME_ID[1];
 
-const NA_CONT_CODE: [ContCode; 1] = [[b'N', b'A']];
-const SA_CONT_CODE: [ContCode; 1] = [[b'S', b'A']];
-const EU_CONT_CODES: [ContCode; 2] = [[b'E', b'U'], [b'A', b'F']];
-const APAC_CONT_CODES: [ContCode; 2] = [[b'A', b'S'], [b'O', b'C']];
+pub(crate) mod continent {
+    use super::ContCode;
+
+    pub(crate) const COUNT: usize = 4;
+    pub(crate) const NA_CODE: [ContCode; 1] = [[b'N', b'A']];
+    pub(crate) const SA_CODE: [ContCode; 1] = [[b'S', b'A']];
+    pub(crate) const EU_CODES: [ContCode; 2] = [[b'E', b'U'], [b'A', b'F']];
+    pub(crate) const APAC_CODES: [ContCode; 2] = [[b'A', b'S'], [b'O', b'C']];
+}
 
 fn serialize_json(f: &mut std::fs::File, from: String) -> io::Result<()> {
     const COMMA: char = ',';
@@ -68,15 +74,16 @@ fn serialize_json(f: &mut std::fs::File, from: String) -> io::Result<()> {
 
 #[instrument(name = "filter", level = "trace", skip_all)]
 pub(crate) async fn build_favorites(
+    ctx: &CommandContext,
     repl: &mut ReplHandle,
-    curr_dir: &Path,
-    args: Filters,
-    version: f64,
+    args: Option<Filters>,
 ) -> Result<bool, CmdErr> {
     let mut ip_collected = 0;
     let mut ips = String::new();
+    let args = args.unwrap_or_default();
+    let version = ctx.game_version().unwrap_or(1.0);
 
-    let mut favorites_path = curr_dir.join(FAVORITES_LOC);
+    let mut favorites_path = ctx.get_exe_dir().join(FAVORITES_LOC);
     match favorites_path.try_exists() {
         Ok(true) => (),
         Ok(false) => {
@@ -114,7 +121,7 @@ pub(crate) async fn build_favorites(
         )
     }
 
-    let mut filter = filter_server_list(repl, args, spinner).await?;
+    let mut filter = filter_server_list(repl, args, &ctx.settings, spinner).await?;
 
     if filter.duplicates != 0 {
         println!(
@@ -159,23 +166,46 @@ pub(crate) struct FilterData {
     cache_modified: bool,
 }
 
-impl Region {
-    fn to_bytes(self) -> &'static [ContCode] {
+pub(crate) enum RegionContainer {
+    Set(HashSet<ContCode>),
+    Vec(Vec<ContCode>),
+}
+
+impl RegionContainer {
+    pub(crate) fn contains(&self, region: &ContCode) -> bool {
         match self {
-            Region::Apac => &APAC_CONT_CODES,
-            Region::EU => &EU_CONT_CODES,
-            Region::NA => &NA_CONT_CODE,
-            Region::SA => &SA_CONT_CODE,
+            RegionContainer::Set(hash_set) => hash_set.contains(region),
+            RegionContainer::Vec(items) => items.contains(region),
         }
     }
 
-    fn to_byte_set(regions: &[Region]) -> HashSet<ContCode> {
-        regions
-            .iter()
-            .copied()
-            .flat_map(Region::to_bytes)
-            .copied()
-            .collect()
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            RegionContainer::Set(hash_set) => hash_set.len(),
+            RegionContainer::Vec(items) => items.len(),
+        }
+    }
+}
+
+impl Region {
+    fn to_bytes(self) -> &'static [ContCode] {
+        match self {
+            Region::Apac => &continent::APAC_CODES,
+            Region::EU => &continent::EU_CODES,
+            Region::NA => &continent::NA_CODE,
+            Region::SA => &continent::SA_CODE,
+        }
+    }
+
+    fn to_byte_set(regions: &[Region]) -> RegionContainer {
+        RegionContainer::Set(
+            regions
+                .iter()
+                .copied()
+                .flat_map(Region::to_bytes)
+                .copied()
+                .collect(),
+        )
     }
 }
 
@@ -196,8 +226,11 @@ impl Filters {
         !self.with_bots && !self.without_bots && self.include_unresponsive
     }
 
-    fn regions(&self) -> Option<HashSet<ContCode>> {
-        self.region.as_deref().map(Region::to_byte_set)
+    fn regions(&self, settings: &Settings) -> Option<RegionContainer> {
+        self.region
+            .as_deref()
+            .map(Region::to_byte_set)
+            .or_else(|| settings.regions())
     }
 }
 
@@ -205,6 +238,7 @@ impl Filters {
 async fn filter_server_list(
     repl: &mut ReplHandle,
     args: Filters,
+    settings: &Settings,
     spinner: Spinner,
 ) -> Result<FilterData, CmdErr> {
     let sources = args
@@ -225,9 +259,9 @@ async fn filter_server_list(
     ));
 
     if args.stats {
-        StatTrackStrategy::execute(repl, args, sources, spinner).await
+        StatTrackStrategy::execute(repl, args, settings, sources, spinner).await
     } else {
-        FastStrategy::execute(repl, args, sources, spinner).await
+        FastStrategy::execute(repl, args, settings, sources, spinner).await
     }
 }
 

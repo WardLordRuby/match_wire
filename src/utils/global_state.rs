@@ -14,10 +14,10 @@ use crate::{
     commands::{
         filter::{FilterPreProcess, Server, process_stats},
         handler::{CommandSender, Message, ReplHandle},
-        launch_h2m::{HostName, WinApiErr, game_open, terminate_process_by_id},
+        launch::{HostName, WinApiErr, game_open, terminate_process_by_id},
     },
     models::json_data::{CacheFile, CondManifest, Version},
-    splash_screen, try_fit_table, try_parse_signed_json,
+    try_fit_table, try_parse_signed_json,
 };
 
 use std::{
@@ -54,13 +54,66 @@ thread_local! {
     static FORWARD_LOGS: Cell<bool> = const { Cell::new(false) };
     static ENDPOINTS: OnceCell<Endpoints> = const { OnceCell::new() };
     static PTY_HANDLE: RefCell<Option<PTY>> = panic!("Attempted to access PTY prior to set");
-    static SELF_HWND: Option<HWND> = crate::commands::launch_h2m::get_console_hwnd()
+    static SELF_HWND: Option<HWND> = crate::commands::launch::get_console_hwnd()
         .map_err(crate::utils::display::error)
         .unwrap_or_default();
     static LAST_SERVER_STATS: RefCell<ServerStatsInner> =
         const { RefCell::new((Vec::new(), Vec::new(), FilterPreProcess::default())) };
     static ID_MAPS: OnceCell<IDMapsInner> = const { OnceCell::new() };
     static GAME_ID_MAP: OnceCell<HashMap<&'static str, &'static str>> = const { OnceCell::new() };
+    static ALT_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
+    static ALT_SCREEN_EVENT_BUFFER: RefCell<AltScreenEvents> = RefCell::new(AltScreenEvents::default());
+}
+
+#[derive(Default)]
+pub(crate) struct AltScreenEvents {
+    #[allow(dead_code)] // currently only used on release
+    pub(crate) pre_subscriber: Vec<Message>,
+    pub(crate) from_subscriber: String,
+}
+
+#[cfg(not(debug_assertions))]
+use tracing_subscriber::fmt::format::Writer;
+
+pub(crate) struct AltScreen;
+
+impl AltScreen {
+    pub(crate) fn enter() {
+        ALT_SCREEN_VIS.set(true);
+    }
+
+    pub(crate) fn leave() {
+        ALT_SCREEN_VIS.set(false);
+        let events = ALT_SCREEN_EVENT_BUFFER.take();
+
+        events
+            .pre_subscriber
+            .into_iter()
+            .for_each(|message| message.record());
+
+        print!("{}", events.from_subscriber);
+    }
+
+    pub(crate) fn is_visible() -> bool {
+        ALT_SCREEN_VIS.get()
+    }
+
+    /// Prefer a tracing event when possible as our subscriber format layer takes care of fn call behind the scenes
+    pub fn push_message(message: Message) {
+        if !ALT_SCREEN_VIS.get() {
+            return message.record();
+        }
+
+        ALT_SCREEN_EVENT_BUFFER.with_borrow_mut(|buf| buf.pre_subscriber.push(message))
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub(crate) fn push_formatter<F>(print: F) -> std::fmt::Result
+    where
+        F: FnOnce(Writer<'_>) -> std::fmt::Result,
+    {
+        ALT_SCREEN_EVENT_BUFFER.with_borrow_mut(|buf| print(Writer::new(&mut buf.from_subscriber)))
+    }
 }
 
 pub struct Cache {
@@ -167,7 +220,7 @@ impl Endpoints {
                 Some(startup.version)
             }
             Err(err) => {
-                splash_screen::push_message(Message::error(format!(
+                AltScreen::push_message(Message::error(format!(
                     "Failed to verify startup data: {err}"
                 )));
                 Self::set_default();

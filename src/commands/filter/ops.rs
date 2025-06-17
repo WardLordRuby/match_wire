@@ -1,14 +1,15 @@
 use super::{
-    Addressable, DEFAULT_INFO_RETRIES, GetInfoMetaData, LocationBatchRes, RETRY_TIME_SCALE,
-    Request, Server, Sourced, UnresponsiveCounter, strategies::FilterStrategy, try_get_info,
+    Addressable, GetInfoMetaData, LocationBatchRes, RETRY_TIME_SCALE, RegionContainer, Request,
+    Server, Sourced, UnresponsiveCounter, strategies::FilterStrategy, try_batched_location_lookup,
+    try_get_info,
 };
 use crate::{
     LOG_ONLY, ResponseErr, STATUS_OK,
-    commands::filter::try_batched_location_lookup,
+    commands::settings::Settings,
     make_slice_ascii_lowercase,
     models::{
         cli::{Filters, Source},
-        json_data::{ContCode, HostData},
+        json_data::HostData,
     },
     parse_hostname,
     utils::{
@@ -173,6 +174,7 @@ pub(crate) fn spawn_info_requests(
 pub(super) async fn join_info_requests<R>(
     mut requests: JoinSet<Result<Server, GetInfoMetaData>>,
     args: &Filters,
+    settings: &Settings,
     client: &Client,
     spinner: &Spinner,
     init: impl FnOnce(usize) -> R,
@@ -184,7 +186,7 @@ pub(super) async fn join_info_requests<R>(
     let mut responses = Vec::with_capacity(requests.len());
     let mut did_not_respond = UnresponsiveCounter::default();
     let mut sent_retires = false;
-    let max_attempts = args.retry_max.unwrap_or(DEFAULT_INFO_RETRIES);
+    let max_attempts = args.retry_max.unwrap_or(settings.server_retires);
     let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
 
     while !requests.is_empty() {
@@ -291,7 +293,7 @@ pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes
 /// Does not retain the ordering of `servers`, internally appends valid new lookups to the end
 pub(super) async fn filter_via_region<S>(
     sourced_servers: &mut Vec<S>,
-    regions: &HashSet<ContCode>,
+    regions: &RegionContainer,
     client: &Client,
     spinner: &Spinner,
 ) -> bool

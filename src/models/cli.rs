@@ -1,4 +1,7 @@
-use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE, commands::reconnect::HISTORY_MAX};
+use crate::{
+    H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE,
+    commands::{reconnect::HISTORY_MAX, settings::RETRIES_MAX},
+};
 
 use clap::{Args, Parser, ValueEnum, value_parser};
 
@@ -53,10 +56,6 @@ pub(crate) enum Command {
     #[command(aliases(["Gamedir", "gamedir", "GameDir"]))]
     GameDir,
 
-    /// Quit the program
-    #[command(alias = "Quit")]
-    Quit,
-
     /// Print version
     #[command(alias = "Version")]
     Version {
@@ -64,6 +63,18 @@ pub(crate) enum Command {
         #[arg(long, alias = "verify")]
         verify_all: bool,
     },
+
+    /// Modify MatchWire defaults
+    #[command(alias = "Settings")]
+    Settings {
+        /// Reset settings to MatchWire defaults
+        #[arg(long, alias = "verify")]
+        use_default: bool,
+    },
+
+    /// Quit the program
+    #[command(alias = "Quit")]
+    Quit,
 
     /// Open the current local data directory
     #[command(aliases(["Localenv", "localenv", "LocalEnv"]), hide = true)]
@@ -98,11 +109,11 @@ pub(crate) struct Filters {
     pub(crate) limit: Option<usize>,
 
     /// Specify a minimum number of players a server must have [Default: 0]
-    #[arg(short, long, value_name = "MIN_PLAYERS", value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM))]
+    #[arg(short, long, value_name = "MIN_PLAYERS", value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM as i64))]
     pub(crate) player_min: Option<u8>,
 
     /// Specify a maximum team size [Default: 9]
-    #[arg(short, long, value_name = "MAX_TEAM_SIZE", value_parser = value_parser!(u8).range(1..=H2M_MAX_TEAM_SIZE))]
+    #[arg(short, long, value_name = "MAX_TEAM_SIZE", value_parser = value_parser!(u8).range(1..=H2M_MAX_TEAM_SIZE as i64))]
     pub(crate) team_size_max: Option<u8>,
 
     /// Server contains bot players
@@ -140,7 +151,7 @@ pub(crate) struct Filters {
     pub(crate) excludes: Option<Vec<String>>,
 
     /// Specify a maximum number of 'getInfo' retries [Default: 3]
-    #[arg(long, value_name = "MAX_ATTEMPTS", value_parser = value_parser!(u8).range(0..=20))]
+    #[arg(long, value_name = "MAX_ATTEMPTS", value_parser = value_parser!(u8).range(0..=RETRIES_MAX as i64))]
     pub(crate) retry_max: Option<u8>,
 
     /// Display statistics about the servers found in the current filter

@@ -2,10 +2,11 @@ use crate::{
     CRATE_NAME, LOG_ONLY, MAIN_PROMPT, MOD_FILES_MODULE_NAME, ResponseErr, SAVED_HISTORY_CAP,
     commands::{
         filter::build_favorites,
-        launch_h2m::{
-            LaunchError, WinApiErr, game_open, hide_pseudo_console, init_listener,
-            launch_h2m_pseudo, toggle_close_state,
+        launch::{
+            LaunchError, WinApiErr, game_open, hide_pseudo_console, init_listener, spawn_pseudo,
+            toggle_close_state,
         },
+        settings::{Settings, SettingsRenderer},
     },
     exe_details,
     files::*,
@@ -14,13 +15,13 @@ use crate::{
         cli::{CacheCmd, Command, Filters},
         json_data::{CacheFile, CondManifest, HmwManifest, Version},
     },
-    open_dir, splash_screen,
+    open_dir, send_msg_over, splash_screen,
     utils::{
         caching::{build_cache, write_cache},
         display::{
             self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp, indicator::ProgressBar,
         },
-        global_state::{self, Cache, ThreadCopyState},
+        global_state::{self, AltScreen, Cache, ThreadCopyState},
     },
 };
 
@@ -62,7 +63,7 @@ use winptyrs::PTY;
 
 macro_rules! hmw_hash_err {
     ($($arg:tt)*) => {
-        error!("Could not get latest HMW version: {}", format_args!($($arg)*))
+        error!("Could not get latest HMW version - {}", format_args!($($arg)*))
     }
 }
 
@@ -183,6 +184,7 @@ impl GameDetails {
     pub fn get(
         cache: Option<&CacheFile>,
         exe_dir: &Path,
+        settings: &Settings,
     ) -> Result<(Self, bool), Cow<'static, str>> {
         let mod_verification = if cache.is_some_and(|cache| cache.hmw_manifest.verified) {
             ModFileStatus::UpToDate
@@ -199,7 +201,7 @@ impl GameDetails {
 
             #[cfg(debug_assertions)]
             true
-        };
+        } || !settings.launch_on_startup;
 
         #[cfg(not(debug_assertions))]
         {
@@ -209,7 +211,7 @@ impl GameDetails {
                     GameDetails::new(game_exe_path, version, hash, mod_verification)
                 }
                 Err(err) if no_launch => {
-                    splash_screen::push_message(Message::error(err));
+                    AltScreen::push_message(Message::error(err));
                     GameDetails::default(&exe_dir, mod_verification)
                 }
                 Err(err) => return Err(err),
@@ -461,6 +463,8 @@ pub struct CommandContext {
     pub game_state_change: Arc<Notify>,
     game: GameDetails,
     appdata: AppDetails,
+    pub settings: Settings,
+    pub(crate) settings_disp: SettingsRenderer,
     queued_con_task: Option<JoinHandle<()>>,
 }
 
@@ -503,6 +507,7 @@ impl Executor<Stdout> for CommandContext {
             Command::GameDir => self.try_open_game_dir(),
             Command::LocalEnv => self.try_open_local_dir(),
             Command::Version { verify_all } => self.print_version(verify_all).await,
+            Command::Settings { use_default } => self.settings(line_handle, use_default),
             Command::Quit => self.quit(),
         }
     }
@@ -512,8 +517,8 @@ pub struct StartupData {
     pub local_dir: Option<PathBuf>,
     pub game: GameDetails,
     pub appdata: AppDetails,
+    pub settings: Settings,
     pub cache_task: JoinHandle<StartupCacheContents>,
-    pub splash_task: JoinHandle<io::Result<()>>,
     pub launch_task: JoinHandle<Option<Result<PTY, LaunchError>>>,
     pub hmw_manifest_task: JoinHandle<Result<HmwManifest, ResponseErr>>,
 }
@@ -537,6 +542,7 @@ impl From<HookTag> for i32 {
 impl CommandContext {
     pub async fn from(
         mut startup_data: StartupData,
+        splash_task: JoinHandle<io::Result<()>>,
         term: Stdout,
     ) -> (ReplHandle, Self, Receiver<Message>) {
         let (launch_res, hmw_hash_res, cache_res) = tokio::join!(
@@ -548,7 +554,7 @@ impl CommandContext {
         macro_rules! hmw_launch_err {
             ($($arg:tt)*) => {{
                 error!("Could not launch H2M as child process: {}", format_args!($($arg)*));
-                splash_screen::push_message(Message::Str(ConnectionHelp.into()));
+                AltScreen::push_message(Message::Str(ConnectionHelp.into()));
                 None
             }}
         }
@@ -584,7 +590,7 @@ impl CommandContext {
                     .conditional_condense_manifest(latest_manifest);
 
                 if startup_data.game.prep_verification_state().is_err() {
-                    splash_screen::push_message(Message::str(
+                    AltScreen::push_message(Message::str(
                         startup_data.game.mod_verification.to_string(),
                     ));
                 } else if let (Some(hash_curr), Some(hash_latest)) = (
@@ -617,6 +623,8 @@ impl CommandContext {
             game_state_change: Arc::new(Notify::const_new()),
             appdata: startup_data.appdata,
             game: startup_data.game,
+            settings: startup_data.settings,
+            settings_disp: SettingsRenderer::new(),
             local_dir: startup_data.local_dir,
             can_close_console: true,
             queued_con_task: None,
@@ -626,7 +634,7 @@ impl CommandContext {
             ctx.listener_routine().unwrap_or_else(display::warning);
         }
 
-        splash_screen::leave(startup_data.splash_task).await;
+        splash_screen::leave(splash_task).await;
 
         (
             repl_builder(term)
@@ -643,6 +651,10 @@ impl CommandContext {
     #[inline]
     pub(crate) fn local_dir(&self) -> Option<&Path> {
         self.local_dir.as_deref()
+    }
+    #[inline]
+    pub(crate) fn get_exe_dir(&self) -> &Path {
+        self.game.get_exe_dir()
     }
     #[inline]
     pub(crate) fn msg_sender(&self) -> Sender<Message> {
@@ -732,7 +744,7 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        match launch_h2m_pseudo(&self.game.path) {
+        match spawn_pseudo(&self.game.path) {
             Ok(conpty) => {
                 info!("Launching {}...", self.game_name());
                 self.game.update(exe_details(&self.game.path));
@@ -824,7 +836,7 @@ impl CommandContext {
             };
 
             for msg in messages {
-                msg_sender.send(msg).await.unwrap_or_else(|err| err.0.log());
+                send_msg_over(&msg_sender, msg).await;
             }
         });
         Ok(())
@@ -835,15 +847,7 @@ impl CommandContext {
         repl: &mut ReplHandle,
         args: Option<Filters>,
     ) -> io::Result<CommandHandle> {
-        let exe_dir = self.game.path.parent().expect("has parent");
-
-        let build_res = build_favorites(
-            repl,
-            exe_dir,
-            args.unwrap_or_default(),
-            self.game.version.unwrap_or(1.0),
-        )
-        .await;
+        let build_res = build_favorites(self, repl, args).await;
 
         if let Some(cache_modified) = CmdErr::transpose(build_res)? {
             global_state::UpdateCache::and_modify(|curr| curr || cache_modified);
