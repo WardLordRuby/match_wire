@@ -39,7 +39,7 @@ async fn main() {
     let mut term = std::io::stdout();
     execute!(term, cursor::Hide, SetTitle(CRATE_NAME)).unwrap();
 
-    let splash_task = tokio::spawn(splash_screen::enter());
+    let splash_task = splash_screen::enter();
 
     let appdata_local = try_init_logger();
     let latest_version_data = global_state::Endpoints::init().await;

@@ -101,7 +101,7 @@ pub const LOCAL_DATA: &str = "LOCALAPPDATA";
 pub(crate) const CACHED_DATA: &str = "cache.json";
 
 pub mod splash_screen {
-    use std::io;
+    use std::{io, thread::JoinHandle};
 
     #[cfg(not(debug_assertions))]
     use crossterm::{
@@ -112,7 +112,12 @@ pub mod splash_screen {
     #[cfg(not(debug_assertions))]
     use crate::global_state::AltScreen;
 
-    pub async fn enter() -> io::Result<()> {
+    pub fn enter() -> JoinHandle<io::Result<()>> {
+        #[cfg(debug_assertions)]
+        {
+            std::thread::spawn(|| Ok(()))
+        }
+
         #[cfg(not(debug_assertions))]
         {
             // font: 4Max - patorjk.com
@@ -123,37 +128,39 @@ pub mod splash_screen {
                 r#"88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888"#,
             ];
 
-            let mut stdout = std::io::stdout();
-
             AltScreen::enter();
-            execute!(stdout, terminal::EnterAlternateScreen)?;
 
-            let (columns, rows) = terminal::size()?;
+            std::thread::spawn(|| {
+                let mut stdout = std::io::stdout();
 
-            let start_y = rows.saturating_sub(SPLASH_TEXT.len() as u16) / 2;
-            let start_x = columns.saturating_sub(SPLASH_TEXT[0].len() as u16) / 2;
+                execute!(stdout, terminal::EnterAlternateScreen)?;
 
-            for (i, &line) in SPLASH_TEXT.iter().enumerate() {
-                execute!(stdout, BeginSynchronizedUpdate)?;
+                let (columns, rows) = terminal::size()?;
+                let start_y = rows.saturating_sub(SPLASH_TEXT.len() as u16) / 2;
+                let start_x = columns.saturating_sub(SPLASH_TEXT[0].len() as u16) / 2;
 
-                queue!(
-                    stdout,
-                    cursor::MoveTo(start_x, start_y + i as u16),
-                    crossterm::style::Print(line)
-                )?;
+                for (i, &line) in SPLASH_TEXT.iter().enumerate() {
+                    execute!(stdout, BeginSynchronizedUpdate)?;
 
-                tokio::time::sleep(std::time::Duration::from_millis(160)).await;
-                execute!(stdout, EndSynchronizedUpdate)?;
-            }
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(start_x, start_y + i as u16),
+                        crossterm::style::Print(line)
+                    )?;
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    std::thread::sleep(std::time::Duration::from_millis(160));
+                    execute!(stdout, EndSynchronizedUpdate)?;
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(2));
+
+                Ok(())
+            })
         }
-
-        Ok(())
     }
 
-    pub(crate) async fn leave(task: tokio::task::JoinHandle<io::Result<()>>) {
-        task.await.unwrap().unwrap();
+    pub(crate) fn leave(task: JoinHandle<io::Result<()>>) {
+        task.join().unwrap().unwrap();
 
         #[cfg(not(debug_assertions))]
         {

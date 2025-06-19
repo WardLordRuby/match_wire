@@ -390,8 +390,13 @@ impl SettingsRenderer {
         disp: &mut Self,
         settings: Settings,
         term: &mut Stdout,
+        bounds: usize,
         f: impl Fn(&mut usize),
     ) -> io::Result<()> {
+        if disp.selected == bounds {
+            return Ok(());
+        }
+
         let mut selected = disp.selected();
 
         for state in [false, true] {
@@ -414,20 +419,14 @@ impl SettingsRenderer {
         Ok(())
     }
 
+    #[inline]
     fn move_up(&mut self, settings: Settings, term: &mut Stdout) -> io::Result<()> {
-        if self.selected == 0 {
-            return Ok(());
-        }
-
-        Self::draw_change(self, settings, term, |i| *i -= 1)
+        Self::draw_change(self, settings, term, 0, |i| *i -= 1)
     }
 
+    #[inline]
     fn move_down(&mut self, settings: Settings, term: &mut Stdout) -> io::Result<()> {
-        if self.selected == self.entries.len() - 1 {
-            return Ok(());
-        }
-
-        Self::draw_change(self, settings, term, |i| *i += 1)
+        Self::draw_change(self, settings, term, self.entries.len() - 1, |i| *i += 1)
     }
 
     fn draw(&mut self, term: &mut Stdout, settings: Settings) -> io::Result<()> {
@@ -547,9 +546,7 @@ impl CommandContext {
                 Ok(())
             },
             |handle, _context| {
-                let term = handle.writer();
-                queue!(term, LeaveAlternateScreen, cursor::Show)?;
-                term.flush()?;
+                execute!(handle.writer(), LeaveAlternateScreen, cursor::Show)?;
 
                 AltScreen::leave();
                 handle.enable_render();

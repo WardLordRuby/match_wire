@@ -542,7 +542,7 @@ impl From<HookTag> for i32 {
 impl CommandContext {
     pub async fn from(
         mut startup_data: StartupData,
-        splash_task: JoinHandle<io::Result<()>>,
+        splash_task: std::thread::JoinHandle<io::Result<()>>,
         term: Stdout,
     ) -> (ReplHandle, Self, Receiver<Message>) {
         let (launch_res, hmw_hash_res, cache_res) = tokio::join!(
@@ -634,7 +634,7 @@ impl CommandContext {
             ctx.listener_routine().unwrap_or_else(display::warning);
         }
 
-        splash_screen::leave(splash_task).await;
+        splash_screen::leave(splash_task);
 
         (
             repl_builder(term)
