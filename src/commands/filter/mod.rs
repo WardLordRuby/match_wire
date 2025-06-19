@@ -121,7 +121,7 @@ pub(crate) async fn build_favorites(
         )
     }
 
-    let mut filter = filter_server_list(repl, args, &ctx.settings, spinner).await?;
+    let mut filter = filter_server_list(repl, args, ctx.settings, spinner).await?;
 
     if filter.duplicates != 0 {
         println!(
@@ -226,7 +226,7 @@ impl Filters {
         !self.with_bots && !self.without_bots && self.include_unresponsive
     }
 
-    fn regions(&self, settings: &Settings) -> Option<RegionContainer> {
+    fn regions(&self, settings: Settings) -> Option<RegionContainer> {
         self.region
             .as_deref()
             .map(Region::to_byte_set)
@@ -238,7 +238,7 @@ impl Filters {
 async fn filter_server_list(
     repl: &mut ReplHandle,
     args: Filters,
-    settings: &Settings,
+    settings: Settings,
     spinner: Spinner,
 ) -> Result<FilterData, CmdErr> {
     let sources = args

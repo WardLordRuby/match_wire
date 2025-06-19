@@ -174,7 +174,7 @@ pub(crate) fn spawn_info_requests(
 pub(super) async fn join_info_requests<R>(
     mut requests: JoinSet<Result<Server, GetInfoMetaData>>,
     args: &Filters,
-    settings: &Settings,
+    settings: Settings,
     client: &Client,
     spinner: &Spinner,
     init: impl FnOnce(usize) -> R,

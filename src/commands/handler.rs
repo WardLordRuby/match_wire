@@ -184,7 +184,7 @@ impl GameDetails {
     pub fn get(
         cache: Option<&CacheFile>,
         exe_dir: &Path,
-        settings: &Settings,
+        settings: Settings,
     ) -> Result<(Self, bool), Cow<'static, str>> {
         let mod_verification = if cache.is_some_and(|cache| cache.hmw_manifest.verified) {
             ModFileStatus::UpToDate

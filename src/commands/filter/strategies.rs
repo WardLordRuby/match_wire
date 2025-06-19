@@ -46,7 +46,7 @@ pub(crate) trait FilterStrategy:
     async fn execute(
         repl: &mut ReplHandle,
         args: Filters,
-        settings: &Settings,
+        settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr>;
@@ -118,7 +118,7 @@ impl FilterStrategy for FastStrategy {
     async fn execute(
         _repl: &mut ReplHandle,
         mut args: Filters,
-        settings: &Settings,
+        settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
@@ -326,7 +326,7 @@ impl FilterStrategy for StatTrackStrategy {
     async fn execute(
         repl: &mut ReplHandle,
         mut args: Filters,
-        settings: &Settings,
+        settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {

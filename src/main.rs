@@ -138,7 +138,7 @@ fn app_startup(
             Err(backup) => backup.cache.as_ref(),
         }),
         exe_dir,
-        &settings,
+        settings,
     )?;
 
     let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());

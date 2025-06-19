@@ -105,6 +105,11 @@ const SETTING_ENTRIES: &[Entry] = &[
     },
 ];
 
+const _: () = assert!(
+    std::mem::size_of::<Settings>() <= std::mem::size_of::<&Settings>(),
+    "functions should now take `Settings` by ref"
+);
+
 #[derive(Deserialize, Serialize, Debug, Clone, Copy)]
 pub struct Settings {
     #[serde(deserialize_with = "retries_deserializer")]
@@ -232,7 +237,7 @@ impl Settings {
         settings.unwrap_or(Self::default())
     }
 
-    pub(crate) fn regions(&self) -> Option<RegionContainer> {
+    pub(crate) fn regions(self) -> Option<RegionContainer> {
         let selected_regions = self.default_regions;
 
         if selected_regions.all() {
@@ -383,7 +388,7 @@ impl SettingsRenderer {
 
     fn draw_change(
         disp: &mut Self,
-        settings: &Settings,
+        settings: Settings,
         term: &mut Stdout,
         f: impl Fn(&mut usize),
     ) -> io::Result<()> {
@@ -409,7 +414,7 @@ impl SettingsRenderer {
         Ok(())
     }
 
-    fn move_up(&mut self, settings: &Settings, term: &mut Stdout) -> io::Result<()> {
+    fn move_up(&mut self, settings: Settings, term: &mut Stdout) -> io::Result<()> {
         if self.selected == 0 {
             return Ok(());
         }
@@ -417,7 +422,7 @@ impl SettingsRenderer {
         Self::draw_change(self, settings, term, |i| *i -= 1)
     }
 
-    fn move_down(&mut self, settings: &Settings, term: &mut Stdout) -> io::Result<()> {
+    fn move_down(&mut self, settings: Settings, term: &mut Stdout) -> io::Result<()> {
         if self.selected == self.entries.len() - 1 {
             return Ok(());
         }
@@ -425,7 +430,7 @@ impl SettingsRenderer {
         Self::draw_change(self, settings, term, |i| *i += 1)
     }
 
-    fn draw(&mut self, term: &mut Stdout, settings: &Settings) -> io::Result<()> {
+    fn draw(&mut self, term: &mut Stdout, settings: Settings) -> io::Result<()> {
         let (mut curr_col, mut curr_row) = (2, 0);
 
         for line in SETTINGS_TEXT {
@@ -536,7 +541,7 @@ impl CommandContext {
 
                 AltScreen::enter();
                 queue!(term, EnterAlternateScreen, cursor::Hide, Clear(All))?;
-                context.settings_disp.draw(term, &context.settings)?;
+                context.settings_disp.draw(term, context.settings)?;
 
                 execute!(term, EndSynchronizedUpdate)?;
                 Ok(())
@@ -566,11 +571,11 @@ impl CommandContext {
                 Event::Key(KeyEvent {
                     code: KeyCode::Up | KeyCode::Char('w'),
                     ..
-                }) => context.settings_disp.move_up(&context.settings, term)?,
+                }) => context.settings_disp.move_up(context.settings, term)?,
                 Event::Key(KeyEvent {
                     code: KeyCode::Down | KeyCode::Char('s'),
                     ..
-                }) => context.settings_disp.move_down(&context.settings, term)?,
+                }) => context.settings_disp.move_down(context.settings, term)?,
                 Event::Key(
                     event @ KeyEvent {
                         code:
