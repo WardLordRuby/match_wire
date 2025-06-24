@@ -188,6 +188,7 @@ pub(crate) enum CacheCmd {
     /// Clears entire cache file including connection history then starts a fresh cache file
     #[value(aliases = ["Reset", "Clear", "clear"])]
     Reset,
+
     /// Updates all server names in the cache  
     /// {n}  Try this if 'reconnect' is returning: "Could not find server in cache"
     #[value(alias = "Update")]

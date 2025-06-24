@@ -9,7 +9,7 @@ use crate::{
         launch::{LaunchError, WinApiErr, game_open},
     },
     global_state,
-    models::cli::Source,
+    models::{cli::Source, json_data::ContCode},
     utils::caching::ReadCacheErr,
 };
 
@@ -170,6 +170,18 @@ impl Display for HmwDownloadHint {
             "HMW mod files are available to download for free through the Horizon MW launcher\n{}",
             global_state::Endpoints::hmw_download()
         )
+    }
+}
+
+pub(crate) struct DisplayContCode(Option<ContCode>);
+
+impl Display for DisplayContCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Some(cont_code) = self.0 else {
+            return write!(f, "??");
+        };
+
+        write!(f, "{}{}", cont_code[0] as char, cont_code[1] as char)
     }
 }
 

@@ -553,7 +553,7 @@ impl CommandContext {
 
         macro_rules! hmw_launch_err {
             ($($arg:tt)*) => {{
-                error!("Could not launch H2M as child process: {}", format_args!($($arg)*));
+                error!("Could not launch game as child process: {}", format_args!($($arg)*));
                 AltScreen::push_message(Message::Str(ConnectionHelp.into()));
                 None
             }}
@@ -1080,7 +1080,7 @@ impl CommandSender for PTY {
         match self.write(os_command) {
             Ok(n_chars) => {
                 if n_chars != (cmd_str.chars().count() + NEW_LINE.len()) as u32 {
-                    return Err(Cow::Borrowed("Failed to send command to h2m console"));
+                    return Err(Cow::Borrowed("Failed to send command to game console"));
                 }
                 Ok(())
             }

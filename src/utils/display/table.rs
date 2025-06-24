@@ -1,4 +1,4 @@
-use super::{BoxBottom, BoxTop, Line, Space};
+use super::{BoxBottom, BoxTop, DisplayContCode, Line, Space};
 use crate::{
     commands::filter::{Addressable, FilterPreProcess, Server, strategies::GameStats},
     elide,
@@ -224,10 +224,7 @@ impl Display for DisplayFilterStats<'_> {
                 ),
                 Space(PASS_WIDTH - private.len()),
                 Space(VERSION_WIDTH - version.chars().count()),
-                self.2
-                    .get(&addr.ip())
-                    .map(|code| code.iter().map(|&i| i as char).collect::<String>())
-                    .unwrap_or_else(|| String::from("??")),
+                DisplayContCode(self.2.get(&addr.ip()).copied()),
                 Space(max_addr_len - addr_len),
             )?;
 

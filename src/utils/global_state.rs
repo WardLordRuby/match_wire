@@ -407,7 +407,7 @@ impl PtyHandle {
     pub(crate) fn is_alive() -> Result<bool, Cow<'static, str>> {
         PTY_HANDLE.with_borrow(|handle| {
             let Some(handle) = handle.as_ref() else {
-                return Err(Cow::Borrowed("No connection to H2M is active"));
+                return Err(Cow::Borrowed("No connection to game client is active"));
             };
 
             handle
@@ -420,7 +420,7 @@ impl PtyHandle {
         if let Err(err) = {
             match Self::is_alive() {
                 Ok(true) => Ok(()),
-                Ok(false) => Err(Cow::Borrowed("No connection to H2M is active")),
+                Ok(false) => Err(Cow::Borrowed("No connection to game client is active")),
                 Err(err) => Err(err),
             }
         } {

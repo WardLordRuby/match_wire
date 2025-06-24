@@ -131,7 +131,7 @@ impl CommandContext {
             }
         }
 
-        // Success notification and cache modification taken care of by `HostName::from_request` in launch_h2m.rs.
+        // Success notification and cache modification taken care of by `HostName::from_request` in launch.rs.
         // Since other parts of the process are always scanning the game console looking for direct connection
         // attempts when it is alive.
 
