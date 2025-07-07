@@ -5,7 +5,7 @@
 [hmw-launcher-dl]: https://docs.horizonmw.org/download/
 [rust-dl]: https://www.rust-lang.org/tools/install
 <div align="center">
-    <img src="https://i.imgur.com/VAxzjQZ.png" width="15%" height="15%">
+    <img src="https://i.imgur.com/VAxzjQZ.png" width="15%">
 </div>
 
 # MatchWire
