@@ -141,7 +141,7 @@ pub(crate) async fn build_favorites(
     }
 
     for (addr, _) in filter.servers.iter().rev() {
-        ips.push_str(&format!("\"{}\",", addr));
+        ips.push_str(&format!("\"{addr}\","));
         ip_collected += 1;
         if ip_collected == limit {
             break;

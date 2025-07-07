@@ -572,15 +572,14 @@ impl CommandContext {
         if let (Some(curr), Some(latest)) = (
             startup_data.appdata.hash_curr.as_deref(),
             startup_data.appdata.hash_latest.as_deref(),
-        ) {
-            if curr != latest {
-                let msg = startup_data
-                    .appdata
-                    .update_msg
-                    .as_deref()
-                    .expect("Must be `Some` if `hash_latest` is `Some`");
-                info!("{msg}",)
-            }
+        ) && curr != latest
+        {
+            let msg = startup_data
+                .appdata
+                .update_msg
+                .as_deref()
+                .expect("Must be `Some` if `hash_latest` is `Some`");
+            info!("{msg}",)
         }
 
         match hmw_hash_res {
@@ -596,13 +595,12 @@ impl CommandContext {
                 } else if let (Some(hash_curr), Some(hash_latest)) = (
                     startup_data.game.hash_curr.as_deref(),
                     startup_data.game.hash_latest.as_deref(),
-                ) {
-                    if hash_curr != hash_latest {
-                        if let ModFileStatus::UpToDate = startup_data.game.mod_verification {
-                            startup_data.game.mod_verification = ModFileStatus::VerifyReady;
-                        }
-                        info!("{HmwUpdateHelp}")
+                ) && hash_curr != hash_latest
+                {
+                    if let ModFileStatus::UpToDate = startup_data.game.mod_verification {
+                        startup_data.game.mod_verification = ModFileStatus::VerifyReady;
                     }
+                    info!("{HmwUpdateHelp}")
                 }
             }
             Ok(Err(err)) => hmw_hash_err!("{err}"),

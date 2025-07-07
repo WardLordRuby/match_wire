@@ -89,10 +89,11 @@ mod test {
 
         for _ in 0..60 {
             let max_clients = rng.random_range(2..=H2M_MAX_CLIENT_NUM);
-            let bots = rng
-                .random_bool(0.5)
-                .then(|| max_clients - rng.random_range(1..=max_clients))
-                .unwrap_or_default();
+            let bots = if rng.random_bool(0.5) {
+                max_clients - rng.random_range(1..=max_clients)
+            } else {
+                0
+            };
 
             servers.push(Server {
                 source: Sourced::Hmw(random_socket_addr(rng)),

@@ -190,10 +190,7 @@ pub(super) async fn join_info_requests<R>(
     let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
 
     while !requests.is_empty() {
-        spinner.update_message(format!(
-            "{}",
-            DisplayGetInfoCount(requests.len(), sent_retires)
-        ));
+        spinner.update_message(DisplayGetInfoCount(requests.len(), sent_retires).to_string());
 
         let mut retries = JoinSet::new();
         while let Some(res) = requests.join_next().await {

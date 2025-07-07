@@ -209,7 +209,7 @@ impl Display for DisplayFilterStats<'_> {
             let player_ct = server.info.player_ct();
             let bots = server.info.bots;
             let max_players = server.info.max_public_slots();
-            let private = server.info.private.then_some("X").unwrap_or_default();
+            let private = if server.info.private { "X" } else { "" };
             let version = parse_ver(&server.info.game_version);
             let addr = server.socket_addr();
             writeln!(
