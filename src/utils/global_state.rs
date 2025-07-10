@@ -597,7 +597,7 @@ mod test {
         let cleartext_string = cleartext_response.text().unwrap();
         let public_key_string = public_key_response.text().unwrap();
 
-        pgp_verify_cleartext(cleartext_string, &public_key_string)
+        pgp_verify_cleartext(cleartext_string.trim(), public_key_string.trim())
     }
 
     #[test]

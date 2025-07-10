@@ -1,6 +1,6 @@
 [package]
 name = "match_wire"
-version = "0.6.2"
+version = "0.6.3"
 authors = ["WardLordRuby"]
 description = """
 MatchWire enhances the core H2M/HMW experience by offering key quality-of-life improvements.
@@ -12,7 +12,7 @@ edition = "2024"
 [package.metadata.winresource]
 ProductName = "MatchWire"
 FileDescription = "HMW-mod launcher"
-ProductVersion = "0.6.2"
+ProductVersion = "0.6.3"
 
 [profile.release]
 strip = true

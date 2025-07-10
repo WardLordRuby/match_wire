@@ -307,32 +307,16 @@ pub(crate) async fn try_parse_signed_json<T: serde::de::DeserializeOwned>(
     let (cleartext_string, public_key_string) =
         tokio::try_join!(cleartext_response.text(), public_key_response.text())?;
 
-    let signed_string = pgp_verify_cleartext(cleartext_string, &public_key_string)?;
+    let signed_string = pgp_verify_cleartext(&cleartext_string, &public_key_string)?;
     info!(name: LOG_ONLY, "{cleartext_ctx} PGP signature verified!");
 
     serde_json::from_str::<T>(&signed_string)
         .map_err(|err| ResponseErr::Serialize(cleartext_ctx, err))
 }
 
-pub fn pgp_verify_cleartext(
-    mut cleartext_string: String,
-    public_key_str: &str,
-) -> Result<String, ResponseErr> {
-    // MARK: XXX
-    // Remove this manual addition of the rfc9580 7.1 Cleartext header once HMW manifest is compliant
-    const CLEARTEXT_HEADER: &str = "-----BEGIN PGP SIGNED MESSAGE-----";
-    const PGP_SIG_HEADER: &str = "-----BEGIN PGP SIGNATURE-----";
-    if !cleartext_string.starts_with(CLEARTEXT_HEADER) {
-        let split_i = cleartext_string
-            .find(PGP_SIG_HEADER)
-            .ok_or_else(|| ResponseErr::other("Manifest did not contain PGP signature"))?;
-
-        let (signed_msg, signature) = cleartext_string.split_at(split_i);
-        cleartext_string = format!("{CLEARTEXT_HEADER}\nHash: SHA256\n\n{signed_msg}\n{signature}");
-    }
-
-    let (public_key, _headers_public) = SignedPublicKey::from_string(public_key_str)?;
-    let (msg, _headers_msg) = CleartextSignedMessage::from_string(&cleartext_string)?;
+pub fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> Result<String, ResponseErr> {
+    let (public_key, _headers_public) = SignedPublicKey::from_string(public_key.trim())?;
+    let (msg, _headers_msg) = CleartextSignedMessage::from_string(cleartext.trim())?;
 
     msg.verify(&public_key)?;
     Ok(msg.signed_text())

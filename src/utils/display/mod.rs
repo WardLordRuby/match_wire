@@ -521,10 +521,10 @@ impl Display for AppDetails {
             ""
         };
         write!(f, "{CRATE_NAME}.exe {color}v{CRATE_VER}{RESET}")?;
-        if let Some(msg) = self.update_msg.as_deref() {
-            if color == YELLOW {
-                write!(f, "\n{msg}")?;
-            }
+        if color == YELLOW
+            && let Some(msg) = self.update_msg.as_deref()
+        {
+            write!(f, "\n{GREEN}{msg}{RESET}")?;
         }
         Ok(())
     }

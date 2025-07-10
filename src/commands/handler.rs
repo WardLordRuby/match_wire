@@ -871,6 +871,8 @@ impl CommandContext {
         }
 
         if verify_all {
+            self.game.update(exe_details(&self.game.path));
+
             if !self.game.manifest_verified() {
                 println!("{RED}Failed to verify integrity of HMW manifest{RESET}");
                 return Ok(CommandHandle::Processed);
