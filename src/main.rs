@@ -4,12 +4,11 @@ use match_wire::{
         handler::{
             AppDetails, CommandContext, GameDetails, HistoryTag, Message, ReplHandle, StartupData,
         },
-        launch::spawn_pseudo,
         settings::Settings,
     },
     get_latest_hmw_manifest,
     models::json_data::Version,
-    print_help, splash_screen, startup_cache_task, try_init_logger,
+    print_help, splash_screen, startup_cache_task, try_init_launch, try_init_logger,
     utils::{
         caching::read_cache,
         display::{self, DisplayPanic},
@@ -142,18 +141,7 @@ fn app_startup(
     )?;
 
     let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
-
-    let launch_task = tokio::spawn({
-        let game_exe_path = game.path.clone();
-        async move {
-            if no_launch {
-                return None;
-            }
-            // delay h2m doesn't block splash screen
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            Some(spawn_pseudo(&game_exe_path))
-        }
-    });
+    let launch_task = tokio::spawn(try_init_launch(game.path.clone(), no_launch));
 
     Ok(StartupData {
         local_dir,

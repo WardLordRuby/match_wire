@@ -20,7 +20,7 @@ pub mod utils {
 use crate::{
     commands::{
         handler::{Message, ReplHandle, StartupCacheContents},
-        launch::get_exe_version,
+        launch::{LaunchError, game_open, get_exe_version, spawn_pseudo},
     },
     models::{
         cli::Command,
@@ -28,7 +28,7 @@ use crate::{
     },
     utils::{
         caching::{ReadCacheErr, build_cache},
-        display::{self, table::TABLE_PADDING},
+        display::{self, ConnectionHelp, table::TABLE_PADDING},
         global_state::{self, AltScreen},
         subscriber::init_subscriber,
     },
@@ -52,6 +52,7 @@ use repl_oxide::ansi_code::{RED, RESET};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use tracing::{error, info};
+use winptyrs::PTY;
 
 pub(crate) const STATUS_OK: reqwest::StatusCode = reqwest::StatusCode::OK;
 
@@ -227,6 +228,33 @@ pub fn try_init_logger() -> Option<PathBuf> {
 
         None
     }
+}
+
+pub async fn try_init_launch(
+    exe_path: PathBuf,
+    no_launch: bool,
+) -> Option<Result<PTY, LaunchError>> {
+    if no_launch {
+        return None;
+    }
+
+    let game_open = match game_open() {
+        Ok(open_status) => open_status,
+        Err(err) => {
+            error!("{err}, could not determine if it is okay to launch");
+            return None;
+        }
+    };
+
+    if let Some(window_name) = game_open {
+        AltScreen::push_message(Message::str(format!(
+            "{RED}{window_name} is already running{RESET}\n{ConnectionHelp}"
+        )));
+    }
+
+    // delay h2m doesn't block splash screen
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    Some(spawn_pseudo(&exe_path))
 }
 
 pub(crate) fn client_with_timeout(secs: u64) -> Client {
@@ -561,11 +589,7 @@ pub struct NonZeroDuration(Duration);
 
 impl NonZeroDuration {
     pub const fn new(duration: Duration) -> Option<Self> {
-        if duration.is_zero() {
-            None
-        } else {
-            Some(Self(duration))
-        }
+        if duration.is_zero() { None } else { Some(Self(duration)) }
     }
 
     pub const fn get(&self) -> Duration {

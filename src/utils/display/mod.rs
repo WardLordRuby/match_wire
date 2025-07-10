@@ -401,7 +401,6 @@ impl Display for WinApiErr {
 impl Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::GameRunning(found_game) => write!(f, "{found_game} is already running"),
             Self::SpawnErr(err) => write!(f, "{}", err.to_string_lossy()),
             Self::WinApiErr(err) => write!(f, "{err}"),
         }

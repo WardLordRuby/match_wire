@@ -734,11 +734,28 @@ impl CommandContext {
     }
 
     pub(crate) fn launch_handler(&mut self) -> io::Result<CommandHandle> {
+        let game_open = match game_open() {
+            Ok(open_status) => open_status,
+            Err(err) => {
+                error!("{err}, could not determine if it is okay to launch");
+                return Ok(CommandHandle::Processed);
+            }
+        };
+
         if global_state::PtyHandle::check_connection().is_ok() {
-            println!(
-                "{GREEN}Connection to {} already active{RESET}",
-                self.game_name()
-            );
+            if game_open.is_some() {
+                println!(
+                    "{GREEN}Connection to {} already active{RESET}",
+                    self.game_name()
+                );
+                return Ok(CommandHandle::Processed);
+            }
+            global_state::PtyHandle::wait_for_exit(&self.game_name());
+        }
+
+        if let Some(window_name) = game_open {
+            println!("{RED}{window_name} is already running{RESET}");
+            println!("{ConnectionHelp}");
             return Ok(CommandHandle::Processed);
         }
 
@@ -751,13 +768,7 @@ impl CommandContext {
                     error!("{err}")
                 }
             }
-            Err(err) => match err {
-                already_open_err @ LaunchError::GameRunning(_) => {
-                    println!("{RED}{already_open_err}{RESET}");
-                    println!("{ConnectionHelp}");
-                }
-                other_err => error!("{other_err}"),
-            },
+            Err(err) => error!("{err}"),
         };
         Ok(CommandHandle::Processed)
     }

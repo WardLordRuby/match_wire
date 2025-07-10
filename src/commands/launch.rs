@@ -278,11 +278,7 @@ pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
     tokio::spawn(async move {
         let mut buffer = OsString::new();
 
-        let connecting_bytes = if version < 1.0 {
-            JOIN_BYTES
-        } else {
-            CONNECTING_BYTES
-        };
+        let connecting_bytes = if version < 1.0 { JOIN_BYTES } else { CONNECTING_BYTES };
 
         /// 16 KB
         const BUFFER_SIZE: u32 = 16384;
@@ -395,7 +391,6 @@ pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
 }
 
 pub enum LaunchError {
-    GameRunning(&'static str),
     SpawnErr(OsString),
     WinApiErr(WinApiErr),
 }
@@ -439,11 +434,8 @@ impl WinApiErr {
     }
 }
 
-pub fn spawn_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
-    if let Some(game_name) = game_open()? {
-        return Err(LaunchError::GameRunning(game_name));
-    }
-
+/// **IMPORTANT**: caller **MUST** ensure game is not open prior to this call
+pub(crate) fn spawn_pseudo(game_path: &Path) -> Result<PTY, LaunchError> {
     let pty_args = PTYArgs {
         cols: 250,
         rows: 50,
