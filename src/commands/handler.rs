@@ -19,7 +19,7 @@ use crate::{
     utils::{
         caching::{build_cache, write_cache},
         display::{
-            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, HmwUpdateHelp, indicator::ProgressBar,
+            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, VERIFY_HELP, indicator::ProgressBar,
         },
         global_state::{self, AltScreen, Cache, ThreadCopyState},
     },
@@ -162,6 +162,7 @@ impl Display for Message {
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum ModFileStatus {
     Initial,
     MissingFiles(Vec<String>),
@@ -169,6 +170,35 @@ pub enum ModFileStatus {
     Outdated(Vec<String>),
     UpToDate,
 }
+
+impl ModFileStatus {
+    fn discriminant(&self) -> u8 {
+        // SAFETY: Because `Self` is marked `repr(u8)`, its layout is a `repr(C)` `union`
+        // between `repr(C)` structs, each of which has the `u8` discriminant as its first
+        // field, so we can read the discriminant without offsetting the pointer.
+        unsafe { *<*const _>::from(self).cast::<u8>() }
+    }
+}
+
+impl Ord for ModFileStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.discriminant().cmp(&other.discriminant())
+    }
+}
+
+impl PartialOrd for ModFileStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for ModFileStatus {
+    fn eq(&self, other: &Self) -> bool {
+        self.discriminant() == other.discriminant()
+    }
+}
+
+impl Eq for ModFileStatus {}
 
 #[derive(Debug)]
 pub struct GameDetails {
@@ -276,8 +306,8 @@ impl GameDetails {
         self.hash_latest.is_some()
     }
 
-    /// Returns `true` if `Cache` was modified / manifest was condensed
-    pub(crate) fn conditional_condense_manifest(&mut self, mut man: HmwManifest) -> bool {
+    /// Returns the guid of the previous manifest if a newer manifest was available
+    pub(crate) fn conditional_condense_manifest(&mut self, mut man: HmwManifest) -> Option<String> {
         const NULL_256_HASH: &str =
             "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -289,12 +319,12 @@ impl GameDetails {
             if man.modules.is_empty() {
                 error!("HMW manifest formatting has changed, failed to verify version");
                 self.hash_latest = None;
-                return false;
+                return None;
             }
 
             if cache.hmw_manifest.guid == man.manifest_guid {
                 self.hash_latest = try_get_exe_hash(cache);
-                return false;
+                return None;
             }
 
             self.mod_verification = ModFileStatus::Initial;
@@ -311,6 +341,8 @@ impl GameDetails {
 
             files_with_hashes.retain(|_, hash| !hash.is_empty() && hash != NULL_256_HASH);
 
+            let prev = std::mem::take(&mut cache.hmw_manifest.guid);
+
             cache.hmw_manifest = CondManifest {
                 guid: man.manifest_guid,
                 files_with_hashes,
@@ -318,7 +350,7 @@ impl GameDetails {
             };
 
             self.hash_latest = try_get_exe_hash(cache);
-            true
+            Some(prev)
         })
     }
 
@@ -349,20 +381,15 @@ impl GameDetails {
             return Err(());
         }
 
-        if matches!(
-            self.mod_verification,
-            ModFileStatus::Initial | ModFileStatus::MissingFiles(_)
-        ) {
+        if self.mod_verification < ModFileStatus::VerifyReady {
             self.mod_verification = ModFileStatus::VerifyReady;
         }
         Ok(())
     }
 
     fn verify_hmw_files(&mut self) -> Result<(), ()> {
-        if matches!(
-            self.mod_verification,
-            ModFileStatus::Initial | ModFileStatus::MissingFiles(_)
-        ) && self.prep_verification_state().is_err()
+        if self.mod_verification < ModFileStatus::VerifyReady
+            && self.prep_verification_state().is_err()
         {
             return Ok(());
         }
@@ -468,13 +495,19 @@ pub struct CommandContext {
     queued_con_task: Option<JoinHandle<()>>,
 }
 
+// Note: `discriminant` impl will break if `HistoryTag` contains a non unit variant
 pub enum HistoryTag {
     Invalid,
 }
 
 impl HistoryTag {
+    #[inline]
+    const fn discriminant(self) -> u32 {
+        self as u32
+    }
+
     pub fn filter(tag: Option<u32>) -> bool {
-        tag != Some(Self::Invalid as u32)
+        tag != Some(Self::Invalid.discriminant())
     }
 }
 
@@ -488,7 +521,7 @@ impl Executor<Stdout> for CommandContext {
             Ok(c) => c,
             Err(err) => {
                 line_handle
-                    .tag_last_history(|tag| *tag = Some(HistoryTag::Invalid as u32))
+                    .tag_last_history(|tag| *tag = Some(HistoryTag::Invalid.discriminant()))
                     .expect("command was added");
                 return err.print().map(|_| CommandHandle::Processed);
             }
@@ -529,13 +562,21 @@ pub struct StartupCacheContents {
     pub modified: bool,
 }
 
+// Note: `discriminant` impl will break if `HookTag` contains a non unit variant
 enum HookTag {
     GameConsole,
 }
 
-impl From<HookTag> for i32 {
+impl HookTag {
+    #[inline]
+    const fn discriminant(self) -> u32 {
+        self as u32
+    }
+}
+
+impl From<HookTag> for u32 {
     fn from(tag: HookTag) -> Self {
-        tag as i32
+        tag.discriminant()
     }
 }
 
@@ -579,28 +620,33 @@ impl CommandContext {
                 .update_msg
                 .as_deref()
                 .expect("Must be `Some` if `hash_latest` is `Some`");
-            info!("{msg}",)
+            info!("{msg}");
         }
 
         match hmw_hash_res {
             Ok(Ok(latest_manifest)) => {
-                startup_data
+                let update_msg = startup_data
                     .game
-                    .conditional_condense_manifest(latest_manifest);
+                    .conditional_condense_manifest(latest_manifest)
+                    .filter(|m| !m.is_empty())
+                    .map(|_| format!("{YELLOW}HMW files have changed!{RESET}\n{VERIFY_HELP}"));
 
-                if startup_data.game.prep_verification_state().is_err() {
-                    AltScreen::push_message(Message::str(
-                        startup_data.game.mod_verification.to_string(),
-                    ));
-                } else if let (Some(hash_curr), Some(hash_latest)) = (
+                let _ = startup_data.game.prep_verification_state();
+
+                if let (Some(hash_curr), Some(hash_latest)) = (
                     startup_data.game.hash_curr.as_deref(),
                     startup_data.game.hash_latest.as_deref(),
                 ) && hash_curr != hash_latest
+                    && startup_data.game.mod_verification == ModFileStatus::UpToDate
                 {
-                    if let ModFileStatus::UpToDate = startup_data.game.mod_verification {
-                        startup_data.game.mod_verification = ModFileStatus::VerifyReady;
-                    }
-                    info!("{HmwUpdateHelp}")
+                    startup_data.game.mod_verification = ModFileStatus::VerifyReady;
+                }
+
+                if startup_data.game.mod_verification != ModFileStatus::UpToDate {
+                    AltScreen::push_message(Message::str(
+                        update_msg
+                            .unwrap_or_else(|| startup_data.game.mod_verification.to_string()),
+                    ));
                 }
             }
             Ok(Err(err)) => hmw_hash_err!("{err}"),
@@ -668,7 +714,7 @@ impl CommandContext {
     }
     #[inline]
     pub(crate) fn mod_files_verified(&self) -> bool {
-        matches!(self.game.mod_verification, ModFileStatus::UpToDate)
+        self.game.mod_verification == ModFileStatus::UpToDate
     }
     #[inline]
     pub(crate) fn game_name(&self) -> Cow<'static, str> {
@@ -773,7 +819,7 @@ impl CommandContext {
         Ok(CommandHandle::Processed)
     }
 
-    pub fn save_cache_if_needed(&self, line_handle: &Repl<Self, Stdout>) -> io::Result<()> {
+    pub fn save_cache_if_needed(&self, line_handle: &ReplHandle) -> io::Result<()> {
         if global_state::UpdateCache::take() {
             return write_cache(
                 self,
@@ -786,7 +832,7 @@ impl CommandContext {
 
     pub fn handle_game_state_change(
         &mut self,
-        line_handle: &mut Repl<Self, Stdout>,
+        line_handle: &mut ReplHandle,
     ) -> io::Result<Result<(), WinApiErr>> {
         let game_open = global_state::PtyHandle::check_connection().is_ok();
 
@@ -906,7 +952,10 @@ impl CommandContext {
 
         match hmw_manifest_task.await {
             Ok(Ok(latest_manifest)) => {
-                cache_modified |= self.game.conditional_condense_manifest(latest_manifest);
+                cache_modified |= self
+                    .game
+                    .conditional_condense_manifest(latest_manifest)
+                    .is_some();
             }
             Ok(Err(err)) => hmw_hash_err!("{err}"),
             Err(err) => hmw_hash_err!("{err}"),

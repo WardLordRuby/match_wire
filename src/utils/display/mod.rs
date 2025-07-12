@@ -21,6 +21,16 @@ use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 pub(crate) const DISP_NAME_HMW: &str = "HMW";
 const HMW_LAUNCHER: &str = "HMW Launcher.exe";
 
+pub(crate) const VERIFY_HELP: &str = concat!(
+    GREEN,
+    "Run ",
+    YELLOW,
+    "version --verify-all",
+    GREEN,
+    " to check hashes",
+    RESET,
+);
+
 #[cfg(not(debug_assertions))]
 pub(crate) const DISP_NAME_H2M: &str = "H2M";
 
@@ -416,19 +426,16 @@ impl Display for ReadCacheErr {
 impl Display for ModFileStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (outdated, files) = match self {
+            ModFileStatus::Initial => {
+                unreachable!("Startup will always advance state past `Initial`")
+            }
             ModFileStatus::MissingFiles(items) => (false, items.as_slice()),
+            ModFileStatus::VerifyReady => {
+                return write!(f, "{YELLOW}HMW files not verified{RESET}\n{VERIFY_HELP}");
+            }
             ModFileStatus::Outdated(items) => (true, items.as_slice()),
             ModFileStatus::UpToDate => {
                 return write!(f, "{GREEN}All HMW files verified! GLHF{RESET}");
-            }
-            ModFileStatus::Initial => {
-                return write!(f, "{YELLOW}HMW file verification unchecked{RESET}");
-            }
-            ModFileStatus::VerifyReady => {
-                return write!(
-                    f,
-                    "{YELLOW}No missing HMW files, hashes not verified. Run `version --verify-all` to check hashes{RESET}"
-                );
             }
         };
 
@@ -456,6 +463,16 @@ impl Display for ModFileStatus {
     }
 }
 
+impl ModFileStatus {
+    fn color(&self) -> &'static str {
+        match self {
+            ModFileStatus::Initial | ModFileStatus::VerifyReady => "",
+            ModFileStatus::MissingFiles(_) | ModFileStatus::Outdated(_) => YELLOW,
+            ModFileStatus::UpToDate => GREEN,
+        }
+    }
+}
+
 pub(crate) struct HmwUpdateHelp;
 
 impl Display for HmwUpdateHelp {
@@ -473,20 +490,8 @@ impl Display for GameDetails {
             return Ok(());
         }
 
-        let color = match (self.hash_curr.as_deref(), self.hash_latest.as_deref()) {
-            (Some(curr), Some(latest)) => {
-                if curr == latest {
-                    GREEN
-                } else {
-                    YELLOW
-                }
-            }
-            _ => "",
-        };
-
-        if !color.is_empty() {
-            writeln!(f, "{}", self.mod_verification)?;
-        }
+        let color = self.mod_verification.color();
+        writeln!(f, "{}", self.mod_verification)?;
 
         write!(f, "{} ", self.game_file_name())?;
         if let Some(version) = self.version {

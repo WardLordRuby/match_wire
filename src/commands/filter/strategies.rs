@@ -122,7 +122,7 @@ impl FilterStrategy for FastStrategy {
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
-        let client = client_with_timeout(5);
+        let client = client_with_timeout(6);
 
         let mut sourced_servers = Self::new(sources, &client).await?;
         let mut cache_modified = false;
@@ -330,7 +330,7 @@ impl FilterStrategy for StatTrackStrategy {
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
-        let client = client_with_timeout(5);
+        let client = client_with_timeout(6);
 
         let mut stat_track = Self::new(sources, &client).await?;
 
