@@ -600,12 +600,12 @@ impl<T: RateLimitConfig> Display for RateLimiter<T> {
 }
 
 pub const GAME_DISPLAY_NAMES: [(&str, &str); 15] = [
-    ("COD", "Modern Warfare             (COD)"),
+    ("COD", "Call of Duty 2             (COD)"),
     ("H1", "Modern Warfare Remastered  (H1)"),
     ("HMW", "Horizon Modern Warfare     (HMW)"),
     ("IW3", "Modern Warfare             (IW3)"),
     ("IW4", "Modern Warfare II          (IW4)"),
-    ("IW5", "Modern Warfare III         (IW3)"),
+    ("IW5", "Modern Warfare III         (IW5)"),
     ("IW6", "Ghosts                     (IW6)"),
     ("IW7", "Infinite Warfare           (IW7)"),
     ("T4", "World at War               (T4)"),
