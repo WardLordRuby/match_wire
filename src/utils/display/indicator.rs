@@ -21,6 +21,7 @@ macro_rules! finish {
 }
 
 const P_BAR_LEN: usize = 35;
+const WRITE_INTERVAL: Duration = Duration::from_millis(60);
 
 pub(crate) struct Spinner {
     task: std::thread::JoinHandle<io::Result<()>>,
@@ -38,16 +39,14 @@ impl Spinner {
                 match rx.try_recv() {
                     Ok(new) => message = new,
                     Err(TryRecvError::Empty) => (),
-                    Err(TryRecvError::Disconnected) => {
-                        write!(stdout, "{CLEAR_LINE}")?;
-                        break;
-                    }
+                    Err(TryRecvError::Disconnected) => break,
                 }
                 write!(stdout, "{CLEAR_LINE}{ch} {message}")?;
                 stdout.flush()?;
-                std::thread::sleep(Duration::from_millis(60));
+                std::thread::sleep(WRITE_INTERVAL);
             }
-            Ok(())
+
+            write!(stdout, "{CLEAR_LINE}")
         });
 
         Self { task, sender: tx }
@@ -94,15 +93,12 @@ impl ProgressBar {
                     match rx.try_recv() {
                         Ok(()) => count += 1,
                         Err(TryRecvError::Empty) => {
-                            if start.elapsed() > Duration::from_millis(60) {
+                            if start.elapsed() > WRITE_INTERVAL {
                                 break 'update_ct;
                             }
                             std::thread::sleep(Duration::from_millis(20));
                         }
-                        Err(TryRecvError::Disconnected) => {
-                            write!(stdout, "{CLEAR_LINE}")?;
-                            break 'task;
-                        }
+                        Err(TryRecvError::Disconnected) => break 'task,
                     }
                 }
                 let ticks = Self::ticks(count, tick_div);
@@ -115,7 +111,8 @@ impl ProgressBar {
                 )?;
                 stdout.flush()?;
             }
-            Ok(())
+
+            write!(stdout, "{CLEAR_LINE}")
         });
 
         Self { task, sender: tx }

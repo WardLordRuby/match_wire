@@ -166,21 +166,21 @@ impl SelectedRegions {
     }
 
     #[inline]
-    fn all(&self) -> bool {
-        *self == Self::default()
+    fn all(self) -> bool {
+        self == Self::default()
     }
 
-    fn is_none(&self) -> bool {
-        *self
-            == Self {
-                north_america: false,
-                south_america: false,
-                europe: false,
-                asia_pacific: false,
-            }
+    #[inline]
+    fn is_none(self) -> bool {
+        self == Self {
+            north_america: false,
+            south_america: false,
+            europe: false,
+            asia_pacific: false,
+        }
     }
 
-    fn flatten(&self) -> [(bool, &'static [ContCode]); continent::COUNT] {
+    fn flatten(self) -> [(bool, &'static [ContCode]); continent::COUNT] {
         [
             (self.north_america, &continent::NA_CODE),
             (self.south_america, &continent::SA_CODE),
@@ -433,7 +433,8 @@ impl SettingsRenderer {
         let (mut curr_col, mut curr_row) = (2, 0);
 
         for line in SETTINGS_TEXT {
-            queue!(term, cursor::MoveTo(curr_col, curr_row), Print(line))?;
+            term.queue(cursor::MoveTo(curr_col, curr_row))?
+                .queue(Print(line))?;
             curr_row += 1;
         }
 
@@ -444,8 +445,8 @@ impl SettingsRenderer {
             if !found_regions && matches!(entry.kind, Kind::SubSetBool) {
                 found_regions = true;
 
-                term.queue(cursor::MoveTo(curr_col, curr_row + 1))?;
-                write!(term, "Default regions:")?;
+                term.queue(cursor::MoveTo(curr_col, curr_row + 1))?
+                    .queue(Print("Default regions:"))?;
 
                 curr_col += 2;
                 curr_row += 2;
@@ -461,8 +462,8 @@ impl SettingsRenderer {
         curr_col = self.tip_loc.0;
         curr_row = self.tip_loc.1;
 
-        term.queue(cursor::MoveTo(curr_col, curr_row - 1))?;
-        write!(term, "{}", BoxTop(Some("ToolTip"), TOOLTIP_WIDTH))?;
+        term.queue(cursor::MoveTo(curr_col, curr_row - 1))?
+            .queue(Print(BoxTop(Some("ToolTip"), TOOLTIP_WIDTH)))?;
 
         for line in self.entries[self.selected].tip {
             term.queue(cursor::MoveTo(curr_col, curr_row))?;
@@ -470,12 +471,12 @@ impl SettingsRenderer {
             curr_row += 1;
         }
 
-        term.queue(cursor::MoveTo(curr_col, curr_row))?;
-        write!(term, "{}", BoxBottom(TOOLTIP_WIDTH))?;
+        term.queue(cursor::MoveTo(curr_col, curr_row))?
+            .queue(Print(BoxBottom(TOOLTIP_WIDTH)))?;
         curr_row += 1;
 
-        term.queue(cursor::MoveTo(curr_col, curr_row))?;
-        write!(term, "{}", BoxTop(Some("Keys"), TOOLTIP_WIDTH))?;
+        term.queue(cursor::MoveTo(curr_col, curr_row))?
+            .queue(Print(BoxTop(Some("Keys"), TOOLTIP_WIDTH)))?;
         curr_row += 1;
 
         for key_tip in KEYS {
@@ -484,8 +485,8 @@ impl SettingsRenderer {
             curr_row += 1;
         }
 
-        term.queue(cursor::MoveTo(curr_col, curr_row))?;
-        write!(term, "{}", BoxBottom(TOOLTIP_WIDTH))?;
+        term.queue(cursor::MoveTo(curr_col, curr_row))?
+            .queue(Print(BoxBottom(TOOLTIP_WIDTH)))?;
 
         Ok(())
     }
@@ -493,9 +494,9 @@ impl SettingsRenderer {
 
 #[inline(always)]
 fn write_table_content(term: &mut Stdout, content: &str) -> io::Result<()> {
-    write!(term, "│ {content}")?;
     queue!(
         term,
+        Print(format_args!("│ {content}")),
         Clear(UntilNewLine),
         cursor::MoveToColumn(TOOLTIP_R),
         Print('│')
