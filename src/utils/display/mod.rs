@@ -617,7 +617,7 @@ pub const GAME_DISPLAY_NAMES: [(&str, &str); 15] = [
     ("UKN", "Unknown"),
 ];
 
-pub const MAP_IDS: [(&str, &str); 62] = [
+pub const MAP_IDS: [(&str, &str); 65] = [
     // MWR
     ("mp_convoy", "Ambush"),
     ("mp_backlot", "Backlot"),
@@ -666,6 +666,8 @@ pub const MAP_IDS: [(&str, &str); 62] = [
     ("mp_underpass", "Underpass"),
     ("mp_brecourt", "Wasteland"),
     // MW3
+    ("mp_plaza2", "Arkaden"),
+    ("mp_mogadishu", "Bakaara"),
     ("mp_bootleg", "Bootleg"),
     ("mp_dome", "Dome"),
     ("mp_courtyard_ss", "Erosion"),
@@ -674,6 +676,7 @@ pub const MAP_IDS: [(&str, &str); 62] = [
     ("mp_alpha", "Lockdown"),
     ("mp_bravo", "Mission"),
     ("mp_paris", "Resistance"),
+    ("mp_seatown", "Seatown"),
     ("mp_underground", "Underground"),
     //MW2CR
     ("airport", "Airport"),
@@ -686,10 +689,11 @@ pub const MAP_IDS: [(&str, &str); 62] = [
     ("gulag", "Gulag"),
 ];
 
-pub const GAME_TYPE_IDS: [(&str, &str); 12] = [
+pub const GAME_TYPE_IDS: [(&str, &str); 13] = [
     ("war", "TDM"),
     ("dom", "Domination"),
     ("dd", "Demolition"),
+    ("dz", "Drop Zone"),
     ("ctf", "CTF"),
     ("conf", "Kill Confirmed"),
     ("sd", "S&D"),
