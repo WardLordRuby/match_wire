@@ -3,7 +3,7 @@ use super::{
     Request, Server, Sourced, ops::*, try_batched_location_lookup, try_get_info,
 };
 use crate::{
-    client_with_timeout, command_err,
+    command_err,
     commands::{
         handler::{CmdErr, ReplHandle},
         settings::Settings,
@@ -45,6 +45,7 @@ pub(crate) trait FilterStrategy:
     fn from_cached(cached: Vec<Sourced>) -> Self;
     async fn execute(
         repl: &mut ReplHandle,
+        client: Client,
         args: Filters,
         settings: Settings,
         sources: Option<HashSet<Source>>,
@@ -117,13 +118,12 @@ impl FilterStrategy for FastStrategy {
 
     async fn execute(
         _repl: &mut ReplHandle,
+        client: Client,
         mut args: Filters,
         settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
-        let client = client_with_timeout(6);
-
         let mut sourced_servers = Self::new(sources, &client).await?;
         let mut cache_modified = false;
 
@@ -325,13 +325,12 @@ impl FilterStrategy for StatTrackStrategy {
 
     async fn execute(
         repl: &mut ReplHandle,
+        client: Client,
         mut args: Filters,
         settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
     ) -> Result<FilterData, CmdErr> {
-        let client = client_with_timeout(6);
-
         let mut stat_track = Self::new(sources, &client).await?;
 
         let requests = Self::queue_requests(

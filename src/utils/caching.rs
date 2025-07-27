@@ -125,19 +125,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
         servers
     }
 
-    let splash_screen_visible = {
-        #[cfg(debug_assertions)]
-        {
-            false
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
-            crate::global_state::AltScreen::is_visible()
-        }
-    };
-
-    let spinner = if !splash_screen_visible {
+    let spinner = if !global_state::AltScreen::is_visible() {
         Some(Spinner::new(String::from("Updating cache")))
     } else {
         info!("Updating cache...");

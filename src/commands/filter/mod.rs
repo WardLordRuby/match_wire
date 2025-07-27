@@ -5,7 +5,7 @@ use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 pub use strategies::{FilterPreProcess, GameStats, process_stats};
 
 use crate::{
-    LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, command_err,
+    LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, client_with_timeout, command_err,
     commands::{
         handler::{CmdErr, CommandContext, ReplHandle},
         settings::Settings,
@@ -105,13 +105,9 @@ pub(crate) async fn build_favorites(
 
     let spinner = Spinner::new(String::new());
 
-    let limit = args.limit.unwrap_or({
-        if version < 1.0 {
-            DEFAULT_H2M_SERVER_CAP
-        } else {
-            10000
-        }
-    });
+    let limit = args
+        .limit
+        .unwrap_or(if version < 1.0 { DEFAULT_H2M_SERVER_CAP } else { 10000 });
 
     if version < 1.0 && limit >= DEFAULT_H2M_SERVER_CAP {
         println!(
@@ -258,10 +254,12 @@ async fn filter_server_list(
         )
     ));
 
+    let client = client_with_timeout(10);
+
     if args.stats {
-        StatTrackStrategy::execute(repl, args, settings, sources, spinner).await
+        StatTrackStrategy::execute(repl, client, args, settings, sources, spinner).await
     } else {
-        FastStrategy::execute(repl, args, settings, sources, spinner).await
+        FastStrategy::execute(repl, client, args, settings, sources, spinner).await
     }
 }
 
