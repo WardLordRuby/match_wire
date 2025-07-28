@@ -22,11 +22,12 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    cell::{Cell, OnceCell, RefCell},
+    cell::{Cell, LazyCell, OnceCell, RefCell},
     collections::HashMap,
     fmt::Display,
     io,
     net::{IpAddr, SocketAddr},
+    path::{Path, PathBuf},
     thread::LocalKey,
     time::{Duration, SystemTime},
 };
@@ -40,6 +41,9 @@ const MATCH_WIRE_PUBLIC_PGP_KEY: &str =
     "https://gist.githubusercontent.com/WardLordRuby/ca630bae78429d56a9484a099ddbefde/raw";
 const SIGNED_STARTUP_INFO: &str =
     "https://gist.githubusercontent.com/WardLordRuby/795d840e208df2de08735c152889b2e4/raw";
+
+const ENV_FILE: &str = ".env";
+const ENV_REL_KEY: &str = "HMW_ENV";
 
 type IDMapsInner = (
     HashMap<&'static str, &'static str>,
@@ -63,6 +67,24 @@ thread_local! {
     static GAME_ID_MAP: OnceCell<HashMap<&'static str, &'static str>> = const { OnceCell::new() };
     static ALT_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
     static ALT_SCREEN_EVENT_BUFFER: RefCell<AltScreenEvents> = RefCell::new(AltScreenEvents::default());
+    static EXE_PATH: LazyCell<io::Result<PathBuf>> = LazyCell::new(std::env::current_exe);
+}
+
+pub struct ExePath;
+
+impl ExePath {
+    /// **Warning**: Calling this method outside of the main thread may result in the ability to obtain dangling references
+    pub fn get() -> Result<&'static Path, &'static io::Error> {
+        EXE_PATH.with(|cell|
+            // Safety: Initialization of the `LazyCell` and all subsequent access happen on the same thread set by
+            // tokio "Current thread" runtime. Thus making the thread local and contained `Endpoints` actually 'static.
+            unsafe {
+                std::mem::transmute::<
+                    Result<&Path, &io::Error>,
+                    Result<&'static Path, &'static io::Error>,
+                >(cell.as_deref())
+            })
+    }
 }
 
 #[derive(Default)]
@@ -186,6 +208,9 @@ pub struct Endpoints {
     hmw_download: Cow<'static, str>,
 
     server_info_endpoint: Cow<'static, str>,
+
+    #[serde(skip)]
+    skip_pgp: bool,
 }
 
 impl Endpoints {
@@ -202,20 +227,98 @@ impl Endpoints {
             hmw_pgp_public_key: None,
             hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
             server_info_endpoint: Cow::Borrowed("/getInfo"),
+            skip_pgp: false,
         })
         .expect("only called if failed to reach `STARTUP_INFO_URL`")
     }
 
+    fn search_env() -> Option<String> {
+        let Ok(Some(exe_dir)) = ExePath::get().map(Path::parent) else {
+            return None;
+        };
+
+        let mut env_var_found = false;
+        let env_path = std::env::var(ENV_REL_KEY)
+            .map(|val| {
+                env_var_found = true;
+                let mut user_path = PathBuf::from(val);
+
+                if user_path.is_dir() {
+                    user_path.push(ENV_FILE);
+                }
+
+                if user_path.is_absolute() {
+                    user_path
+                } else {
+                    exe_dir.join(user_path)
+                }
+            })
+            .unwrap_or_else(|_| exe_dir.join(ENV_FILE));
+
+        let exists = env_path.try_exists();
+
+        let Ok(true) = exists else {
+            if env_var_found {
+                match exists {
+                    Ok(true) => unreachable!("by outer let"),
+                    Ok(false) => error!("{}, doesn't exist", env_path.display()),
+                    Err(err) => error!("Env var {ENV_REL_KEY}: {err}"),
+                }
+            }
+            return None;
+        };
+
+        Self::parse_env_file(&env_path).map_err(display::error).ok()
+    }
+
+    fn parse_env_file(path: &Path) -> io::Result<String> {
+        const HOST_KEY: &str = "MASTER_SERVER_HOST";
+        const PROTOCOL_KEY: &str = "MASTER_SERVER_PROTOCOL";
+
+        let file = std::fs::read_to_string(path)?;
+
+        let parse_field = |field| {
+            file.split_once(field)
+                .map(|(_, rhs)| {
+                    rhs.trim_start_matches([' ', '='])
+                        .split_once(char::is_whitespace)
+                        .map(|(val, _)| val)
+                        .unwrap_or(rhs)
+                })
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("env did not contain {field}"),
+                    )
+                })
+        };
+
+        let host = parse_field(HOST_KEY)?;
+        let protocol = parse_field(PROTOCOL_KEY)?;
+
+        Ok(format!(
+            // MARK: TODO
+            // Need to fully implement a system for handling query pram
+            "{protocol}://{host}/manifest?launcherVersion=1.6.1"
+        ))
+    }
+
     pub async fn init() -> Option<Version> {
-        match try_parse_signed_json::<StartupInfo>(
+        let parse_task = tokio::spawn(try_parse_signed_json::<StartupInfo>(
             SIGNED_STARTUP_INFO,
             "MatchWire startup json",
             MATCH_WIRE_PUBLIC_PGP_KEY,
             "MatchWire PGP public key",
-        )
-        .await
-        {
-            Ok(startup) => {
+        ));
+
+        let env_override = Self::search_env();
+
+        match parse_task.await.expect("task can not panic") {
+            Ok(mut startup) => {
+                if env_override.is_some() {
+                    startup.endpoints.skip_pgp = true;
+                    startup.endpoints.hmw_manifest_signed = env_override;
+                }
                 Self::set(startup.endpoints).expect("only valid set");
                 Some(startup.version)
             }
@@ -244,6 +347,10 @@ impl Endpoints {
                 ))
             }
         })
+    }
+
+    pub(crate) fn skip_verification() -> bool {
+        Self::get(|endpoints| endpoints.skip_pgp)
     }
 
     #[cfg(not(debug_assertions))]

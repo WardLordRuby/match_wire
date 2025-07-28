@@ -51,7 +51,7 @@ use pgp::composed::{CleartextSignedMessage, Deserializable, SignedPublicKey};
 use repl_oxide::ansi_code::{RED, RESET};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use winptyrs::PTY;
 
 pub(crate) const STATUS_OK: reqwest::StatusCode = reqwest::StatusCode::OK;
@@ -274,6 +274,11 @@ pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
         ));
     };
 
+    if global_state::Endpoints::skip_verification() {
+        return try_parse_signed_json_unverified::<HmwManifest>(hmw_manifest, "HMW env manifest")
+            .await;
+    }
+
     try_parse_signed_json::<HmwManifest>(
         hmw_manifest,
         "HMW manifest",
@@ -281,6 +286,24 @@ pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
         "HMW PGP public key",
     )
     .await
+}
+
+async fn try_parse_signed_json_unverified<T: serde::de::DeserializeOwned>(
+    cleartext_json_url: &str,
+    cleartext_ctx: &'static str,
+) -> Result<T, ResponseErr> {
+    let hmw_response = reqwest::get(cleartext_json_url).await?;
+
+    if hmw_response.status() != STATUS_OK {
+        return Err(ResponseErr::bad_status(cleartext_ctx, hmw_response));
+    }
+
+    let (msg, _headers_msg) =
+        CleartextSignedMessage::from_string(hmw_response.text().await?.trim())?;
+
+    warn!("{cleartext_ctx} verification bypassed");
+    serde_json::from_str::<T>(&msg.signed_text())
+        .map_err(|err| ResponseErr::Serialize(cleartext_ctx, err))
 }
 
 pub(crate) async fn try_parse_signed_json<T: serde::de::DeserializeOwned>(

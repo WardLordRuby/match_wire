@@ -120,10 +120,10 @@ fn app_startup(
     local_dir: Option<PathBuf>,
     version_data: Option<Version>,
 ) -> Result<StartupData, Cow<'static, str>> {
-    let exe_path =
-        std::env::current_exe().map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
+    let exe_path = global_state::ExePath::get()
+        .map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
 
-    let appdata = AppDetails::from(version_data, &exe_path);
+    let appdata = AppDetails::from(version_data, exe_path);
 
     let exe_dir = exe_path
         .parent()
@@ -140,7 +140,6 @@ fn app_startup(
         settings,
     )?;
 
-    let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
     let launch_task = tokio::spawn(try_init_launch(game.path.clone(), no_launch));
 
     Ok(StartupData {
@@ -150,6 +149,6 @@ fn app_startup(
         settings,
         cache_task: tokio::spawn(startup_cache_task(cache_res)),
         launch_task,
-        hmw_manifest_task,
+        hmw_manifest_task: tokio::spawn(get_latest_hmw_manifest()),
     })
 }
