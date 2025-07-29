@@ -280,8 +280,8 @@ impl Endpoints {
         let parse_field = |field| {
             file.split_once(field)
                 .map(|(_, rhs)| {
-                    rhs.trim_start_matches([' ', '='])
-                        .split_once(char::is_whitespace)
+                    let rhs = rhs.trim_start_matches([' ', '=']);
+                    rhs.split_once(char::is_whitespace)
                         .map(|(val, _)| val)
                         .unwrap_or(rhs)
                 })
@@ -296,11 +296,37 @@ impl Endpoints {
         let host = parse_field(HOST_KEY)?;
         let protocol = parse_field(PROTOCOL_KEY)?;
 
-        Ok(format!(
-            // MARK: TODO
-            // Need to fully implement a system for handling query pram
-            "{protocol}://{host}/manifest?launcherVersion=1.6.1"
-        ))
+        Ok(format!("{protocol}://{host}"))
+    }
+
+    fn set_manifest_override(&mut self, mut host: String) {
+        fn extract_endpoint(url: &str) -> Option<&str> {
+            let mut ct = 0;
+            for (i, ch) in url.char_indices() {
+                if ch == '/' {
+                    ct += 1
+                }
+
+                if ct == 3 {
+                    return Some(&url[i..]);
+                }
+            }
+
+            None
+        }
+
+        if let Some(prev_manifest) = &self.hmw_manifest_signed {
+            if let Some(endpoint) = extract_endpoint(prev_manifest) {
+                host.push_str(endpoint)
+            } else {
+                error!("Failed to find endpoint in prev manifest url: {prev_manifest}")
+            }
+        } else {
+            error!("Failed to append endpoint to env manifest url: no known endpoint available")
+        };
+
+        self.skip_pgp = true;
+        self.hmw_manifest_signed = Some(host);
     }
 
     pub async fn init() -> Option<Version> {
@@ -315,9 +341,8 @@ impl Endpoints {
 
         match parse_task.await.expect("task can not panic") {
             Ok(mut startup) => {
-                if env_override.is_some() {
-                    startup.endpoints.skip_pgp = true;
-                    startup.endpoints.hmw_manifest_signed = env_override;
+                if let Some(env_manifest) = env_override {
+                    startup.endpoints.set_manifest_override(env_manifest);
                 }
                 Self::set(startup.endpoints).expect("only valid set");
                 Some(startup.version)
