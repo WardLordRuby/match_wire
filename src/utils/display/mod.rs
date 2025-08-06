@@ -352,7 +352,7 @@ impl Display for Source {
 }
 
 impl UnresponsiveCounter {
-    fn flatten(&self) -> [(usize, &'static str); 4] {
+    fn flatten(&self) -> Vec<(usize, &'static str)> {
         const _: () = assert!(
             // offset by one since this struct also tracks the use of cached servers
             std::mem::size_of::<UnresponsiveCounter>() == std::mem::size_of::<usize>() * 5,
@@ -365,27 +365,40 @@ impl UnresponsiveCounter {
             (self.iw4, SOURCE_IW4),
             (self.iw4_cached, SOURCE_IW4_CACHED),
         ]
+        .into_iter()
+        .filter(|&(ct, _)| ct > 0)
+        .collect()
     }
 }
 
 impl Display for UnresponsiveCounter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut line_entered = false;
-        let mut display_count_of = |count: usize, source: &'static str| -> std::fmt::Result {
+        let total = self.total();
+        let counts = self.flatten();
+        debug_assert!(!counts.is_empty(), "Nothing to display");
+
+        if counts.len() == 1 {
             write!(
                 f,
-                "{}{} from: {source}, did not respond to a 'getInfo' request",
-                if line_entered { "\n" } else { "" },
-                DisplayServerCount(count, RED),
+                "{} from: {}, did not respond to a 'getInfo' request",
+                DisplayServerCount(counts[0].0, RED),
+                counts[0].1
             )?;
-            line_entered = true;
-            Ok(())
-        };
+        } else {
+            write!(
+                f,
+                "{} did not respond to a 'getInfo' request (",
+                DisplayServerCount(total, RED),
+            )?;
 
-        for (count, source) in self.flatten() {
-            if count > 0 {
-                display_count_of(count, source)?
+            for (i, (count, server)) in counts.into_iter().enumerate() {
+                write!(
+                    f,
+                    "{}{RED}{count}{RESET}-{server}",
+                    if i != 0 { ", " } else { "" }
+                )?;
             }
+            write!(f, ")")?;
         }
 
         if self.used_cached_servers > 0 {
@@ -394,7 +407,7 @@ impl Display for UnresponsiveCounter {
                 "\nIncluded outdated server data for {YELLOW}{}{RESET} \
                     of {} that did not respond to 'getInfo' request",
                 self.used_cached_servers,
-                DisplayServerCount(self.total(), RED)
+                DisplayServerCount(total, RED)
             )?;
         }
 
