@@ -511,6 +511,11 @@ impl HistoryTag {
     }
 }
 
+fn mark_last_cmd_invalid(repl: &mut ReplHandle) {
+    repl.tag_last_history(|tag| *tag = Some(HistoryTag::Invalid.discriminant()))
+        .expect("command was added")
+}
+
 impl Executor<Stdout> for CommandContext {
     async fn try_execute_command(
         &mut self,
@@ -520,9 +525,7 @@ impl Executor<Stdout> for CommandContext {
         let command = match try_parse_from(&user_tokens) {
             Ok(c) => c,
             Err(err) => {
-                line_handle
-                    .tag_last_history(|tag| *tag = Some(HistoryTag::Invalid.discriminant()))
-                    .expect("command was added");
+                mark_last_cmd_invalid(line_handle);
                 return err.print().map(|_| CommandHandle::Processed);
             }
         };
@@ -678,19 +681,22 @@ impl CommandContext {
             ctx.listener_routine().unwrap_or_else(display::warning);
         }
 
+        let repl = repl_builder(term)
+            .with_prompt(MAIN_PROMPT)
+            .with_completion(&crate::models::command_scheme::COMPLETION)
+            .with_custom_quit_command("quit")
+            .with_history_entries(&startup_contents.command_history)
+            .with_custom_parse_err_hook(|repl, err| {
+                mark_last_cmd_invalid(repl);
+                println!("{RED}{err}{RESET}");
+                Ok(())
+            })
+            .build()
+            .expect("`Stdout` accepts crossterm commands");
+
         splash_screen::leave(splash_task);
 
-        (
-            repl_builder(term)
-                .with_prompt(MAIN_PROMPT)
-                .with_completion(&crate::models::command_scheme::COMPLETION)
-                .with_custom_quit_command("quit")
-                .with_history_entries(&startup_contents.command_history)
-                .build()
-                .expect("`Stdout` accepts crossterm commands"),
-            ctx,
-            message_rx,
-        )
+        (repl, ctx, message_rx)
     }
     #[inline]
     pub(crate) fn local_dir(&self) -> Option<&Path> {
