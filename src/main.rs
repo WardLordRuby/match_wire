@@ -12,7 +12,7 @@ use match_wire::{
     utils::{
         caching::read_cache,
         display::{self, DisplayPanic},
-        global_state,
+        main_thread_state,
     },
 };
 
@@ -41,7 +41,7 @@ async fn main() {
     let splash_task = splash_screen::enter();
 
     let appdata_local = try_init_logger();
-    let latest_version_data = global_state::Endpoints::init().await;
+    let latest_version_data = main_thread_state::Endpoints::init().await;
 
     let (mut line_handle, mut command_context, message_rx) =
         match app_startup(appdata_local, latest_version_data) {
@@ -120,7 +120,7 @@ fn app_startup(
     local_dir: Option<PathBuf>,
     version_data: Option<Version>,
 ) -> Result<StartupData, Cow<'static, str>> {
-    let exe_path = global_state::ExePath::get()
+    let exe_path = main_thread_state::ExePath::get()
         .map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
 
     let appdata = AppDetails::from(version_data, exe_path);

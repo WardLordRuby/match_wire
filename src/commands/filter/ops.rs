@@ -17,7 +17,7 @@ use crate::{
             DisplayCachedServerUse, DisplayGetInfoCount, DisplayServerCount, SingularPlural,
             indicator::Spinner,
         },
-        global_state,
+        main_thread_state,
     },
 };
 
@@ -69,7 +69,7 @@ impl Source {
         trace!("retrieving iw4 master server list");
 
         let response = client
-            .get(global_state::Endpoints::iw4_master_server())
+            .get(main_thread_state::Endpoints::iw4_master_server())
             .send()
             .await?;
 
@@ -87,7 +87,7 @@ impl Source {
         trace!("retrieving hmw master server list");
 
         let response = client
-            .get(global_state::Endpoints::hmw_master_server())
+            .get(main_thread_state::Endpoints::hmw_master_server())
             .send()
             .await?;
 
@@ -124,7 +124,7 @@ impl Source {
     }
 
     async fn try_get_cached_servers<S: FilterStrategy>(self) -> Option<S> {
-        let cached = global_state::Cache::with_borrow(|cache| {
+        let cached = main_thread_state::Cache::with_borrow(|cache| {
             let backup = match self {
                 Source::Iw4Master => &cache.iw4m,
                 Source::HmwMaster => &cache.hmw,
@@ -153,7 +153,7 @@ pub(crate) fn spawn_info_requests(
     remove_duplicates: bool,
     client: &Client,
 ) -> (usize, JoinSet<Result<Server, GetInfoMetaData>>) {
-    let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
+    let server_info_endpoint = main_thread_state::Endpoints::server_info_endpoint();
 
     let mut dup = HashSet::new();
     let (tasks, server_ct) = servers.fold((JoinSet::new(), 0), |(mut set, ct), server| {
@@ -170,7 +170,7 @@ pub(crate) fn spawn_info_requests(
     (server_ct - tasks.len(), tasks)
 }
 
-/// Returns if [`global_state::Cache`] was modified along with the joined result
+/// Returns if [`main_thread_state::Cache`] was modified along with the joined result
 pub(super) async fn join_info_requests<R>(
     mut requests: JoinSet<Result<Server, GetInfoMetaData>>,
     args: &Filters,
@@ -187,7 +187,7 @@ pub(super) async fn join_info_requests<R>(
     let mut did_not_respond = UnresponsiveCounter::default();
     let mut sent_retires = false;
     let max_attempts = args.retry_max.unwrap_or(settings.server_retires);
-    let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
+    let server_info_endpoint = main_thread_state::Endpoints::server_info_endpoint();
 
     while !requests.is_empty() {
         spinner.update_message(DisplayGetInfoCount(requests.len(), sent_retires).to_string());
@@ -227,7 +227,7 @@ pub(super) async fn join_info_requests<R>(
         requests = retries;
     }
 
-    let modified = global_state::Cache::with_borrow_mut(|cache| {
+    let modified = main_thread_state::Cache::with_borrow_mut(|cache| {
         responses.into_iter().fold(false, |prev, server| {
             let inserted = cache.update_cache_with(&server);
             insert(&mut out, server);
@@ -242,7 +242,7 @@ pub(super) async fn join_info_requests<R>(
     (out, modified)
 }
 
-/// Returns if [`global_state::Cache`] was modified
+/// Returns if [`main_thread_state::Cache`] was modified
 pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes) -> bool {
     if results.is_empty() {
         return false;
@@ -250,7 +250,7 @@ pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes
 
     let mut found_ct = 0;
     let mut cache_modified = false;
-    global_state::Cache::with_borrow_mut(|cache| {
+    main_thread_state::Cache::with_borrow_mut(|cache| {
         for (ips, results) in results {
             for (ip, location_res) in ips.iter().zip(results) {
                 if let Some(code) = location_res.cont_code {
@@ -284,7 +284,7 @@ pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes
     cache_modified
 }
 
-/// Returns if [`global_state::Cache`] was modified\
+/// Returns if [`main_thread_state::Cache`] was modified\
 /// Does not retain the ordering of `servers`, internally appends valid new lookups to the end
 pub(super) async fn filter_via_region<S>(
     sourced_servers: &mut Vec<S>,
@@ -308,7 +308,7 @@ where
     let mut new_lookups = HashSet::new();
     let mut new_lookups_vec = Vec::new();
 
-    global_state::Cache::with_borrow(|cache| {
+    main_thread_state::Cache::with_borrow(|cache| {
         for sourced_data in servers {
             let socket_addr = sourced_data.socket_addr();
             if let Some(cached_region) = cache.ip_to_region.get(&socket_addr.ip()) {
@@ -328,7 +328,7 @@ where
         process_region_requests(try_batched_location_lookup(&new_lookups_vec, client).await);
 
     if cache_modified {
-        global_state::Cache::with_borrow(|cache| {
+        main_thread_state::Cache::with_borrow(|cache| {
             for sourced_data in check_again {
                 if cache
                     .ip_to_region

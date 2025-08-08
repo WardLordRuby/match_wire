@@ -12,7 +12,7 @@ use crate::{
             ConnectionHelp, DisplayHistoryErr,
             table::{DisplayHistory, TABLE_PADDING},
         },
-        global_state::{self, PtyAccessErr},
+        main_thread_state::{self, PtyAccessErr},
     },
 };
 
@@ -75,7 +75,7 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        let ip_port = match global_state::Cache::with_borrow(|cache| {
+        let ip_port = match main_thread_state::Cache::with_borrow(|cache| {
             if cache.connection_history.is_empty() {
                 info!("No joined servers in history, connect to a server to add it to history");
                 return Err(CmdErr::Command);
@@ -122,9 +122,9 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        if let Err(err) =
-            global_state::PtyHandle::try_if_alive(|game_console| game_console.send_connect(ip_port))
-        {
+        if let Err(err) = main_thread_state::PtyHandle::try_if_alive(|game_console| {
+            game_console.send_connect(ip_port)
+        }) {
             error!("{err}");
             if let PtyAccessErr::ConnectionErr(_) = err {
                 println!("{ConnectionHelp}");
@@ -143,7 +143,7 @@ impl CommandContext {
 
         let task = tokio::spawn(async move {
             let client = client_with_timeout(4);
-            let info_endpoint = global_state::Endpoints::server_info_endpoint();
+            let info_endpoint = main_thread_state::Endpoints::server_info_endpoint();
 
             let mut hostname = None;
             let mut attempts = 1_usize;
@@ -169,7 +169,7 @@ impl CommandContext {
                 let max_public_slots = server.max_public_slots();
 
                 if player_ct < max_public_slots {
-                    if let Err(err) = global_state::PtyHandle::try_if_alive(|game_console| {
+                    if let Err(err) = main_thread_state::PtyHandle::try_if_alive(|game_console| {
                         game_console.send_connect(addr)
                     }) {
                         let connection_err = matches!(err, PtyAccessErr::ConnectionErr(_));

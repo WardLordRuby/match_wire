@@ -8,7 +8,7 @@ use crate::{
         handler::{AppDetails, GameDetails, ModFileStatus},
         launch::{LaunchError, WinApiErr, game_open},
     },
-    global_state,
+    main_thread_state,
     models::{cli::Source, json_data::ContCode},
     utils::caching::ReadCacheErr,
 };
@@ -183,7 +183,7 @@ impl Display for HmwDownloadHint {
         write!(
             f,
             "HMW mod files are available to download for free through the Horizon MW launcher\n{}",
-            global_state::Endpoints::hmw_download()
+            main_thread_state::Endpoints::hmw_download()
         )
     }
 }
@@ -204,7 +204,7 @@ pub(crate) struct DisplayLogs;
 
 impl Display for DisplayLogs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        global_state::ConsoleHistory::with_borrow_mut(|history| {
+        main_thread_state::ConsoleHistory::with_borrow_mut(|history| {
             for line in history.new_entries() {
                 writeln!(f, "{line}")?;
             }

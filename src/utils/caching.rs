@@ -16,7 +16,7 @@ use crate::{
     },
     utils::{
         display::indicator::Spinner,
-        global_state::{self, ThreadCopyState},
+        main_thread_state::{self, ThreadCopyState},
     },
 };
 
@@ -44,7 +44,7 @@ impl Sourced {
     }
 }
 
-impl global_state::Cache {
+impl main_thread_state::Cache {
     fn insert_ports(&mut self, ip: IpAddr, ports: &[u16], source: Source) -> bool {
         let map = match source {
             Source::HmwMaster => &mut self.hmw,
@@ -125,7 +125,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
         servers
     }
 
-    let spinner = if !global_state::AltScreen::is_visible() {
+    let spinner = if !main_thread_state::AltScreen::is_visible() {
         Some(Spinner::new(String::from("Updating cache")))
     } else {
         info!("Updating cache...");
@@ -150,7 +150,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
     let mut new_lookups = HashSet::new();
     let mut new_lookups_vec = Vec::new();
 
-    global_state::Cache::with_borrow_mut(|cache| {
+    main_thread_state::Cache::with_borrow_mut(|cache| {
         let mut ip_to_region = servers
             .iter()
             .filter_map(|server| {
@@ -180,7 +180,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
 
     process_region_requests(region_data);
 
-    global_state::Cache::with_borrow_mut(|cache| {
+    main_thread_state::Cache::with_borrow_mut(|cache| {
         cache.clear_servers();
 
         for server in servers {
@@ -190,7 +190,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
         cache.created = SystemTime::now();
     });
 
-    global_state::UpdateCache::set(true);
+    main_thread_state::UpdateCache::set(true);
 
     finish_spinner();
     info!("Cache updated!");
@@ -273,7 +273,7 @@ pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Resu
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
 
-    global_state::Cache::with_borrow(|cache| {
+    main_thread_state::Cache::with_borrow(|cache| {
         serde_json::to_writer_pretty(
             file,
             &serde_json::json!({

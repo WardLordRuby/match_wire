@@ -7,7 +7,7 @@ use crate::{
     models::json_data::ContCode,
     utils::{
         display::{self, BoxBottom, BoxTop},
-        global_state::AltScreen,
+        main_thread_state,
     },
 };
 
@@ -539,7 +539,7 @@ impl CommandContext {
                 let term = handle.writer();
                 execute!(term, BeginSynchronizedUpdate)?;
 
-                AltScreen::enter();
+                main_thread_state::AltScreen::enter();
                 queue!(term, EnterAlternateScreen, cursor::Hide, Clear(All))?;
                 context.settings_disp.draw(term, context.settings)?;
 
@@ -549,7 +549,7 @@ impl CommandContext {
             |handle, _context| {
                 execute!(handle.writer(), LeaveAlternateScreen, cursor::Show)?;
 
-                AltScreen::leave();
+                main_thread_state::AltScreen::leave();
                 handle.enable_render();
                 Ok(())
             },

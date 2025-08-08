@@ -7,7 +7,7 @@ use crate::{
     parse_hostname, send_msg_over, strip_ansi_private_modes,
     utils::{
         display,
-        global_state::{self, ThreadCopyState},
+        main_thread_state::{self, ThreadCopyState},
     },
 };
 
@@ -185,7 +185,7 @@ impl HostName {
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
             client_with_timeout(5),
-            global_state::Endpoints::server_info_endpoint(),
+            main_thread_state::Endpoints::server_info_endpoint(),
         )
         .await?;
 
@@ -208,7 +208,7 @@ async fn add_to_history(
     version: f64,
 ) {
     fn cache_insert(host_name_meta: HostNameRequestMeta) {
-        global_state::Cache::with_borrow_mut(|cache| {
+        main_thread_state::Cache::with_borrow_mut(|cache| {
             let mut modified = true;
             if let Some(Ok(ip)) = host_name_meta.socket_addr {
                 cache
@@ -238,7 +238,7 @@ async fn add_to_history(
                 cache.connection_history.push(host_name_meta.host_name);
                 modified = true
             };
-            global_state::UpdateCache::and_modify(|curr| curr || modified);
+            main_thread_state::UpdateCache::and_modify(|curr| curr || modified);
         });
     }
 
@@ -268,7 +268,7 @@ async fn add_to_history(
 }
 
 pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
-    global_state::PtyHandle::check_connection()?;
+    main_thread_state::PtyHandle::check_connection()?;
 
     let msg_sender = context.msg_sender();
     let game_state_change = context.game_state_change();
@@ -291,7 +291,7 @@ pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
             let start_time = tokio::time::Instant::now();
 
             while start_time.elapsed() < PROCESS_INTERVAL {
-                match global_state::PtyHandle::try_if_alive(|console_handle| {
+                match main_thread_state::PtyHandle::try_if_alive(|console_handle| {
                     console_handle
                         .read(BUFFER_SIZE, false)
                         .map(|os_string| {
@@ -364,17 +364,19 @@ pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
                             continue 'byte_iter;
                         }
                     }
-                    global_state::ConsoleHistory::push(line.into_owned());
+                    main_thread_state::ConsoleHistory::push(line.into_owned());
                 }
 
                 wide_encode_buf.clear();
             }
 
-            if let Some(msg_concat) = global_state::ConsoleHistory::concat_new() {
+            if let Some(msg_concat) = main_thread_state::ConsoleHistory::concat_new() {
                 if msg_sender.send(Message::str(msg_concat)).await.is_err() {
-                    global_state::ForwardLogs::set(false);
+                    main_thread_state::ForwardLogs::set(false);
                 } else {
-                    global_state::ConsoleHistory::with_borrow_mut(|history| history.displayed());
+                    main_thread_state::ConsoleHistory::with_borrow_mut(|history| {
+                        history.displayed()
+                    });
                 }
             }
 

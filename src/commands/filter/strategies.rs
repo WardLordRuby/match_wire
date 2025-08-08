@@ -14,7 +14,7 @@ use crate::{
         cli::{Filters, Source},
         json_data::{GetInfo, HostData, ServerInfo},
     },
-    utils::global_state,
+    utils::main_thread_state,
 };
 
 use std::{
@@ -195,7 +195,7 @@ pub struct GameStats {
 
 impl GameStats {
     pub fn new(games: &[String]) -> Vec<Self> {
-        global_state::GameDisplayMap::with_borrow(|map| {
+        main_thread_state::GameDisplayMap::with_borrow(|map| {
             games
                 .iter()
                 .map(|game| Self {
@@ -379,8 +379,8 @@ impl FilterStrategy for StatTrackStrategy {
 
         spinner.finish();
 
-        global_state::LastServerStats::set(source_stats, servers);
-        global_state::LastServerStats::display(repl)?;
+        main_thread_state::LastServerStats::set(source_stats, servers);
+        main_thread_state::LastServerStats::display(repl)?;
 
         Ok(FilterData {
             servers: out,
@@ -434,12 +434,12 @@ impl StatTrackStrategy {
     }
 
     fn queue_requests(client: &Client, servers: impl Iterator<Item = Sourced>) -> Requests {
-        let server_info_endpoint = global_state::Endpoints::server_info_endpoint();
+        let server_info_endpoint = main_thread_state::Endpoints::server_info_endpoint();
 
         let mut seen = HashSet::new();
         let mut res = Requests::default();
 
-        global_state::Cache::with_borrow(|cache| {
+        main_thread_state::Cache::with_borrow(|cache| {
             for server in servers {
                 let socket_addr = server.socket_addr();
                 if seen.insert(socket_addr) {
@@ -557,7 +557,7 @@ impl FilterPreProcess {
 }
 
 pub fn process_stats(filter: &mut [Server]) -> FilterPreProcess {
-    global_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
+    main_thread_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
         let (mut addr_lens, mut max_addr_len) = (Vec::with_capacity(filter.len()), 0);
 
         for server in filter.iter_mut() {

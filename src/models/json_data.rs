@@ -142,13 +142,13 @@ where
         .transpose()
 }
 
-// `Endpoints` now lives in utils/global_state since the same struct is used inside
+// `Endpoints` now lives in 'utils/main_thread_state.rs' since the same struct is used inside
 // thread_local storage and should maintain private fields
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct StartupInfo {
     pub(crate) version: Version,
-    pub(crate) endpoints: crate::utils::global_state::Endpoints,
+    pub(crate) endpoints: crate::utils::main_thread_state::Endpoints,
 }
 
 #[derive(Deserialize, Debug)]

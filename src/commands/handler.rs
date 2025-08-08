@@ -21,7 +21,7 @@ use crate::{
         display::{
             self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, VERIFY_HELP, indicator::ProgressBar,
         },
-        global_state::{self, AltScreen, Cache, ThreadCopyState},
+        main_thread_state::{self, Cache, ThreadCopyState},
     },
 };
 
@@ -241,7 +241,7 @@ impl GameDetails {
                     GameDetails::new(game_exe_path, version, hash, mod_verification)
                 }
                 Err(err) if no_launch => {
-                    AltScreen::push_message(Message::error(err));
+                    main_thread_state::AltScreen::push_message(Message::error(err));
                     GameDetails::default(&exe_dir, mod_verification)
                 }
                 Err(err) => return Err(err),
@@ -301,7 +301,7 @@ impl GameDetails {
             .expect("self can not be created without a file added to path")
     }
 
-    /// Finds if the [`CondManifest`] stored in [`global_state::Cache`] has been verified genuine
+    /// Finds if the [`CondManifest`] stored in [`main_thread_state::Cache`] has been verified genuine
     pub(crate) fn manifest_verified(&self) -> bool {
         self.hash_latest.is_some()
     }
@@ -315,7 +315,7 @@ impl GameDetails {
             cache.hmw_manifest.files_with_hashes.get(FNAME_HMW).cloned()
         }
 
-        global_state::Cache::with_borrow_mut(|cache| {
+        main_thread_state::Cache::with_borrow_mut(|cache| {
             if man.modules.is_empty() {
                 error!("HMW manifest formatting has changed, failed to verify version");
                 self.hash_latest = None;
@@ -357,7 +357,7 @@ impl GameDetails {
     fn prep_verification_state(&mut self) -> Result<(), ()> {
         let exe_dir = self.get_exe_dir();
 
-        let missing = global_state::Cache::with_borrow(|cache| {
+        let missing = main_thread_state::Cache::with_borrow(|cache| {
             let mut missing = Vec::new();
 
             for mod_file in cache.hmw_manifest.files_with_hashes.keys() {
@@ -397,7 +397,7 @@ impl GameDetails {
         let exe_dir = self.get_exe_dir();
         let start = std::time::Instant::now();
 
-        let outdated = global_state::Cache::with_borrow(|cache| {
+        let outdated = main_thread_state::Cache::with_borrow(|cache| {
             if cache.hmw_manifest.files_with_hashes.is_empty() {
                 error!("No manifest data available to verify files");
                 return Vec::new();
@@ -530,11 +530,11 @@ impl Executor<Stdout> for CommandContext {
             }
         };
 
-        global_state::UpdateCache::set(true);
+        main_thread_state::UpdateCache::set(true);
 
         match command {
             Command::Filter { args } => self.new_favorites_with(line_handle, args).await,
-            Command::Last => global_state::LastServerStats::display(line_handle)
+            Command::Last => main_thread_state::LastServerStats::display(line_handle)
                 .map(|_| CommandHandle::Processed),
             Command::Reconnect { args } => self.reconnect(line_handle, args),
             Command::Launch => self.launch_handler(),
@@ -598,7 +598,7 @@ impl CommandContext {
         macro_rules! hmw_launch_err {
             ($($arg:tt)*) => {{
                 error!("Could not launch game as child process: {}", format_args!($($arg)*));
-                AltScreen::push_message(Message::Str(ConnectionHelp.into()));
+                main_thread_state::AltScreen::push_message(Message::Str(ConnectionHelp.into()));
                 None
             }}
         }
@@ -611,7 +611,7 @@ impl CommandContext {
         };
 
         let console_set = game_console.is_some();
-        global_state::PtyHandle::set(game_console);
+        main_thread_state::PtyHandle::set(game_console);
 
         if let (Some(curr), Some(latest)) = (
             startup_data.appdata.hash_curr.as_deref(),
@@ -646,7 +646,7 @@ impl CommandContext {
                 }
 
                 if startup_data.game.mod_verification != ModFileStatus::UpToDate {
-                    AltScreen::push_message(Message::str(
+                    main_thread_state::AltScreen::push_message(Message::str(
                         update_msg
                             .unwrap_or_else(|| startup_data.game.mod_verification.to_string()),
                     ));
@@ -663,7 +663,7 @@ impl CommandContext {
         });
 
         let (message_tx, message_rx) = channel(50);
-        global_state::UpdateCache::set(startup_contents.modified);
+        main_thread_state::UpdateCache::set(startup_contents.modified);
 
         let mut ctx = CommandContext {
             msg_sender: message_tx,
@@ -765,13 +765,13 @@ impl CommandContext {
     }
 
     pub fn graceful_shutdown(&mut self, cmd_history: &[String]) {
-        if global_state::UpdateCache::get() {
+        if main_thread_state::UpdateCache::get() {
             write_cache(self, cmd_history).unwrap_or_else(display::log_error)
         }
 
-        global_state::PtyHandle::try_drop_pty(&self.game_name());
+        main_thread_state::PtyHandle::try_drop_pty(&self.game_name());
 
-        if let Some(hwnd) = global_state::AppHWND::get().filter(|_| !self.can_close_console) {
+        if let Some(hwnd) = main_thread_state::AppHWND::get().filter(|_| !self.can_close_console) {
             // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
             unsafe { toggle_close_state(&mut self.can_close_console, hwnd) }
                 .unwrap_or_else(display::log_error);
@@ -781,7 +781,7 @@ impl CommandContext {
     }
 
     fn try_send_cmd_from_hook(&mut self, command: String) -> Result<(), Cow<'static, str>> {
-        global_state::PtyHandle::try_if_alive(|game_console| game_console.send_cmd(command))
+        main_thread_state::PtyHandle::try_if_alive(|game_console| game_console.send_cmd(command))
             .map_err(Into::into)
     }
 
@@ -794,7 +794,7 @@ impl CommandContext {
             }
         };
 
-        if global_state::PtyHandle::check_connection().is_ok() {
+        if main_thread_state::PtyHandle::check_connection().is_ok() {
             if game_open.is_some() {
                 println!(
                     "{GREEN}Connection to {} already active{RESET}",
@@ -802,7 +802,7 @@ impl CommandContext {
                 );
                 return Ok(CommandHandle::Processed);
             }
-            global_state::PtyHandle::wait_for_exit(&self.game_name());
+            main_thread_state::PtyHandle::wait_for_exit(&self.game_name());
         }
 
         if let Some(window_name) = game_open {
@@ -815,7 +815,7 @@ impl CommandContext {
             Ok(conpty) => {
                 info!("Launching {}...", self.game_name());
                 self.game.update(exe_details(&self.game.path));
-                global_state::PtyHandle::set(Some(conpty));
+                main_thread_state::PtyHandle::set(Some(conpty));
                 if let Err(err) = self.listener_routine() {
                     error!("{err}")
                 }
@@ -826,7 +826,7 @@ impl CommandContext {
     }
 
     pub fn save_cache_if_needed(&self, line_handle: &ReplHandle) -> io::Result<()> {
-        if global_state::UpdateCache::take() {
+        if main_thread_state::UpdateCache::take() {
             return write_cache(
                 self,
                 &line_handle.export_filtered_history(HistoryTag::filter, Some(SAVED_HISTORY_CAP)),
@@ -840,7 +840,7 @@ impl CommandContext {
         &mut self,
         line_handle: &mut ReplHandle,
     ) -> io::Result<Result<(), WinApiErr>> {
-        let game_open = global_state::PtyHandle::check_connection().is_ok();
+        let game_open = main_thread_state::PtyHandle::check_connection().is_ok();
 
         line_handle.writer().queue(SetTitle(CRATE_NAME))?;
 
@@ -849,7 +849,7 @@ impl CommandContext {
         }
 
         if let Some(hwnd) = (game_open == self.can_close_console)
-            .then(global_state::AppHWND::get)
+            .then(main_thread_state::AppHWND::get)
             .flatten()
         {
             // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
@@ -871,7 +871,7 @@ impl CommandContext {
             let mut attempt = 1;
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
-                match global_state::PtyHandle::is_alive() {
+                match main_thread_state::PtyHandle::is_alive() {
                     Ok(true) if attempt == 3 => {
                         match hide_pseudo_console() {
                             Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
@@ -911,7 +911,7 @@ impl CommandContext {
         let build_res = build_favorites(self, repl, args).await;
 
         if let Some(cache_modified) = CmdErr::transpose(build_res)? {
-            global_state::UpdateCache::and_modify(|curr| curr || cache_modified);
+            main_thread_state::UpdateCache::and_modify(|curr| curr || cache_modified);
         }
 
         Ok(CommandHandle::Processed)
@@ -946,7 +946,7 @@ impl CommandContext {
         }
 
         if let CacheCmd::Reset = arg {
-            global_state::Cache::clear();
+            main_thread_state::Cache::clear();
         }
 
         let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
@@ -967,24 +967,24 @@ impl CommandContext {
             Err(err) => hmw_hash_err!("{err}"),
         };
 
-        global_state::UpdateCache::and_modify(|curr| curr || cache_modified);
+        main_thread_state::UpdateCache::and_modify(|curr| curr || cache_modified);
 
         Ok(CommandHandle::Processed)
     }
 
     fn open_game_console(&mut self, all: bool) -> io::Result<CommandHandle> {
         if all {
-            global_state::ConsoleHistory::with_borrow_mut(|history| history.reset_i());
+            main_thread_state::ConsoleHistory::with_borrow_mut(|history| history.reset_i());
         }
 
-        if global_state::PtyHandle::check_connection().is_err()
+        if main_thread_state::PtyHandle::check_connection().is_err()
             || game_open()
                 .unwrap_or_else(WinApiErr::resolve_to_closed)
                 .is_none()
         {
             print!("{YELLOW}No active connection to {}", self.game_name());
 
-            if global_state::ConsoleHistory::with_borrow_mut(|history| {
+            if main_thread_state::ConsoleHistory::with_borrow_mut(|history| {
                 let not_empty = !history.entries.is_empty();
                 if not_empty {
                     history.reset_i();
@@ -1005,14 +1005,14 @@ impl CommandContext {
 
         let line_changes = HookStates::<CommandContext, _>::new(
             |handle, context| {
-                global_state::ForwardLogs::set(true);
+                main_thread_state::ForwardLogs::set(true);
                 handle.set_prompt(&context.game.game_file_name());
                 handle.disable_completion();
                 handle.disable_line_stylization();
                 Ok(())
             },
             |handle, _context| {
-                global_state::ForwardLogs::set(false);
+                main_thread_state::ForwardLogs::set(false);
                 handle.set_prompt(MAIN_PROMPT);
                 handle.enable_completion();
                 handle.enable_line_stylization();
@@ -1085,9 +1085,9 @@ impl CommandContext {
             .unwrap_or_else(WinApiErr::resolve_to_open)
             .is_none()
         {
-            global_state::PtyHandle::wait_for_exit(&self.game_name());
+            main_thread_state::PtyHandle::wait_for_exit(&self.game_name());
             return Ok(CommandHandle::Exit);
-        } else if global_state::PtyHandle::check_connection().is_err() {
+        } else if main_thread_state::PtyHandle::check_connection().is_err() {
             return Ok(CommandHandle::Exit);
         }
 

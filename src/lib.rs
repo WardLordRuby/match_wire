@@ -13,7 +13,11 @@ pub mod models {
 pub mod utils {
     pub mod caching;
     pub mod display;
-    pub mod global_state;
+
+    /// All state is stored in TLS, it is crucial everything accessed within this file is done through
+    /// the main thread. Failing to do so may result in runtime panics.
+    pub mod main_thread_state;
+
     pub mod subscriber;
 }
 
@@ -29,7 +33,7 @@ use crate::{
     utils::{
         caching::{ReadCacheErr, build_cache},
         display::{self, ConnectionHelp, table::TABLE_PADDING},
-        global_state::{self, AltScreen},
+        main_thread_state,
         subscriber::init_subscriber,
     },
 };
@@ -111,7 +115,7 @@ pub mod splash_screen {
     };
 
     #[cfg(not(debug_assertions))]
-    use crate::global_state::AltScreen;
+    use crate::main_thread_state;
 
     pub fn enter() -> JoinHandle<io::Result<()>> {
         #[cfg(debug_assertions)]
@@ -129,7 +133,7 @@ pub mod splash_screen {
                 r#"88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888"#,
             ];
 
-            AltScreen::enter();
+            main_thread_state::AltScreen::enter();
 
             std::thread::spawn(|| {
                 let mut stdout = std::io::stdout();
@@ -166,7 +170,7 @@ pub mod splash_screen {
         #[cfg(not(debug_assertions))]
         {
             execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
-            AltScreen::leave();
+            main_thread_state::AltScreen::leave();
         }
     }
 }
@@ -210,18 +214,21 @@ pub fn try_init_logger() -> Option<PathBuf> {
     if let Some(local) = local_dir {
         match check_app_dir_exists(local) {
             Ok(app_dir_local) => {
-                init_subscriber(&app_dir_local)
-                    .unwrap_or_else(|err| AltScreen::push_message(Message::error(err.to_string())));
+                init_subscriber(&app_dir_local).unwrap_or_else(|err| {
+                    main_thread_state::AltScreen::push_message(Message::error(err.to_string()))
+                });
                 info!(name: LOG_ONLY, "App startup");
                 Some(app_dir_local)
             }
             Err(err) => {
-                AltScreen::push_message(Message::error(err.to_string()));
+                main_thread_state::AltScreen::push_message(Message::error(err.to_string()));
                 None
             }
         }
     } else {
-        AltScreen::push_message(Message::error("Could not find %appdata%/local"));
+        main_thread_state::AltScreen::push_message(Message::error(
+            "Could not find %appdata%/local",
+        ));
 
         #[cfg(debug_assertions)]
         init_subscriber(std::path::Path::new("")).unwrap();
@@ -247,7 +254,7 @@ pub async fn try_init_launch(
     };
 
     if let Some(window_name) = game_open {
-        AltScreen::push_message(Message::str(format!(
+        main_thread_state::AltScreen::push_message(Message::str(format!(
             "{RED}{window_name} is already running{RESET}\n{ConnectionHelp}"
         )));
     }
@@ -265,8 +272,8 @@ pub(crate) fn client_with_timeout(secs: u64) -> Client {
 
 pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
     let (Some(hmw_manifest), Some(hmw_pgp_public_key)) = (
-        global_state::Endpoints::hmw_signed_manifest(),
-        global_state::Endpoints::hmw_pgp_public_key(),
+        main_thread_state::Endpoints::hmw_signed_manifest(),
+        main_thread_state::Endpoints::hmw_pgp_public_key(),
     ) else {
         return Err(ResponseErr::other(
             "Could not verify encryption of HMW manifest location\n\
@@ -274,7 +281,7 @@ pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
         ));
     };
 
-    if global_state::Endpoints::skip_verification() {
+    if main_thread_state::Endpoints::skip_verification() {
         return try_parse_signed_json_unverified::<HmwManifest>(hmw_manifest, "HMW env manifest")
             .await;
     }
@@ -435,7 +442,7 @@ fn check_app_dir_exists(local: &Path) -> io::Result<PathBuf> {
     if prev_local_dir
         .try_exists()
         .map_err(|err| {
-            AltScreen::push_message(Message::error(format!(
+            main_thread_state::AltScreen::push_message(Message::error(format!(
                 "{err}, looking for {}",
                 prev_local_dir.display()
             )))
@@ -515,8 +522,8 @@ pub fn print_help() {
 }
 
 pub(crate) async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, message: Message) {
-    if AltScreen::is_visible() {
-        AltScreen::push_message(message);
+    if main_thread_state::AltScreen::is_visible() {
+        main_thread_state::AltScreen::push_message(message);
     } else {
         sender
             .send(message)
@@ -534,7 +541,7 @@ pub async fn startup_cache_task(
                 command_history: std::mem::take(&mut file_contents.cmd_history),
                 modified: false,
             };
-            global_state::Cache::set(file_contents.into());
+            main_thread_state::Cache::set(file_contents.into());
             return startup_contents;
         }
         Some(Err(err)) => {
@@ -551,7 +558,7 @@ pub async fn startup_cache_task(
         None => (None, None),
     };
 
-    global_state::Cache::set(prev_cache.unwrap_or_default());
+    main_thread_state::Cache::set(prev_cache.unwrap_or_default());
 
     StartupCacheContents {
         command_history: cmd_history.unwrap_or_default(),
