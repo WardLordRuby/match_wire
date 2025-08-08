@@ -213,11 +213,9 @@ pub(super) async fn join_info_requests<R>(
                     } else {
                         did_not_respond.add(&err.meta);
                         error!(name: LOG_ONLY, "{}", err.with_socket_addr().with_source());
-                        if can_use_backup {
-                            if let Sourced::Iw4(meta) = err.meta {
-                                did_not_respond.used_cached_server();
-                                insert(&mut out, Server::from(meta));
-                            }
+                        if can_use_backup && let Sourced::Iw4(meta) = err.meta {
+                            did_not_respond.used_cached_server();
+                            insert(&mut out, Server::from(meta));
                         }
                     }
                 }

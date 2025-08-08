@@ -1058,11 +1058,11 @@ impl CommandContext {
                         ..
                     }) => {
                         let cmd = handle.new_line()?;
-                        if !cmd.trim().is_empty() {
-                            if let Err(err) = context.try_send_cmd_from_hook(cmd) {
-                                error!("{err}");
-                                return HookedEvent::release_hook();
-                            }
+                        if !cmd.trim().is_empty()
+                            && let Err(err) = context.try_send_cmd_from_hook(cmd)
+                        {
+                            error!("{err}");
+                            return HookedEvent::release_hook();
                         }
                     }
                     _ => handle.set_uneventful(),

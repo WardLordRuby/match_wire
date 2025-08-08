@@ -102,7 +102,9 @@ fn calc_max_div(width: usize) -> Option<usize> {
             let acc = max_div * prime;
 
             if acc > MAX_PRODUCT {
-                break;
+                // We know `max_div` must be greater than 1 since
+                // `initial max_div * PRIME.last() < MAX_PRODUCT`. Thus it is okay to return
+                return Some(max_div);
             }
 
             max_div = acc
@@ -113,16 +115,19 @@ fn calc_max_div(width: usize) -> Option<usize> {
 }
 
 /// Logs and print's the given `err`
+#[inline]
 pub fn error<E: Display>(err: E) {
     tracing::error!("{err}")
 }
 
 /// Logs and print's the given `warning`
+#[inline]
 pub fn warning<E: Display>(warning: E) {
     tracing::warn!("{warning}")
 }
 
 /// _Only_ logs the given `err`
+#[inline]
 pub fn log_error<E: Display>(err: E) {
     tracing::error!(name: LOG_ONLY, "{err}")
 }
