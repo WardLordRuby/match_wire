@@ -34,7 +34,7 @@ pub(crate) const VERIFY_HELP: &str = concat!(
 #[cfg(not(debug_assertions))]
 pub(crate) const DISP_NAME_H2M: &str = "H2M";
 
-const DISP_NAME_IW4: &str = "Iw4";
+pub(crate) const DISP_NAME_IW4: &str = "Iw4";
 
 macro_rules! server_type {
     (master, $name:expr) => {

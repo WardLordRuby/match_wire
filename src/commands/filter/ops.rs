@@ -14,8 +14,8 @@ use crate::{
     parse_hostname,
     utils::{
         display::{
-            DisplayCachedServerUse, DisplayGetInfoCount, DisplayServerCount, SingularPlural,
-            indicator::Spinner,
+            DISP_NAME_HMW, DISP_NAME_IW4, DisplayCachedServerUse, DisplayGetInfoCount,
+            DisplayServerCount, SingularPlural, indicator::Spinner,
         },
         main_thread_state,
     },
@@ -25,8 +25,12 @@ use std::{collections::HashSet, net::SocketAddr};
 
 use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RED, RESET};
 use reqwest::Client;
+use serde::de::DeserializeOwned;
 use tokio::task::JoinSet;
 use tracing::{error, info, trace, warn};
+
+pub(super) type HmwJsonFmt = String;
+pub(super) type Iw4JsonFmt = HostData;
 
 pub(crate) async fn get_sourced_servers<I, S>(
     sources: I,
@@ -36,25 +40,31 @@ where
     I: IntoIterator<Item = Source>,
     S: FilterStrategy,
 {
-    let mut tasks = JoinSet::from_iter(
+    let responses = JoinSet::from_iter(
         sources
             .into_iter()
             .map(|source| source.try_get_sourced_servers::<S>(client.clone())),
-    );
+    )
+    .join_all()
+    .await;
 
     let mut servers = S::default();
 
-    while let Some(task_res) = tasks.join_next().await {
-        match task_res {
-            Ok(Ok(mut sourced_servers)) => {
-                if servers.is_empty() {
-                    servers = sourced_servers;
+    for res in responses {
+        match res {
+            Ok(response) => response.push_all::<S>(&mut servers),
+            Err((source, err)) => {
+                error!("Could not fetch {source} servers");
+
+                if source
+                    .try_extend_with_cached_servers::<S>(&mut servers)
+                    .is_ok()
+                {
+                    error!(name: LOG_ONLY, "{err}");
                 } else {
-                    servers.append(&mut sourced_servers);
+                    error!("{err}")
                 }
             }
-            Ok(Err(err)) => error!("{err}"),
-            Err(err) => error!(name: LOG_ONLY, "{err:?}"),
         }
     }
 
@@ -64,87 +74,117 @@ where
     Ok(servers)
 }
 
-impl Source {
-    async fn iw4_servers<S: FilterStrategy>(client: Client) -> Result<S, ResponseErr> {
-        trace!("retrieving iw4 master server list");
+pub(super) enum SourceResponse {
+    Iw4Master(Vec<Iw4JsonFmt>),
+    HmwMaster(Vec<HmwJsonFmt>),
+}
 
-        let response = client
-            .get(main_thread_state::Endpoints::iw4_master_server())
-            .send()
-            .await?;
-
-        if response.status() != STATUS_OK {
-            return Err(ResponseErr::bad_status("Iw4 master", response));
+impl SourceResponse {
+    #[inline]
+    fn push_all<S: FilterStrategy>(self, collection: &mut S) {
+        match self {
+            SourceResponse::HmwMaster(data) => collection.extend(data),
+            SourceResponse::Iw4Master(data) => collection.extend(data),
         }
-
-        Ok(response
-            .json::<Vec<HostData>>()
-            .await
-            .map(S::iw4_master_map)?)
     }
+}
 
-    async fn hmw_servers<S: FilterStrategy>(client: Client) -> Result<S, ResponseErr> {
-        trace!("retrieving hmw master server list");
+impl From<Vec<HmwJsonFmt>> for SourceResponse {
+    fn from(value: Vec<HmwJsonFmt>) -> Self {
+        Self::HmwMaster(value)
+    }
+}
 
-        let response = client
-            .get(main_thread_state::Endpoints::hmw_master_server())
-            .send()
-            .await?;
+impl From<Vec<Iw4JsonFmt>> for SourceResponse {
+    fn from(value: Vec<Iw4JsonFmt>) -> Self {
+        Self::Iw4Master(value)
+    }
+}
+
+struct HmwServers;
+struct Iw4Servers;
+
+trait MasterServer {
+    type Response: DeserializeOwned + Into<SourceResponse>;
+    const NAME: &str;
+
+    fn url() -> &'static str;
+}
+
+impl MasterServer for HmwServers {
+    type Response = Vec<HmwJsonFmt>;
+    const NAME: &str = DISP_NAME_HMW;
+
+    #[inline]
+    fn url() -> &'static str {
+        main_thread_state::Endpoints::hmw_master_server()
+    }
+}
+
+impl MasterServer for Iw4Servers {
+    type Response = Vec<Iw4JsonFmt>;
+    const NAME: &str = DISP_NAME_IW4;
+
+    #[inline]
+    fn url() -> &'static str {
+        main_thread_state::Endpoints::iw4_master_server()
+    }
+}
+
+impl Source {
+    async fn fetch<T: MasterServer>(client: Client) -> Result<SourceResponse, ResponseErr> {
+        trace!("retrieving {} master server list", T::NAME);
+
+        let response = client.get(T::url()).send().await?;
 
         if response.status() != STATUS_OK {
-            return Err(ResponseErr::bad_status("HMW master", response));
+            return Err(ResponseErr::bad_status(
+                format!("{} master", T::NAME),
+                response,
+            ));
         }
 
-        Ok(response
-            .json::<Vec<String>>()
+        response
+            .json::<T::Response>()
             .await
-            .map(S::hmw_master_map)?)
+            .map(Into::into)
+            .map_err(Into::into)
     }
 
     async fn try_get_sourced_servers<S: FilterStrategy>(
         self,
         client: Client,
-    ) -> Result<S, ResponseErr> {
-        let sourced_res = match self {
-            Source::HmwMaster => Self::hmw_servers::<S>(client).await,
-            Source::Iw4Master => Self::iw4_servers::<S>(client).await,
-        };
-
-        let Err(err) = sourced_res else {
-            return sourced_res;
-        };
-
-        if let Some(backup) = self.try_get_cached_servers::<S>().await {
-            error!("Could not fetch {self} servers");
-            error!(name: LOG_ONLY, "{err}");
-            warn!("{}", DisplayCachedServerUse(self, backup.server_ct()));
-            return Ok(backup);
+    ) -> Result<SourceResponse, (Source, ResponseErr)> {
+        match self {
+            Source::HmwMaster => Self::fetch::<HmwServers>(client).await,
+            Source::Iw4Master => Self::fetch::<Iw4Servers>(client).await,
         }
-        Err(err)
+        .map_err(|err| (self, err))
     }
 
-    async fn try_get_cached_servers<S: FilterStrategy>(self) -> Option<S> {
-        let cached = main_thread_state::Cache::with_borrow(|cache| {
+    fn try_extend_with_cached_servers<S: FilterStrategy>(self, servers: &mut S) -> Result<(), ()> {
+        main_thread_state::Cache::with_borrow(|cache| {
             let backup = match self {
                 Source::Iw4Master => &cache.iw4m,
                 Source::HmwMaster => &cache.hmw,
             };
 
-            backup
-                .iter()
-                .flat_map(|(&ip, ports)| {
-                    ports
-                        .iter()
-                        .map(move |&port| self.with_cached_ip(SocketAddr::new(ip, port)))
-                })
-                .collect::<Vec<_>>()
-        });
+            let cached_server_ct = backup.values().fold(0, |acc, servers| acc + servers.len());
 
-        if cached.is_empty() {
-            return None;
-        }
+            if cached_server_ct == 0 {
+                return Err(());
+            }
 
-        Some(S::from_cached(cached))
+            servers.extend(backup.iter().flat_map(|(&ip, ports)| {
+                ports
+                    .iter()
+                    .map(move |&port| self.with_cached_ip(SocketAddr::new(ip, port)))
+            }));
+
+            warn!("{}", DisplayCachedServerUse(self, cached_server_ct));
+
+            Ok(())
+        })
     }
 }
 

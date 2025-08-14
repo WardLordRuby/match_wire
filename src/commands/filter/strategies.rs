@@ -12,7 +12,7 @@ use crate::{
     elide,
     models::{
         cli::{Filters, Source},
-        json_data::{GetInfo, HostData, ServerInfo},
+        json_data::{GetInfo, ServerInfo},
     },
     utils::main_thread_state,
 };
@@ -27,7 +27,14 @@ use reqwest::Client;
 use tokio::task::JoinSet;
 
 pub(crate) trait FilterStrategy:
-    Default + Sized + Send + IntoIterator<Item = Sourced> + 'static
+    Default
+    + Extend<Sourced>
+    + Extend<Iw4JsonFmt>
+    + Extend<HmwJsonFmt>
+    + IntoIterator<Item = Sourced>
+    + Sized
+    + Send
+    + 'static
 {
     async fn new(sources: Option<HashSet<Source>>, client: &Client) -> Result<Self, CmdErr> {
         match sources {
@@ -37,12 +44,11 @@ pub(crate) trait FilterStrategy:
         .map_err(|err| command_err!("{err}"))
     }
 
-    fn append(&mut self, other: &mut Self);
     fn is_empty(&self) -> bool;
+
+    #[allow(dead_code)]
     fn server_ct(&self) -> usize;
-    fn iw4_master_map(hosts: Vec<HostData>) -> Self;
-    fn hmw_master_map(servers: Vec<String>) -> Self;
-    fn from_cached(cached: Vec<Sourced>) -> Self;
+
     async fn execute(
         repl: &mut ReplHandle,
         client: Client,
@@ -65,27 +71,19 @@ impl IntoIterator for FastStrategy {
     }
 }
 
-impl FastStrategy {
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Sourced> {
-        self.0.iter()
+impl Extend<HmwJsonFmt> for FastStrategy {
+    fn extend<T: IntoIterator<Item = HmwJsonFmt>>(&mut self, servers: T) {
+        self.extend(
+            servers
+                .into_iter()
+                .filter_map(Sourced::try_parse_hmw_master),
+        )
     }
 }
 
-impl FilterStrategy for FastStrategy {
-    fn append(&mut self, other: &mut Self) {
-        self.0.append(&mut other.0)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    fn server_ct(&self) -> usize {
-        self.0.len()
-    }
-
-    fn iw4_master_map(hosts: Vec<HostData>) -> Self {
-        let servers = hosts
+impl Extend<Iw4JsonFmt> for FastStrategy {
+    fn extend<T: IntoIterator<Item = Iw4JsonFmt>>(&mut self, hosts: T) {
+        let mapped = hosts
             .into_iter()
             .filter_map(|mut host| {
                 host.servers
@@ -97,23 +95,35 @@ impl FilterStrategy for FastStrategy {
                     HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
                         .map(Sourced::Iw4)
                 })
-            })
-            .collect();
+            });
 
-        Self(servers)
+        self.extend(mapped)
+    }
+}
+
+impl Extend<Sourced> for FastStrategy {
+    #[inline]
+    fn extend<T: IntoIterator<Item = Sourced>>(&mut self, servers: T) {
+        self.0.extend(servers)
+    }
+}
+
+impl FastStrategy {
+    #[inline]
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Sourced> {
+        self.0.iter()
+    }
+}
+
+impl FilterStrategy for FastStrategy {
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
-    fn hmw_master_map(servers: Vec<String>) -> Self {
-        let servers = servers
-            .into_iter()
-            .filter_map(Sourced::try_parse_hmw_master)
-            .collect();
-
-        Self(servers)
-    }
-
-    fn from_cached(cached: Vec<Sourced>) -> Self {
-        Self(cached)
+    #[inline]
+    fn server_ct(&self) -> usize {
+        self.0.len()
     }
 
     async fn execute(
@@ -263,23 +273,49 @@ pub(super) struct StatTrackStrategy {
 
 impl IntoIterator for StatTrackStrategy {
     type Item = Sourced;
-    type IntoIter = std::iter::Flatten<std::vec::IntoIter<Vec<Sourced>>>;
+    type IntoIter = std::iter::Flatten<std::vec::IntoIter<Vec<Self::Item>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.servers.into_iter().flatten()
     }
 }
 
-impl FilterStrategy for StatTrackStrategy {
-    fn append(&mut self, other: &mut Self) {
-        self.host_ct += other.host_ct;
+impl Extend<HmwJsonFmt> for StatTrackStrategy {
+    fn extend<T: IntoIterator<Item = HmwJsonFmt>>(&mut self, servers: T) {
+        self.extend(
+            servers
+                .into_iter()
+                .filter_map(Sourced::try_parse_hmw_master),
+        );
+    }
+}
 
-        for (game, mut servers) in other.drain(..) {
-            let self_i = self.game_i(&game);
-            self.servers[self_i].append(&mut servers);
+impl Extend<Iw4JsonFmt> for StatTrackStrategy {
+    fn extend<T: IntoIterator<Item = Iw4JsonFmt>>(&mut self, hosts: T) {
+        for host in hosts {
+            for server in host.servers {
+                if let Some(sourced) =
+                    HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
+                {
+                    let i = self.game_i(&sourced.server.game);
+                    self.servers[i].push(Sourced::Iw4(sourced));
+                }
+            }
+
+            self.host_ct += 1;
         }
     }
+}
 
+impl Extend<Sourced> for StatTrackStrategy {
+    /// Use for sources that **only** contain HMW servers
+    fn extend<T: IntoIterator<Item = Sourced>>(&mut self, servers: T) {
+        let hmw_i = self.game_i(HMW_ID);
+        self.servers[hmw_i].extend(servers)
+    }
+}
+
+impl FilterStrategy for StatTrackStrategy {
     fn is_empty(&self) -> bool {
         self.servers.iter().all(|server| server.is_empty())
     }
@@ -288,39 +324,6 @@ impl FilterStrategy for StatTrackStrategy {
         self.servers
             .iter()
             .fold(0, |acc, servers| acc + servers.len())
-    }
-
-    fn iw4_master_map(hosts: Vec<HostData>) -> Self {
-        let mut out = Self::default();
-
-        for host in hosts {
-            for server in host.servers {
-                if let Some(sourced) =
-                    HostMeta::try_from(&host.ip_address, &host.webfront_url, server)
-                {
-                    let i = out.game_i(&sourced.server.game);
-                    out.servers[i].push(Sourced::Iw4(sourced));
-                }
-            }
-
-            out.host_ct += 1;
-        }
-
-        out
-    }
-
-    fn hmw_master_map(servers: Vec<String>) -> Self {
-        Self::from_sourced(
-            HMW_ID,
-            servers
-                .into_iter()
-                .filter_map(Sourced::try_parse_hmw_master)
-                .collect(),
-        )
-    }
-
-    fn from_cached(cached: Vec<Sourced>) -> Self {
-        Self::from_sourced(HMW_ID, cached)
     }
 
     async fn execute(
@@ -391,29 +394,12 @@ impl FilterStrategy for StatTrackStrategy {
 }
 
 impl StatTrackStrategy {
-    /// For sources where it is not possible to determine the number of hosters
-    fn from_sourced<S: AsRef<str>>(game: S, servers: Vec<Sourced>) -> Self {
-        Self {
-            game: vec![String::from(game.as_ref())],
-            servers: vec![servers],
-            host_ct: 0,
-        }
-    }
-
     fn filter_sourced(&self, ids: &'static [&str]) -> impl Iterator<Item = &[Sourced]> {
         self.game
             .iter()
             .zip(self.servers.iter())
             .filter(|(id, _)| ids.contains(&id.as_str()))
             .map(|(_, servers)| servers.as_slice())
-    }
-
-    /// `(game, servers)`
-    fn drain<R>(&mut self, r: R) -> impl Iterator<Item = (String, Vec<Sourced>)> + use<'_, R>
-    where
-        R: std::ops::RangeBounds<usize> + Copy,
-    {
-        self.game.drain(r).zip(self.servers.drain(r))
     }
 
     fn game_i(&mut self, mut game: &str) -> usize {

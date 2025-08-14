@@ -178,15 +178,15 @@ pub mod splash_screen {
 #[derive(Debug)]
 pub enum ResponseErr {
     Reqwest(reqwest::Error),
-    Status(&'static str, reqwest::StatusCode),
+    Status(Cow<'static, str>, reqwest::StatusCode),
     Pgp(pgp::errors::Error),
     Serialize(&'static str, serde_json::Error),
     Other(Cow<'static, str>),
 }
 
 impl ResponseErr {
-    fn bad_status(ctx: &'static str, response: reqwest::Response) -> Self {
-        Self::Status(ctx, response.status())
+    fn bad_status<T: Into<Cow<'static, str>>>(ctx: T, response: reqwest::Response) -> Self {
+        Self::Status(ctx.into(), response.status())
     }
     #[allow(dead_code)]
     fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
