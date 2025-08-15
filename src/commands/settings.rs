@@ -4,8 +4,8 @@ use crate::{
         filter::{RegionContainer, continent},
         handler::{CommandContext, CommandHandle, ReplHandle},
     },
-    models::json_data::ContCode,
     utils::{
+        caching::ContCode,
         display::{self, BoxBottom, BoxTop},
         main_thread_state,
     },

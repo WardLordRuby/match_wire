@@ -2,8 +2,9 @@ use super::{BoxBottom, BoxTop, DisplayContCode, Line, Space};
 use crate::{
     commands::filter::{Addressable, FilterPreProcess, Server, strategies::GameStats},
     elide,
-    models::{cli::Source, json_data::ContCodeMap},
+    models::cli::Source,
     parse_hostname,
+    utils::caching::ContCodeMap,
 };
 
 use std::{borrow::Cow, fmt::Display};

@@ -1,11 +1,9 @@
-use crate::{commands::launch::HostName, utils::caching::AddrMap};
-
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-    str::FromStr,
+use crate::{
+    commands::launch::HostName,
+    utils::caching::{AddrMap, ContCode, ContCodeMap, DnsResolutionMap, HostNameMap},
 };
+
+use std::{borrow::Cow, collections::HashMap, net::IpAddr, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeMap};
 
@@ -96,8 +94,6 @@ where
     })
 }
 
-pub(crate) type ContCode = [u8; 2];
-
 #[derive(Deserialize, Debug)]
 pub(crate) struct LocationApiResponse(pub(crate) Vec<IpLocation>);
 
@@ -172,6 +168,7 @@ pub struct CacheFile {
 }
 
 #[derive(Deserialize, Serialize, Default, Debug)]
+#[serde(default)]
 pub struct CondManifest {
     pub guid: String,
     pub files_with_hashes: FileHashes,
@@ -187,6 +184,7 @@ pub struct CondManifest {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct ServerCache {
     pub iw4m: AddrMap,
     pub hmw: AddrMap,
@@ -195,7 +193,8 @@ pub struct ServerCache {
         serialize_with = "serialize_country_code_map"
     )]
     pub regions: ContCodeMap,
-    pub host_names: HashMap<String, SocketAddr>,
+    pub host_names: HostNameMap,
+    pub dns_resolution: DnsResolutionMap,
 }
 
 fn deserialize_country_code_map<'de, D>(deserializer: D) -> Result<ContCodeMap, D::Error>
@@ -222,7 +221,6 @@ where
     map_serializer.end()
 }
 
-pub(crate) type ContCodeMap = HashMap<IpAddr, ContCode>;
 pub(crate) struct ContCodeMapWrapper<'a>(pub &'a ContCodeMap);
 
 impl Serialize for ContCodeMapWrapper<'_> {
