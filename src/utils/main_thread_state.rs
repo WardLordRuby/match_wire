@@ -1,5 +1,5 @@
 use super::{
-    caching::AddrMap,
+    caching::{AddrMap, ContCodeMap, DnsResolutionMap, HostNameMap},
     display::{
         self, GAME_DISPLAY_NAMES, GAME_TYPE_IDS, MAP_IDS,
         indicator::Spinner,
@@ -26,7 +26,6 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io,
-    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     thread::LocalKey,
     time::{Duration, SystemTime},
@@ -140,8 +139,9 @@ impl AltScreen {
 
 pub struct Cache {
     /// Key: host name with cod color codes
-    pub host_to_connect: HashMap<String, SocketAddr>,
-    pub ip_to_region: HashMap<IpAddr, [u8; 2]>,
+    pub host_to_connect: HostNameMap,
+    pub ip_to_region: ContCodeMap,
+    pub dns_resolution: DnsResolutionMap,
     pub connection_history: Vec<HostName>,
     pub iw4m: AddrMap,
     pub hmw: AddrMap,
@@ -154,6 +154,7 @@ impl From<CacheFile> for Cache {
         Self {
             host_to_connect: value.cache.host_names,
             ip_to_region: value.cache.regions,
+            dns_resolution: value.cache.dns_resolution,
             connection_history: value.connection_history,
             iw4m: value.cache.iw4m,
             hmw: value.cache.hmw,
@@ -168,6 +169,7 @@ impl Default for Cache {
         Self {
             host_to_connect: HashMap::new(),
             ip_to_region: HashMap::new(),
+            dns_resolution: HashMap::new(),
             connection_history: Vec::new(),
             iw4m: HashMap::new(),
             hmw: HashMap::new(),

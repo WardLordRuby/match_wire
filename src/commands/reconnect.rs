@@ -8,6 +8,7 @@ use crate::{
     models::cli::HistoryArgs,
     parse_hostname, send_msg_over, try_fit_table,
     utils::{
+        caching::HostNameMap,
         display::{
             ConnectionHelp, DisplayHistoryErr,
             table::{DisplayHistory, TABLE_PADDING},
@@ -16,7 +17,7 @@ use crate::{
     },
 };
 
-use std::{borrow::Cow, collections::HashMap, io, net::SocketAddr};
+use std::{borrow::Cow, io, net::SocketAddr};
 
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use tracing::{error, info};
@@ -29,7 +30,7 @@ pub const HISTORY_MAX: usize = 6;
 fn display_history(
     repl: &mut ReplHandle,
     history: &[HostName],
-    host_to_connect: &HashMap<String, SocketAddr>,
+    host_to_connect: &HostNameMap,
 ) -> io::Result<()> {
     let ips = history
         .iter()

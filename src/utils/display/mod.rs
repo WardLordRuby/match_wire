@@ -9,8 +9,8 @@ use crate::{
         launch::{LaunchError, WinApiErr, game_open},
     },
     main_thread_state,
-    models::{cli::Source, json_data::ContCode},
-    utils::caching::ReadCacheErr,
+    models::cli::Source,
+    utils::caching::{ContCode, ReadCacheErr},
 };
 
 use std::{borrow::Cow, fmt::Display};

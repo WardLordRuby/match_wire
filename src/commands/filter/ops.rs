@@ -43,7 +43,7 @@ where
     let responses = JoinSet::from_iter(
         sources
             .into_iter()
-            .map(|source| source.try_get_sourced_servers::<S>(client.clone())),
+            .map(|source| source.try_get_sourced_servers(client.clone())),
     )
     .join_all()
     .await;
@@ -151,7 +151,7 @@ impl Source {
             .map_err(Into::into)
     }
 
-    async fn try_get_sourced_servers<S: FilterStrategy>(
+    async fn try_get_sourced_servers(
         self,
         client: Client,
     ) -> Result<SourceResponse, (Source, ResponseErr)> {

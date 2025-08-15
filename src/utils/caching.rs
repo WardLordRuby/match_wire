@@ -33,7 +33,12 @@ use constcat::concat;
 use tokio::task::JoinSet;
 use tracing::{error, info, instrument, trace};
 
+pub(crate) type ContCode = [u8; 2];
+
 pub(crate) type AddrMap = HashMap<IpAddr, Vec<u16>>;
+pub(crate) type ContCodeMap = HashMap<IpAddr, ContCode>;
+pub(crate) type HostNameMap = HashMap<String, SocketAddr>;
+pub(crate) type DnsResolutionMap = HashMap<String, Option<IpAddr>>;
 
 impl Sourced {
     pub(crate) fn to_flattened_source(&self) -> Source {
@@ -290,6 +295,7 @@ pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Resu
                     "hmw": cache.hmw,
                     "regions": ContCodeMapWrapper(&cache.ip_to_region),
                     "host_names": cache.host_to_connect,
+                    "dns_resolution": cache.dns_resolution,
                 },
                 "hmw_manifest": {
                     "guid": cache.hmw_manifest.guid,

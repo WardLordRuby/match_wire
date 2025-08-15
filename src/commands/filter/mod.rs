@@ -13,11 +13,15 @@ use crate::{
     impl_rate_limit_config,
     models::{
         cli::{Filters, Region, Source},
-        json_data::{ContCode, GetInfo, IpLocation, LocationApiResponse, ServerInfo},
+        json_data::{GetInfo, IpLocation, LocationApiResponse, ServerInfo},
     },
     parse_hostname,
-    utils::display::{
-        DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural, indicator::Spinner,
+    utils::{
+        caching::ContCode,
+        display::{
+            DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural, indicator::Spinner,
+        },
+        main_thread_state,
     },
 };
 
@@ -665,13 +669,10 @@ fn resolve_address(
     let ip_trim = server_ip.trim_matches('/').trim_matches(':');
     if !ip_trim.is_empty() && ip_trim != LOCAL_HOST {
         if let Ok(ip) = ip_trim.parse::<IpAddr>() {
-            return if ip.is_unspecified() {
-                parse_possible_ipv6(host_ip, webfront_url)
-            } else {
-                Ok(ip)
-            };
-        }
-        if let Some(ip) = try_resolve_from_str(ip_trim) {
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                return Ok(ip);
+            }
+        } else if let Some(ip) = try_resolve_from_str(ip_trim) {
             return Ok(ip);
         }
     }
@@ -680,15 +681,30 @@ fn resolve_address(
 }
 
 fn try_resolve_from_str(ip_str: &str) -> Option<IpAddr> {
-    if let Some(ip) = (ip_str, 80)
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut socket_addr| socket_addr.next().map(|socket| socket.ip()))
-    {
-        trace!("Found socket address of: {ip}, from: {ip_str}");
-        return Some(ip);
+    if ip_str.is_empty() {
+        return None;
     }
-    None
+
+    main_thread_state::Cache::with_borrow_mut(|cache| {
+        if let Some(&attempt) = cache.dns_resolution.get(ip_str) {
+            return attempt;
+        }
+
+        let resolved = (ip_str, 80)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut socket_addr| socket_addr.next().map(|socket| socket.ip()));
+
+        let replaced = cache.dns_resolution.insert(ip_str.to_string(), resolved);
+        assert!(replaced.is_none());
+
+        #[cfg(debug_assertions)]
+        if let Some(ip) = resolved {
+            trace!("Cached socket address of: {ip}, from: {ip_str}");
+        }
+
+        resolved
+    })
 }
 
 #[instrument(level = "trace", skip_all)]
