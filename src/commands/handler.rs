@@ -48,7 +48,6 @@ use repl_oxide::{
     clap::try_parse_from,
     executor::{CommandHandle as CmdHandle, Executor},
     input_hook::{HookControl, HookID, HookStates, HookedEvent, InputHook},
-    repl_builder,
 };
 use tokio::{
     sync::{
@@ -681,7 +680,7 @@ impl CommandContext {
             ctx.listener_routine().unwrap_or_else(display::warning);
         }
 
-        let repl = repl_builder(term)
+        let repl = Repl::new(term)
             .with_prompt(MAIN_PROMPT)
             .with_completion(&crate::models::command_scheme::COMPLETION)
             .with_custom_quit_command("quit")
