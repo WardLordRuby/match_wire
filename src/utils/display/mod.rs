@@ -21,6 +21,9 @@ use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 pub(crate) const DISP_NAME_HMW: &str = "HMW";
 const HMW_LAUNCHER: &str = "HMW Launcher.exe";
 
+pub(crate) const UPDATE_MSG_HMW: &str =
+    concat!(YELLOW, "HMW files have changed!", RESET, "\n", VERIFY_HELP);
+
 pub(crate) const VERIFY_HELP: &str = concat!(
     GREEN,
     "Run ",

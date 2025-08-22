@@ -307,6 +307,7 @@ pub(crate) fn process_region_requests((results, ips_requested): LocationBatchRes
 
     if found_ct > 0 {
         info!(
+            name: LOG_ONLY,
             "Cached region data for {} new {}",
             found_ct,
             SingularPlural(found_ct, "hoster", "hosters")

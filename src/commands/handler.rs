@@ -19,7 +19,8 @@ use crate::{
     utils::{
         caching::{build_cache, write_cache},
         display::{
-            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, VERIFY_HELP, indicator::ProgressBar,
+            self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, UPDATE_MSG_HMW,
+            indicator::ProgressBar,
         },
         main_thread_state::{self, Cache, ThreadCopyState},
     },
@@ -36,6 +37,7 @@ use std::{
     sync::Arc,
 };
 
+use constcat::concat;
 use crossterm::{
     QueueableCommand,
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
@@ -65,6 +67,18 @@ macro_rules! hmw_hash_err {
         error!("Could not get latest HMW version - {}", format_args!($($arg)*))
     }
 }
+
+const QUIT_PROMPT: &str = concat!(
+    "Press (",
+    YELLOW,
+    "y",
+    RESET,
+    ") or (",
+    YELLOW,
+    "ctrl_c",
+    RESET,
+    ") to close"
+);
 
 pub(crate) enum CmdErr {
     Critical(io::Error),
@@ -631,7 +645,7 @@ impl CommandContext {
                     .game
                     .conditional_condense_manifest(latest_manifest)
                     .filter(|m| !m.is_empty())
-                    .map(|_| format!("{YELLOW}HMW files have changed!{RESET}\n{VERIFY_HELP}"));
+                    .map(|_| UPDATE_MSG_HMW);
 
                 let _ = startup_data.game.prep_verification_state();
 
@@ -645,10 +659,11 @@ impl CommandContext {
                 }
 
                 if startup_data.game.mod_verification != ModFileStatus::UpToDate {
-                    main_thread_state::AltScreen::push_message(Message::str(
-                        update_msg
-                            .unwrap_or_else(|| startup_data.game.mod_verification.to_string()),
-                    ));
+                    main_thread_state::AltScreen::push_message(if let Some(msg) = update_msg {
+                        Message::str(msg)
+                    } else {
+                        Message::str(startup_data.game.mod_verification.to_string())
+                    });
                 }
             }
             Ok(Err(err)) => hmw_hash_err!("{err}"),
@@ -1097,9 +1112,7 @@ impl CommandContext {
 
         let line_changes = HookStates::new(
             |handle, _context| {
-                handle.set_prompt(&format!(
-                    "Press ({YELLOW}y{RESET}) or ({YELLOW}ctrl_c{RESET}) to close"
-                ));
+                handle.set_prompt(QUIT_PROMPT);
                 Ok(())
             },
             |handle, _context| {
