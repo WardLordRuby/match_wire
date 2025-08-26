@@ -123,15 +123,14 @@ fn retries_deserializer<'de, D>(deserializer: D) -> Result<u8, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let retries = i16::deserialize(deserializer)?;
+    const MAX: i16 = RETRIES_MAX as i16;
+    let retries = match i16::deserialize(deserializer)? {
+        ..0 => 0,
+        MAX.. => RETRIES_MAX,
+        set => set as u8,
+    };
 
-    if retries.is_negative() {
-        return Ok(0);
-    } else if retries > RETRIES_MAX as i16 {
-        return Ok(RETRIES_MAX);
-    }
-
-    Ok(retries as u8)
+    Ok(retries)
 }
 
 fn regions_deserializer<'de, D>(deserializer: D) -> Result<SelectedRegions, D::Error>

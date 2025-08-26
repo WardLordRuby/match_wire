@@ -172,6 +172,11 @@ HMW mod files. By default the existence of all HMW mod files will be checked, ho
 quick way to check if a new update for HMW has been released. You can also verify _all_ HMW mod files by using `version` with the
 argument `--verify-all`.  
 
+## Environment variables
+MatchWire supports environment HMW manifest override the same way as the official HMW launcher does. By default MatchWire will search
+for the supported '.env' file in the same directory it is located in. The environment variable `HMW_ENV` can also be set with a path
+(absolute or relative) to locate the supported '.env' file.  
+
 ## Build from source
 If you desire to build from source the process is straight forward. Make sure you have [rust][rust-dl] installed. 
 1. Download or clone the source code  
