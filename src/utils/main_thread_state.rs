@@ -65,7 +65,7 @@ thread_local! {
     static ID_MAPS: OnceCell<IDMapsInner> = const { OnceCell::new() };
     static GAME_ID_MAP: OnceCell<HashMap<&'static str, &'static str>> = const { OnceCell::new() };
     static ALT_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
-    static ALT_SCREEN_EVENT_BUFFER: RefCell<AltScreenEvents> = RefCell::new(AltScreenEvents::default());
+    static ALT_SCREEN_EVENT_BUFFER: RefCell<AltScreenEvents> = const { RefCell::new(AltScreenEvents::new()) };
     static EXE_PATH: LazyCell<io::Result<PathBuf>> = LazyCell::new(std::env::current_exe);
 }
 
@@ -91,6 +91,15 @@ pub(crate) struct AltScreenEvents {
     #[allow(dead_code)] // currently only used on release
     pub(crate) pre_subscriber: Vec<Message>,
     pub(crate) from_subscriber: String,
+}
+
+impl AltScreenEvents {
+    const fn new() -> Self {
+        Self {
+            pre_subscriber: Vec::new(),
+            from_subscriber: String::new(),
+        }
+    }
 }
 
 #[cfg(not(debug_assertions))]

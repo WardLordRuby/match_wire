@@ -455,8 +455,8 @@ fn check_app_dir_exists(local: &Path) -> io::Result<PathBuf> {
     Ok(curr_local_dir)
 }
 
-pub(crate) fn make_slice_ascii_lowercase(vec: &mut [String]) {
-    vec.iter_mut().for_each(|s| s.make_ascii_lowercase());
+pub(crate) fn make_slice_ascii_lowercase(slice: &mut [String]) {
+    slice.iter_mut().for_each(|s| s.make_ascii_lowercase());
 }
 
 pub(crate) fn elide(str: &str, at: usize) -> Option<String> {
