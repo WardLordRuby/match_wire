@@ -101,7 +101,7 @@ fn calc_max_div(width: usize) -> Option<usize> {
 
     let mut max_div = 1;
     for prime in PRIME {
-        if width % prime == 0 {
+        if width.is_multiple_of(prime) {
             let acc = max_div * prime;
 
             if acc > MAX_PRODUCT {

@@ -194,7 +194,7 @@ impl CommandContext {
                     hostname = Some(parsed);
                 }
 
-                if attempts % 5 == 0 {
+                if attempts.is_multiple_of(5) {
                     let info_msg = format!(
                         "{YELLOW}'{}' at capacity - {player_ct}/{max_public_slots} players",
                         hostname.as_deref().unwrap()

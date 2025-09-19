@@ -665,8 +665,7 @@ impl LastServerStats {
             let width = (cols.saturating_sub(TABLE_PADDING) as usize).max(MIN_FILTER_COLS);
             try_fit_table(repl, (cols, rows), width)?;
 
-            println!();
-            println!("{}", DisplaySourceStats(source));
+            println!("\n{}", DisplaySourceStats(source));
 
             Cache::with_borrow(|cache| {
                 println!(

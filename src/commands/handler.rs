@@ -820,8 +820,7 @@ impl CommandContext {
         }
 
         if let Some(window_name) = game_open {
-            println!("{RED}{window_name} is already running{RESET}");
-            println!("{ConnectionHelp}");
+            println!("{RED}{window_name} is already running{RESET}\n{ConnectionHelp}");
             return Ok(CommandHandle::Processed);
         }
 
@@ -830,9 +829,7 @@ impl CommandContext {
                 info!("Launching {}...", self.game_name());
                 self.game.update(exe_details(&self.game.path));
                 main_thread_state::PtyHandle::set(Some(conpty));
-                if let Err(err) = self.listener_routine() {
-                    error!("{err}")
-                }
+                self.listener_routine().unwrap_or_else(display::error);
             }
             Err(err) => error!("{err}"),
         };
@@ -947,9 +944,7 @@ impl CommandContext {
             let _ = self.game.verify_hmw_files();
         }
 
-        println!("{}", self.appdata);
-        println!();
-        println!("{}", self.game);
+        println!("{}\n\n{}", self.appdata, self.game);
         Ok(CommandHandle::Processed)
     }
 

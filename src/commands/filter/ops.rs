@@ -407,7 +407,7 @@ pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters)
             continue;
         }
 
-        if args.player_min.is_some_and(|min| info.clients < min) {
+        if args.player_min.is_some_and(|min| info.player_ct() < min) {
             servers.swap_remove(i);
             continue;
         }

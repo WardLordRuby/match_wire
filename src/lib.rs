@@ -422,8 +422,7 @@ fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
 }
 
 pub fn await_user_for_end<D: Display>(err: D) {
-    println!("{RED}{err}{RESET}");
-    println!("Press enter to exit...");
+    println!("{RED}{err}{RESET}\nPress enter to exit...");
     let stdin = std::io::stdin();
     let mut reader = BufReader::new(stdin);
     let _ = reader.read_line(&mut String::new());
