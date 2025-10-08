@@ -189,6 +189,7 @@ impl FilterStrategy for FastStrategy {
 
         Ok(FilterData {
             servers,
+            sorted: false,
             duplicates,
             cache_modified,
         })
@@ -377,7 +378,8 @@ impl FilterStrategy for StatTrackStrategy {
 
         let out = servers
             .iter()
-            .map(|server| (server.socket_addr(), server.info.player_ct()))
+            // Servers are always sorted no need to include player count data
+            .map(|server| (server.socket_addr(), 0))
             .collect();
 
         spinner.finish();
@@ -387,6 +389,7 @@ impl FilterStrategy for StatTrackStrategy {
 
         Ok(FilterData {
             servers: out,
+            sorted: true,
             duplicates: requests.duplicates,
             cache_modified,
         })

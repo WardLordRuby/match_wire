@@ -27,6 +27,7 @@ use crate::{
 
 use std::{
     cell::Cell,
+    cmp::Reverse,
     collections::HashSet,
     fmt::Display,
     fs::File,
@@ -66,14 +67,19 @@ pub(crate) mod continent {
     pub(crate) const APAC_CODES: [ContCode; 2] = [[b'A', b'S'], [b'O', b'C']];
 }
 
-fn serialize_json(f: &mut std::fs::File, from: String) -> io::Result<()> {
-    const COMMA: char = ',';
-    let ips = if from.ends_with(COMMA) {
-        &from[..from.len() - COMMA.len_utf8()]
-    } else {
-        from.as_str()
+fn serialize_json_ips(
+    f: &mut std::fs::File,
+    mut ips: impl Iterator<Item = (SocketAddr, u8)>,
+) -> io::Result<()> {
+    let Some((first, _)) = ips.next() else {
+        return write!(f, "[]");
     };
-    write!(f, "[{ips}]")
+
+    write!(f, "[\"{first}\"")?;
+    for (ip, _) in ips {
+        write!(f, ",\"{ip}\"")?;
+    }
+    write!(f, "]")
 }
 
 #[instrument(name = "filter", level = "trace", skip_all)]
@@ -82,8 +88,6 @@ pub(crate) async fn build_favorites(
     repl: &mut ReplHandle,
     args: Option<Filters>,
 ) -> Result<bool, CmdErr> {
-    let mut ip_collected = 0;
-    let mut ips = String::new();
     let args = args.unwrap_or_default();
     let version = ctx.game_version().unwrap_or(1.0);
 
@@ -136,32 +140,36 @@ pub(crate) async fn build_favorites(
         DisplayServerCount(filter.servers.len(), GREEN)
     );
 
-    if filter.servers.len() > limit {
-        filter.servers.sort_unstable_by_key(|&(_, clients)| clients);
-    }
-
-    for (addr, _) in filter.servers.iter().rev() {
-        ips.push_str(&format!("\"{addr}\","));
-        ip_collected += 1;
-        if ip_collected == limit {
-            break;
+    let ips_saved = if filter.servers.len() > limit {
+        if !filter.sorted {
+            filter
+                .servers
+                .sort_unstable_by_key(|&(_, clients)| Reverse(clients));
         }
-    }
+        limit
+    } else {
+        filter.servers.len()
+    };
 
-    serialize_json(&mut favorites_json, ips)
-        .map_err(|err| command_err!("Could not write to {FAVORITES}, err: {err}"))?;
+    serialize_json_ips(
+        &mut favorites_json,
+        filter.servers.into_iter().take(ips_saved),
+    )
+    .map_err(|err| command_err!("Could not write to {FAVORITES}, err: {err}"))?;
 
     println!(
         "{GREEN}{FAVORITES} updated with {}{RESET}",
-        DisplayCountOf(ip_collected, "entry", "entries")
+        DisplayCountOf(ips_saved, "entry", "entries")
     );
 
     Ok(filter.cache_modified)
 }
 
 pub(crate) struct FilterData {
-    /// (addr, clients)
+    /// `(addr, clients)`\
+    /// If servers are _always_ sorted client computations can be omitted
     servers: Vec<(SocketAddr, u8)>,
+    sorted: bool,
     duplicates: usize,
     cache_modified: bool,
 }
