@@ -27,14 +27,7 @@ use reqwest::Client;
 use tokio::task::JoinSet;
 
 pub(crate) trait FilterStrategy:
-    Default
-    + Extend<Sourced>
-    + Extend<Iw4JsonFmt>
-    + Extend<HmwJsonFmt>
-    + IntoIterator<Item = Sourced>
-    + Sized
-    + Send
-    + 'static
+    Default + Extend<Sourced> + Extend<Iw4JsonFmt> + Extend<HmwJsonFmt> + IntoIterator<Item = Sourced>
 {
     async fn new(sources: Option<HashSet<Source>>, client: &Client) -> Result<Self, CmdErr> {
         match sources {
@@ -174,11 +167,12 @@ impl FilterStrategy for FastStrategy {
                 .into_iter()
                 .filter(|source| ip_set.insert(source.socket_addr()))
                 .map(|source| {
-                    if let Sourced::Iw4(meta) = &source {
-                        (source.socket_addr(), meta.server.clients)
+                    let player_ct = if let Sourced::Iw4(meta) = &source {
+                        meta.server.clients
                     } else {
-                        (source.socket_addr(), 0)
-                    }
+                        0
+                    };
+                    (source.socket_addr(), player_ct)
                 })
                 .collect::<Vec<_>>();
 
@@ -480,7 +474,7 @@ impl StatTrackStrategy {
 
     /// [`Self::collect_to_servers`] will move the data required to compute this total
     fn server_ct_by_id(&self, ids: &'static [&str]) -> usize {
-        self.filter_sourced(ids).map(<[Sourced]>::len).sum()
+        self.filter_sourced(ids).map(<[_]>::len).sum()
     }
 
     fn get_source_stats(&self, map: &HashMap<SocketAddr, GetInfo>) -> Vec<DisplaySourceStatsInner> {
@@ -502,7 +496,7 @@ impl StatTrackStrategy {
                         // trust the iw4 instance while we don't have getInfo setup for other games
                         (self.game[i] != HMW_ID).then_some(&server.server),
                     )),
-                    _ => (),
+                    Sourced::HmwCached(_) | Sourced::Iw4Cached(_) => (),
                 }
             }
         }

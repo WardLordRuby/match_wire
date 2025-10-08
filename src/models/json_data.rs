@@ -40,6 +40,7 @@ pub(crate) struct ServerInfo {
 
 #[derive(Deserialize, Debug, Default)]
 pub struct GetInfo {
+    /// This value includes both bot & player clients on the server, for player count use [`Self::player_ct`]
     #[serde(deserialize_with = "from_string::<_, u8>")]
     pub clients: u8,
     #[serde(rename = "sv_maxclients")]

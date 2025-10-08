@@ -231,7 +231,7 @@ pub fn try_init_logger() -> Option<PathBuf> {
         ));
 
         #[cfg(debug_assertions)]
-        init_subscriber(std::path::Path::new("")).unwrap();
+        init_subscriber(Path::new("")).unwrap();
 
         None
     }
@@ -362,13 +362,14 @@ pub(crate) fn open_dir(path: &Path) {
 fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
     use crate::utils::display::HmwDownloadHint;
 
-    macro_rules! exists {
-        ($file:expr) => {
-            $file.try_exists().map_err(|err| err.to_string())?
-        };
+    fn exists(exe_dir: &Path, file: &'static str) -> Result<bool, String> {
+        exe_dir
+            .join(file)
+            .try_exists()
+            .map_err(|err| err.to_string())
     }
 
-    if !exists!(exe_dir.join(FNAME_MWR)) {
+    if !exists(exe_dir, FNAME_MWR)? {
         return Err(Cow::Borrowed(concat!(
             "Move ",
             CRATE_NAME,
@@ -376,11 +377,11 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
         )));
     }
 
-    let found_game = if exists!(exe_dir.join(FNAME_HMW)) {
+    let found_game = if exists(exe_dir, FNAME_HMW)? {
         FNAME_HMW
-    } else if exists!(exe_dir.join(FNAME_H2M_1)) {
+    } else if exists(exe_dir, FNAME_H2M_1)? {
         FNAME_H2M_1
-    } else if exists!(exe_dir.join(FNAME_H2M_2)) {
+    } else if exists(exe_dir, FNAME_H2M_2)? {
         FNAME_H2M_2
     } else {
         return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}")));

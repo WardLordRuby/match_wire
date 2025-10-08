@@ -154,10 +154,10 @@ impl Source {
     async fn try_get_sourced_servers(
         self,
         client: Client,
-    ) -> Result<SourceResponse, (Source, ResponseErr)> {
+    ) -> Result<SourceResponse, (Self, ResponseErr)> {
         match self {
-            Source::HmwMaster => Self::fetch::<HmwServers>(client).await,
-            Source::Iw4Master => Self::fetch::<Iw4Servers>(client).await,
+            Self::HmwMaster => Self::fetch::<HmwServers>(client).await,
+            Self::Iw4Master => Self::fetch::<Iw4Servers>(client).await,
         }
         .map_err(|err| (self, err))
     }
@@ -165,8 +165,8 @@ impl Source {
     fn try_extend_with_cached_servers<S: FilterStrategy>(self, servers: &mut S) -> Result<(), ()> {
         main_thread_state::Cache::with_borrow(|cache| {
             let backup = match self {
-                Source::Iw4Master => &cache.iw4m,
-                Source::HmwMaster => &cache.hmw,
+                Self::Iw4Master => &cache.iw4m,
+                Self::HmwMaster => &cache.hmw,
             };
 
             let cached_server_ct = backup.values().fold(0, |acc, servers| acc + servers.len());

@@ -88,7 +88,6 @@ impl ExePath {
 
 #[derive(Default)]
 pub(crate) struct AltScreenEvents {
-    #[allow(dead_code)] // currently only used on release
     pub(crate) pre_subscriber: Vec<Message>,
     pub(crate) from_subscriber: String,
 }
