@@ -22,7 +22,7 @@ use crate::{
             self, ConnectionHelp, DISP_NAME_HMW, DisplayLogs, UPDATE_MSG_HMW,
             indicator::ProgressBar,
         },
-        main_thread_state::{self, Cache, ThreadCopyState},
+        main_thread_state::{self, Cache, PseudoConStatus, ThreadCopyState},
     },
 };
 
@@ -882,8 +882,8 @@ impl CommandContext {
             let mut attempt = 1;
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
-                match main_thread_state::PtyHandle::is_alive() {
-                    Ok(true) if attempt == 3 => {
+                match main_thread_state::PtyHandle::check_connection() {
+                    Ok(PseudoConStatus::Attached) if attempt == 3 => {
                         match hide_pseudo_console() {
                             Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
                             Ok(false) => {
@@ -894,8 +894,8 @@ impl CommandContext {
                         game_state_change.notify_one();
                         break vec![Message::info(format!("Connected to {game_name} console"))];
                     }
-                    Ok(true) => attempt += 1,
-                    Ok(false) => {
+                    Ok(PseudoConStatus::Attached) => attempt += 1,
+                    Ok(PseudoConStatus::Closed) | Ok(PseudoConStatus::Unattached) => {
                         break vec![
                             Message::error(format!(
                                 "Could not establish connection to {game_name}"
@@ -903,7 +903,7 @@ impl CommandContext {
                             Message::str(ConnectionHelp),
                         ];
                     }
-                    Err(err) => break vec![Message::error(err)],
+                    Err(err) => break vec![Message::error(err.to_string())],
                 }
             };
 

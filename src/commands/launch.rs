@@ -7,7 +7,7 @@ use crate::{
     parse_hostname, send_msg_over, strip_ansi_private_modes,
     utils::{
         display,
-        main_thread_state::{self, ThreadCopyState},
+        main_thread_state::{self, PseudoConStatus, ThreadCopyState},
     },
 };
 
@@ -268,12 +268,17 @@ async fn add_to_history(
 }
 
 pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
-    main_thread_state::PtyHandle::check_connection()?;
+    let game_name = context.game_name();
+
+    let PseudoConStatus::Attached =
+        main_thread_state::PtyHandle::check_connection().map_err(|err| err.to_string())?
+    else {
+        return Err(format!("No connection to {game_name} console"));
+    };
 
     let msg_sender = context.msg_sender();
     let game_state_change = context.game_state_change();
     let version = context.game_version().unwrap_or(1.0);
-    let game_name = context.game_name();
 
     tokio::spawn(async move {
         let mut buffer = OsString::new();
@@ -301,7 +306,7 @@ pub fn init_listener(context: &mut CommandContext) -> Result<(), String> {
                             buffer.push(os_string);
                             false
                         })
-                        .map_err(|err| err.to_string_lossy().to_string().into())
+                        .map_err(|err| err.to_string_lossy().to_string())
                 }) {
                     Ok(true) => break,
                     Ok(false) => tokio::task::yield_now().await,

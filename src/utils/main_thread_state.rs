@@ -24,6 +24,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, LazyCell, OnceCell, RefCell},
     collections::HashMap,
+    ffi::OsString,
     fmt::Display,
     io,
     path::{Path, PathBuf},
@@ -513,29 +514,72 @@ impl AppHWND {
 }
 
 pub(crate) enum PtyAccessErr {
-    ConnectionErr(Cow<'static, str>),
+    PtyErr(OsString),
     UserErr(Cow<'static, str>),
+    NotAlive,
 }
 
-macro_rules! inner {
-    ($struct:expr) => {
-        match $struct {
-            PtyAccessErr::ConnectionErr(cow) => cow,
-            PtyAccessErr::UserErr(cow) => cow,
-        }
-    };
+impl PtyAccessErr {
+    pub(crate) fn is_connection_err(&self) -> bool {
+        matches!(self, PtyAccessErr::PtyErr(_) | PtyAccessErr::NotAlive)
+    }
+}
+
+impl From<OsString> for PtyAccessErr {
+    fn from(err: OsString) -> Self {
+        Self::PtyErr(err)
+    }
 }
 
 impl Display for PtyAccessErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", inner!(self))
+        match self {
+            PtyAccessErr::PtyErr(err) => write!(f, "{}", err.to_string_lossy()),
+            PtyAccessErr::UserErr(err) => write!(f, "{err}"),
+            PtyAccessErr::NotAlive => write!(f, "Game console not currently connected"),
+        }
     }
 }
 
 impl From<PtyAccessErr> for Cow<'static, str> {
-    fn from(value: PtyAccessErr) -> Self {
-        inner!(value)
+    fn from(err: PtyAccessErr) -> Self {
+        match err {
+            PtyAccessErr::UserErr(cow) => cow,
+            err => err.to_string().into(),
+        }
     }
+}
+
+pub(crate) enum ConnectionErr {
+    PtyErr(OsString),
+    WinApiErr(WinApiErr),
+}
+
+impl Display for ConnectionErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PtyErr(err) => write!(f, "{}", err.to_string_lossy()),
+            Self::WinApiErr(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl From<OsString> for ConnectionErr {
+    fn from(err: OsString) -> Self {
+        Self::PtyErr(err)
+    }
+}
+
+impl From<WinApiErr> for ConnectionErr {
+    fn from(err: WinApiErr) -> Self {
+        Self::WinApiErr(err)
+    }
+}
+
+pub(crate) enum PseudoConStatus {
+    Attached,
+    Unattached,
+    Closed,
 }
 
 pub(crate) struct PtyHandle;
@@ -545,43 +589,45 @@ impl PtyHandle {
         PTY_HANDLE.set(pty)
     }
 
-    /// Prefer to use [`Self::check_connection`] where possible as it also will drop no longer alive `PTY`s.
-    pub(crate) fn is_alive() -> Result<bool, Cow<'static, str>> {
-        PTY_HANDLE.with_borrow(|handle| {
-            let Some(handle) = handle.as_ref() else {
-                return Err(Cow::Borrowed("No connection to game client is active"));
+    fn is_alive(handle: &mut Option<PTY>) -> Result<bool, OsString> {
+        let Some(game_console) = handle else {
+            return Ok(false);
+        };
+
+        let alive_res = game_console.is_alive();
+        if matches!(alive_res, Ok(false) | Err(_)) {
+            *handle = None
+        }
+        alive_res
+    }
+
+    pub(crate) fn check_connection() -> Result<PseudoConStatus, ConnectionErr> {
+        PTY_HANDLE.with_borrow_mut(|handle| {
+            if Self::is_alive(handle)? {
+                return Ok(PseudoConStatus::Attached);
+            }
+            let state = match game_open()? {
+                Some(_) => PseudoConStatus::Unattached,
+                None => PseudoConStatus::Closed,
             };
 
-            handle
-                .is_alive()
-                .map_err(|err| Cow::Owned(err.to_string_lossy().to_string()))
+            Ok(state)
         })
     }
 
-    pub(crate) fn check_connection() -> Result<(), Cow<'static, str>> {
-        if let Err(err) = {
-            match Self::is_alive() {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(Cow::Borrowed("No connection to game client is active")),
-                Err(err) => Err(err),
-            }
-        } {
-            PTY_HANDLE.with_borrow_mut(|handle| *handle = None);
-            return Err(err);
-        };
-
-        Ok(())
-    }
-
-    pub(crate) fn try_if_alive<R>(
-        f: impl FnOnce(&PTY) -> Result<R, Cow<'static, str>>,
+    pub(crate) fn try_if_alive<R, E: Into<Cow<'static, str>>>(
+        f: impl FnOnce(&PTY) -> Result<R, E>,
     ) -> Result<R, PtyAccessErr> {
-        Self::check_connection().map_err(PtyAccessErr::ConnectionErr)?;
+        PTY_HANDLE.with_borrow_mut(|handle| {
+            if !Self::is_alive(handle)? {
+                return Err(PtyAccessErr::NotAlive);
+            }
 
-        PTY_HANDLE
-            .with_borrow(|handle| handle.as_ref().map(f))
-            .expect("early return ensures handle is some")
-            .map_err(PtyAccessErr::UserErr)
+            f(handle
+                .as_ref()
+                .expect("early return ensures handle is some"))
+            .map_err(|err| PtyAccessErr::UserErr(err.into()))
+        })
     }
 
     pub(crate) fn try_drop_pty(game_name: &str) {

@@ -13,7 +13,7 @@ use crate::{
             ConnectionHelp, DisplayHistoryErr,
             table::{DisplayHistory, TABLE_PADDING},
         },
-        main_thread_state::{self, PtyAccessErr},
+        main_thread_state,
     },
 };
 
@@ -127,7 +127,7 @@ impl CommandContext {
             game_console.send_connect(ip_port)
         }) {
             error!("{err}");
-            if let PtyAccessErr::ConnectionErr(_) = err {
+            if err.is_connection_err() {
                 println!("{ConnectionHelp}");
             }
         }
@@ -173,9 +173,8 @@ impl CommandContext {
                     if let Err(err) = main_thread_state::PtyHandle::try_if_alive(|game_console| {
                         game_console.send_connect(addr)
                     }) {
-                        let connection_err = matches!(err, PtyAccessErr::ConnectionErr(_));
-                        send_msg_over(&msg_sender, Message::error(err)).await;
-                        if connection_err {
+                        send_msg_over(&msg_sender, Message::error(err.to_string())).await;
+                        if err.is_connection_err() {
                             send_msg_over(&msg_sender, Message::str(ConnectionHelp)).await;
                         }
                     } else if let Some(parsed) = hostname {
