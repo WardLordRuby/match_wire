@@ -39,7 +39,7 @@ pub(crate) trait FilterStrategy:
 
     fn is_empty(&self) -> bool;
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn server_ct(&self) -> usize;
 
     async fn execute(

@@ -214,8 +214,7 @@ pub struct Endpoints {
     hmw_manifest_signed: Option<String>,
     hmw_pgp_public_key: Option<String>,
 
-    // `hmw_download` only used on release builds
-    #[allow(dead_code)]
+    #[cfg(not(debug_assertions))]
     hmw_download: Cow<'static, str>,
 
     server_info_endpoint: Cow<'static, str>,
@@ -225,7 +224,7 @@ pub struct Endpoints {
 }
 
 impl Endpoints {
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     fn set(endpoints: Endpoints) -> Result<(), Endpoints> {
         ENDPOINTS.with(|cell| cell.set(endpoints))
     }
@@ -236,7 +235,10 @@ impl Endpoints {
             hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
             hmw_manifest_signed: None,
             hmw_pgp_public_key: None,
+
+            #[cfg(not(debug_assertions))]
             hmw_download: Cow::Borrowed("https://docs.horizonmw.org/download"),
+
             server_info_endpoint: Cow::Borrowed("/getInfo"),
             skip_pgp: false,
         })
@@ -420,7 +422,7 @@ trait LocalKeyInternal<T: Copy + Default + 'static> {
     fn local_key() -> &'static LocalKey<Cell<T>>;
 }
 
-#[allow(private_bounds)]
+#[expect(private_bounds)]
 pub(crate) trait ThreadCopyState<T: Copy + Default + 'static>: LocalKeyInternal<T> {
     fn get() -> T {
         Self::local_key().get()

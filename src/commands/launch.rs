@@ -37,7 +37,7 @@ use windows_sys::Win32::{
 };
 use winptyrs::{AgentConfig, MouseMode, PTY, PTYArgs, PTYBackend};
 
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "match C type name")]
 type wchar_t = u16;
 
 macro_rules! utf16_array {
@@ -50,6 +50,8 @@ macro_rules! utf16_array {
     };
 }
 
+const CMP_LEN: usize = 8;
+
 const WINDOW_NAMES_GAME: [&str; 3] = ["h2m", "hmw", "horizonmw"];
 const WINDOW_CLASS_NAME_WIN11_TERMINAL: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
 const WINDOW_CLASS_NAME_WIN_CONSOLE_HOST: &str = "ConsoleWindowClass";
@@ -57,10 +59,10 @@ const WINDOW_CLASS_NAME_WIN_CONSOLE_HOST: &str = "ConsoleWindowClass";
 const WINDOW_CLASS_NAMES_GAME: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
 const WINDOW_CLASS_NAME_PSEUDO_CONSOLE: &str = "PseudoConsoleWindow";
 const JOIN_STR: &str = "Joining ";
-const JOIN_BYTES: [u16; 8] = utf16_array!['J', 'o', 'i', 'n', 'i', 'n', 'g', ' '];
-const CONNECTING_BYTES: [u16; 8] = utf16_array!['C', 'o', 'n', 'n', 'e', 'c', 't', 'i'];
+const JOIN_BYTES: [u16; CMP_LEN] = utf16_array!['J', 'o', 'i', 'n', 'i', 'n', 'g', ' '];
+const CONNECTING_BYTES: [u16; CMP_LEN] = utf16_array!['C', 'o', 'n', 'n', 'e', 'c', 't', 'i'];
 const CONNECT_STR: &str = "connect ";
-const CONNECT_BYTES: [(u16, u16); 8] = utf16_array![pairs:
+const CONNECT_BYTES: [(u16, u16); CMP_LEN] = utf16_array![pairs:
     ('c', 'C'),
     ('o', 'O'),
     ('n', 'N'),
@@ -70,9 +72,6 @@ const CONNECT_BYTES: [(u16, u16); 8] = utf16_array![pairs:
     ('t', 'T'),
     (' ', ' '),
 ];
-
-const _: () =
-    assert!(JOIN_BYTES.len() == CONNECTING_BYTES.len() && JOIN_BYTES.len() == CONNECT_BYTES.len());
 
 const ANSI_CODE_START: [u16; 2] = utf16_array!['\x1b', '['];
 const ESCAPE_CHAR: char = '\x1b';
@@ -770,7 +769,7 @@ pub(crate) fn get_exe_version(path: &Path) -> Option<f64> {
     parse_fixed_file_info(info)
 }
 
-#[allow(clippy::identity_op)]
+#[expect(clippy::identity_op)]
 fn parse_fixed_file_info(info: &VS_FIXEDFILEINFO) -> Option<f64> {
     fn trim_u16(num: u16) -> String {
         if num == 0 {

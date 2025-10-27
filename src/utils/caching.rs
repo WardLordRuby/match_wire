@@ -243,7 +243,7 @@ impl From<serde_json::Error> for ReadCacheErr {
 }
 
 #[instrument(level = "trace", skip_all)]
-#[allow(clippy::result_large_err)]
+#[expect(clippy::result_large_err)]
 pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
     let file = match std::fs::read(local_env_dir.join(CACHED_DATA)) {
         Ok(data) => data,

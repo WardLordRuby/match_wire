@@ -188,7 +188,6 @@ impl ResponseErr {
     fn bad_status<T: Into<Cow<'static, str>>>(ctx: T, response: reqwest::Response) -> Self {
         Self::Status(ctx.into(), response.status())
     }
-    #[allow(dead_code)]
     fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
         Self::Other(msg.into())
     }
@@ -646,7 +645,7 @@ macro_rules! impl_rate_limit_config {
 }
 
 impl<T: RateLimitConfig> RateLimiter<T> {
-    #[allow(clippy::new_without_default)] // prefer new since it can be const
+    #[expect(clippy::new_without_default, reason = "`Self` will only be const")]
     pub const fn new() -> Self {
         Self {
             ct: 0,

@@ -310,7 +310,7 @@ pub(crate) struct GetInfoMetaData {
     pub(crate) meta: Sourced,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl GetInfoMetaData {
     fn new(meta: Sourced, server_info_endpoint: &'static str) -> Self {
         GetInfoMetaData {
@@ -516,7 +516,7 @@ pub enum Sourced {
 
     // Only pub so we can write tests for ensuring proper table formatting, `HostMeta` does not
     // need to be included, as it eventually gets converted to `Server` before it is displayed.
-    #[allow(private_interfaces)]
+    #[expect(private_interfaces)]
     Iw4(HostMeta),
 
     Iw4Cached(SocketAddr),
