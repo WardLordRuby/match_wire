@@ -435,7 +435,7 @@ fn check_app_dir_exists(local: &Path) -> io::Result<PathBuf> {
     let curr_local_dir = local.join(CRATE_NAME);
 
     if !curr_local_dir.try_exists()? {
-        std::fs::create_dir(local)?;
+        std::fs::create_dir(&curr_local_dir)?;
     }
 
     if prev_local_dir
