@@ -808,20 +808,30 @@ impl CommandContext {
             }
         };
 
-        if main_thread_state::PtyHandle::check_connection().is_ok() {
-            if game_open.is_some() {
+        let pty_active = match main_thread_state::PtyHandle::game_connected() {
+            Ok(status) => status,
+            Err(err) => {
+                error!(
+                    "{}, could not determine if it is okay to launch",
+                    err.to_string_lossy()
+                );
+                return Ok(CommandHandle::Processed);
+            }
+        };
+
+        if let Some(window_name) = game_open {
+            if pty_active {
                 println!(
                     "{GREEN}Connection to {} already active{RESET}",
                     self.game_name()
                 );
-                return Ok(CommandHandle::Processed);
+            } else {
+                println!("{RED}{window_name} is already running{RESET}\n{ConnectionHelp}");
             }
-            main_thread_state::PtyHandle::wait_for_exit(&self.game_name());
-        }
-
-        if let Some(window_name) = game_open {
-            println!("{RED}{window_name} is already running{RESET}\n{ConnectionHelp}");
             return Ok(CommandHandle::Processed);
+        } else if pty_active {
+            // Game window is not present, it must be in the process of closing
+            main_thread_state::PtyHandle::wait_for_exit(&self.game_name());
         }
 
         match spawn_pseudo(&self.game.path) {
@@ -833,6 +843,7 @@ impl CommandContext {
             }
             Err(err) => error!("{err}"),
         };
+
         Ok(CommandHandle::Processed)
     }
 
@@ -851,7 +862,9 @@ impl CommandContext {
         &mut self,
         line_handle: &mut ReplHandle,
     ) -> io::Result<Result<(), WinApiErr>> {
-        let game_open = main_thread_state::PtyHandle::check_connection().is_ok();
+        let game_open = main_thread_state::PtyHandle::game_connected()
+            .map_err(|err| display::log_error(err.to_string_lossy()))
+            .unwrap_or_default();
 
         line_handle.writer().queue(SetTitle(CRATE_NAME))?;
 

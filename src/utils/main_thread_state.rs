@@ -603,6 +603,12 @@ impl PtyHandle {
         alive_res
     }
 
+    /// Only checks if the PTY console is alive, if you also need more information about the games current open
+    /// state use [`Self::check_connection`]
+    pub(crate) fn game_connected() -> Result<bool, OsString> {
+        PTY_HANDLE.with_borrow_mut(Self::is_alive)
+    }
+
     pub(crate) fn check_connection() -> Result<PseudoConStatus, ConnectionErr> {
         PTY_HANDLE.with_borrow_mut(|handle| {
             if Self::is_alive(handle)? {
