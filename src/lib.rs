@@ -108,23 +108,38 @@ pub(crate) const CACHED_DATA: &str = "cache.json";
 pub mod splash_screen {
     use std::{io, thread::JoinHandle};
 
+    #[cfg(debug_assertions)]
+    pub use debug::*;
     #[cfg(not(debug_assertions))]
-    use crossterm::{
-        cursor, execute, queue,
-        terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
-    };
+    pub use release::*;
 
-    #[cfg(not(debug_assertions))]
-    use crate::main_thread_state;
+    // Skip splash screen on debug builds
+    #[cfg(debug_assertions)]
+    mod debug {
+        use super::*;
 
-    pub fn enter() -> JoinHandle<io::Result<()>> {
-        #[cfg(debug_assertions)]
-        {
+        pub fn enter() -> JoinHandle<io::Result<()>> {
             std::thread::spawn(|| Ok(()))
         }
 
-        #[cfg(not(debug_assertions))]
-        {
+        pub(crate) fn leave(task: JoinHandle<io::Result<()>>) {
+            task.join().unwrap().unwrap();
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    mod release {
+        use super::*;
+        use crate::main_thread_state;
+
+        use std::time::Duration;
+
+        use crossterm::{
+            cursor, execute, queue,
+            terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
+        };
+
+        pub fn enter() -> JoinHandle<io::Result<()>> {
             // font: 4Max - patorjk.com
             const SPLASH_TEXT: [&str; 4] = [
                 r#"8b    d8    db    888888  dP""b8 88  88     Yb        dP 88 88""Yb 888888"#,
@@ -136,7 +151,7 @@ pub mod splash_screen {
             main_thread_state::AltScreen::enter();
 
             std::thread::spawn(|| {
-                let mut stdout = std::io::stdout();
+                let mut stdout = io::stdout();
 
                 execute!(stdout, terminal::EnterAlternateScreen)?;
 
@@ -153,23 +168,20 @@ pub mod splash_screen {
                         crossterm::style::Print(line)
                     )?;
 
-                    std::thread::sleep(std::time::Duration::from_millis(160));
+                    std::thread::sleep(Duration::from_millis(160));
                     execute!(stdout, EndSynchronizedUpdate)?;
                 }
 
-                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::thread::sleep(Duration::from_secs(2));
 
                 Ok(())
             })
         }
-    }
 
-    pub(crate) fn leave(task: JoinHandle<io::Result<()>>) {
-        task.join().unwrap().unwrap();
+        pub(crate) fn leave(task: JoinHandle<io::Result<()>>) {
+            task.join().unwrap().unwrap();
 
-        #[cfg(not(debug_assertions))]
-        {
-            execute!(std::io::stdout(), terminal::LeaveAlternateScreen).unwrap();
+            execute!(io::stdout(), terminal::LeaveAlternateScreen).unwrap();
             main_thread_state::AltScreen::leave();
         }
     }

@@ -10,6 +10,26 @@ pub use debug::init_subscriber;
 #[cfg(not(debug_assertions))]
 pub use release::init_subscriber;
 
+#[cfg(debug_assertions)]
+mod debug {
+    use super::*;
+    use tracing_subscriber::filter::LevelFilter;
+
+    pub fn init_subscriber(_local_env_dir: &Path) -> Result<(), InitError> {
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer().with_target(false).pretty().with_filter(
+                    EnvFilter::builder()
+                        .with_default_directive(LevelFilter::INFO.into())
+                        .from_env_lossy(),
+                ),
+            )
+            .init();
+
+        Ok(())
+    }
+}
+
 #[cfg(not(debug_assertions))]
 mod release {
     use super::*;
@@ -137,26 +157,6 @@ mod release {
         tracing_subscriber::registry()
             .with(log_layer)
             .with(stdout_layer)
-            .init();
-
-        Ok(())
-    }
-}
-
-#[cfg(debug_assertions)]
-mod debug {
-    use super::*;
-    use tracing_subscriber::filter::LevelFilter;
-
-    pub fn init_subscriber(_local_env_dir: &Path) -> Result<(), InitError> {
-        tracing_subscriber::registry()
-            .with(
-                fmt::layer().with_target(false).pretty().with_filter(
-                    EnvFilter::builder()
-                        .with_default_directive(LevelFilter::INFO.into())
-                        .from_env_lossy(),
-                ),
-            )
             .init();
 
         Ok(())
