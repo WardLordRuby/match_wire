@@ -237,14 +237,12 @@ impl Settings {
     }
 
     pub(crate) fn regions(self) -> Option<RegionContainer> {
-        let selected_regions = self.default_regions;
-
-        if selected_regions.all() {
+        if self.default_regions.all() {
             return None;
         }
 
         Some(RegionContainer::Vec(
-            selected_regions
+            self.default_regions
                 .flatten()
                 .into_iter()
                 .filter(|(region_selected, _)| *region_selected)
@@ -266,7 +264,7 @@ impl Settings {
         Ok(())
     }
 
-    fn write_field(&self, field: Field, term: &mut Stdout, selected: bool) -> io::Result<()> {
+    fn draw_field(&self, field: Field, term: &mut Stdout, selected: bool) -> io::Result<()> {
         const HIGHLIGHTED: &str = "\x1b[7m";
         let sel = if selected { HIGHLIGHTED } else { "" };
 
@@ -281,35 +279,46 @@ impl Settings {
         }
     }
 
-    fn increment(&mut self, setting: Field) {
+    fn add_unchecked(field: &mut u8, val: i8, bound: u8, wrap: u8) {
+        let new = if *field == bound {
+            wrap
+        } else {
+            (*field as i8 + val) as u8
+        };
+
+        *field = new
+    }
+
+    fn get_mut(&mut self, setting: Field) -> &mut u8 {
         match setting {
-            Field::ServerRetires if self.server_retires == RETRIES_MAX => self.server_retires = 0,
-            Field::ServerRetires => self.server_retires += 1,
+            Field::ServerRetires => &mut self.server_retires,
             Field::LaunchOnStartup | Field::Na | Field::Sa | Field::Eu | Field::Apac => {
                 panic!("Use `Self::flip`")
             }
         }
+    }
+
+    fn increment(&mut self, setting: Field) {
+        let field = self.get_mut(setting);
+        Self::add_unchecked(field, 1, RETRIES_MAX, 0);
     }
 
     fn decrement(&mut self, setting: Field) {
-        match setting {
-            Field::ServerRetires if self.server_retires == 0 => self.server_retires = RETRIES_MAX,
-            Field::ServerRetires => self.server_retires -= 1,
-            Field::LaunchOnStartup | Field::Na | Field::Sa | Field::Eu | Field::Apac => {
-                panic!("Use `Self::flip`")
-            }
-        }
+        let field = self.get_mut(setting);
+        Self::add_unchecked(field, -1, 0, RETRIES_MAX);
     }
 
     fn flip(&mut self, setting: Field) {
-        match setting {
-            Field::LaunchOnStartup => self.launch_on_startup = !self.launch_on_startup,
-            Field::Na => self.default_regions.north_america = !self.default_regions.north_america,
-            Field::Sa => self.default_regions.south_america = !self.default_regions.south_america,
-            Field::Eu => self.default_regions.europe = !self.default_regions.europe,
-            Field::Apac => self.default_regions.asia_pacific = !self.default_regions.asia_pacific,
+        let field = match setting {
+            Field::LaunchOnStartup => &mut self.launch_on_startup,
+            Field::Na => &mut self.default_regions.north_america,
+            Field::Sa => &mut self.default_regions.south_america,
+            Field::Eu => &mut self.default_regions.europe,
+            Field::Apac => &mut self.default_regions.asia_pacific,
             Field::ServerRetires => panic!("Use `Self::increment` | `Self::decrement`"),
-        }
+        };
+
+        *field = !*field
     }
 }
 
@@ -400,7 +409,7 @@ impl SettingsRenderer {
 
         for state in [false, true] {
             term.queue(cursor::MoveTo(selected.1.0, selected.1.1))?;
-            settings.write_field(selected.0.field, term, state)?;
+            settings.draw_field(selected.0.field, term, state)?;
 
             if state {
                 break;
@@ -412,7 +421,7 @@ impl SettingsRenderer {
 
         for (i, tip) in selected.0.tip.into_iter().enumerate() {
             term.queue(cursor::MoveTo(disp.tip_loc.0, disp.tip_loc.1 + i as u16))?;
-            write_table_content(term, tip)?;
+            draw_table_content(term, tip)?;
         }
 
         Ok(())
@@ -453,7 +462,7 @@ impl SettingsRenderer {
 
             term.queue(cursor::MoveTo(curr_col, curr_row))?;
             self.entry_loc.push((curr_col, curr_row));
-            settings.write_field(entry.field, term, self.selected == i)?;
+            settings.draw_field(entry.field, term, self.selected == i)?;
 
             curr_row += 1;
         }
@@ -466,7 +475,7 @@ impl SettingsRenderer {
 
         for line in self.entries[self.selected].tip {
             term.queue(cursor::MoveTo(curr_col, curr_row))?;
-            write_table_content(term, line)?;
+            draw_table_content(term, line)?;
             curr_row += 1;
         }
 
@@ -480,7 +489,7 @@ impl SettingsRenderer {
 
         for key_tip in KEYS {
             term.queue(cursor::MoveTo(curr_col, curr_row))?;
-            write_table_content(term, key_tip)?;
+            draw_table_content(term, key_tip)?;
             curr_row += 1;
         }
 
@@ -492,7 +501,7 @@ impl SettingsRenderer {
 }
 
 #[inline(always)]
-fn write_table_content(term: &mut Stdout, content: &str) -> io::Result<()> {
+fn draw_table_content(term: &mut Stdout, content: &str) -> io::Result<()> {
     queue!(
         term,
         Print(format_args!("│ {content}")),
@@ -521,7 +530,7 @@ impl CommandContext {
     ) -> io::Result<CommandHandle> {
         if use_default {
             self.settings = Settings::default();
-            let _ = self.try_write_settings().map_err(display::error);
+            self.try_write_settings().unwrap_or_else(display::error);
             return Ok(CommandHandle::Processed);
         }
 
@@ -562,7 +571,7 @@ impl CommandContext {
                     code: KeyCode::Backspace | KeyCode::Esc | KeyCode::Char('q'),
                     ..
                 }) => {
-                    let _ = context.try_write_settings().map_err(display::error);
+                    context.try_write_settings().unwrap_or_else(display::error);
                     return HookedEvent::release_hook();
                 }
                 Event::Key(KeyEvent {
@@ -595,7 +604,7 @@ impl CommandContext {
                     }
 
                     term.queue(cursor::MoveTo(pos.0, pos.1))?;
-                    context.settings.write_field(selected.field, term, true)?;
+                    context.settings.draw_field(selected.field, term, true)?;
                 }
                 _ => return HookedEvent::continue_hook(),
             }
