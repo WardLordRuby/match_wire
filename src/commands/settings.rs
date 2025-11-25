@@ -199,41 +199,46 @@ impl Settings {
     }
 
     pub fn init(local_env_dir: Option<&Path>) -> Self {
-        let settings = if let Some(settings_path) = local_env_dir.map(|dir| dir.join(SETTINGS)) {
-            let mut not_found = false;
-            let res = match std::fs::read(&settings_path) {
-                Ok(data) => serde_json::from_slice::<Self>(&data).map_err(display::error),
-                Err(err) => {
-                    if err.kind() == ErrorKind::NotFound {
-                        not_found = true;
-                        error!(name: LOG_ONLY, "{}", concat!(SETTINGS, " not found"))
-                    } else {
-                        error!("Failed to read {SETTINGS}");
-                        error!(name: LOG_ONLY, "{err}, reading file: {}", settings_path.display())
-                    };
-                    Err(())
-                }
-            };
-
-            if res.is_err() {
-                if let Err(err) = Self::write(&mut Self::default(), &settings_path) {
-                    error!(name: LOG_ONLY, "{err}, failed to write file: {}", settings_path.display())
-                } else if not_found {
-                    info!(name: LOG_ONLY, "Settings file created at: {}", settings_path.display())
-                } else {
-                    info!("New {SETTINGS} created")
-                }
-            } else {
-                info!(name: LOG_ONLY, "Settings loaded!")
-            }
-
-            res.ok()
-        } else {
+        let Some(settings_path) = local_env_dir.map(|dir| dir.join(SETTINGS)) else {
             warn!("Used default app settings");
-            None
+            return Self::default();
         };
 
-        settings.unwrap_or(Self::default())
+        let mut not_found = false;
+        let mut read_res = match std::fs::read(&settings_path) {
+            Ok(data) => serde_json::from_slice::<Self>(&data).map_err(|err| {
+                error!("{err}");
+                Self::default()
+            }),
+            Err(err) => {
+                if err.kind() == ErrorKind::NotFound {
+                    not_found = true;
+                    error!(name: LOG_ONLY, "{}", concat!(SETTINGS, " not found"))
+                } else {
+                    error!("Failed to read {SETTINGS}");
+                    error!(name: LOG_ONLY, "{err}, reading file: {}", settings_path.display())
+                };
+                Err(Self::default())
+            }
+        };
+
+        if let Err(default_settings) = &mut read_res {
+            if let Err(err) = default_settings.write(&settings_path) {
+                error!(name: LOG_ONLY, "{err}, failed to write file: {}", settings_path.display())
+            } else if not_found {
+                info!(name: LOG_ONLY, "Settings file created at: {}", settings_path.display())
+            } else {
+                info!("New {SETTINGS} created")
+            }
+        }
+
+        match read_res {
+            Ok(read_settings) => {
+                info!(name: LOG_ONLY, "Settings loaded!");
+                read_settings
+            }
+            Err(default_settings) => default_settings,
+        }
     }
 
     pub(crate) fn regions(self) -> Option<RegionContainer> {
@@ -279,19 +284,10 @@ impl Settings {
         }
     }
 
-    fn add_unchecked(field: &mut u8, val: i8, bound: u8, wrap: u8) {
-        let new = if *field == bound {
-            wrap
-        } else {
-            (*field as i8 + val) as u8
-        };
-
-        *field = new
-    }
-
-    fn get_mut(&mut self, setting: Field) -> &mut u8 {
+    /// Returns an exclusive reference to the given `Field` and its associated max value
+    fn get_mut(&mut self, setting: Field) -> (&mut u8, u8) {
         match setting {
-            Field::ServerRetires => &mut self.server_retires,
+            Field::ServerRetires => (&mut self.server_retires, RETRIES_MAX),
             Field::LaunchOnStartup | Field::Na | Field::Sa | Field::Eu | Field::Apac => {
                 panic!("Use `Self::flip`")
             }
@@ -299,13 +295,13 @@ impl Settings {
     }
 
     fn increment(&mut self, setting: Field) {
-        let field = self.get_mut(setting);
-        Self::add_unchecked(field, 1, RETRIES_MAX, 0);
+        let (field, max) = self.get_mut(setting);
+        if *field >= max { *field = 0 } else { *field += 1 }
     }
 
     fn decrement(&mut self, setting: Field) {
-        let field = self.get_mut(setting);
-        Self::add_unchecked(field, -1, 0, RETRIES_MAX);
+        let (field, max) = self.get_mut(setting);
+        if *field == 0 { *field = max } else { *field -= 1 }
     }
 
     fn flip(&mut self, setting: Field) {
