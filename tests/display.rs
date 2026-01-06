@@ -2,10 +2,10 @@
 mod test {
     use match_wire::{
         H2M_MAX_CLIENT_NUM,
-        commands::filter::{GameStats, Server, Sourced, process_stats},
+        commands::filter::{FilterPreProcess, GameStats, Server, Sourced},
         models::{cli::Source, json_data::GetInfo},
         utils::display::{
-            GAME_DISPLAY_NAMES, GAME_TYPE_IDS, Line, MAP_IDS,
+            GAME_DISPLAY_NAMES, GAME_MODE_IDS, Line, MAP_IDS,
             table::{
                 DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, MIN_FILTER_COLS,
                 count_digits,
@@ -83,7 +83,7 @@ mod test {
 
     fn gen_test_servers<R: Rng>(rng: &mut R) -> Vec<Server> {
         let map_names = MAP_IDS.iter().map(|&(_, v)| v).collect::<Vec<_>>();
-        let game_types = GAME_TYPE_IDS.iter().map(|&(_, v)| v).collect::<Vec<_>>();
+        let game_types = GAME_MODE_IDS.iter().map(|&(_, v)| v).collect::<Vec<_>>();
 
         let mut servers = Vec::with_capacity(60);
 
@@ -132,7 +132,7 @@ mod test {
     fn display_servers() {
         let rng = &mut rand::rng();
         let mut servers = gen_test_servers(rng);
-        let pre_process = process_stats(&mut servers);
+        let pre_process = FilterPreProcess::compute(&mut servers);
 
         for i in 0..21 {
             let width = MIN_FILTER_COLS + i * 3;

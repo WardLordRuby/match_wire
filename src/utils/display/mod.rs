@@ -117,13 +117,13 @@ fn calc_max_div(width: usize) -> Option<usize> {
     (max_div > 1).then_some(max_div)
 }
 
-/// Logs and print's the given `err`
+/// Logs and prints the given `err`
 #[inline]
 pub fn error<E: Display>(err: E) {
     tracing::error!("{err}")
 }
 
-/// Logs and print's the given `warning`
+/// Logs and prints the given `warning`
 #[inline]
 pub fn warning<E: Display>(warning: E) {
     tracing::warn!("{warning}")
@@ -139,10 +139,10 @@ impl Display for ResponseErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResponseErr::Reqwest(err) => write!(f, "{err}"),
-            ResponseErr::Status(ctx, status) => write!(f, "{ctx}: {status}"),
+            ResponseErr::Status { msg, status } => write!(f, "{msg}: {status}"),
             ResponseErr::Other(msg) => write!(f, "{msg}"),
             ResponseErr::Pgp(err) => write!(f, "PGP verification failed: {err}"),
-            ResponseErr::Serialize(ctx, err) => write!(f, "{ctx} formatting has changed: {err}"),
+            ResponseErr::Serialize { ctx, err } => write!(f, "{ctx} formatting has changed: {err}"),
         }
     }
 }
@@ -710,7 +710,7 @@ pub const MAP_IDS: [(&str, &str); 65] = [
     ("gulag", "Gulag"),
 ];
 
-pub const GAME_TYPE_IDS: [(&str, &str); 13] = [
+pub const GAME_MODE_IDS: [(&str, &str); 13] = [
     ("war", "TDM"),
     ("dom", "Domination"),
     ("dd", "Demolition"),

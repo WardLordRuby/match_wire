@@ -123,7 +123,7 @@ impl CommandContext {
             return Ok(CommandHandle::Processed);
         }
 
-        if let Err(err) = main_thread_state::PtyHandle::try_if_alive(|game_console| {
+        if let Err(err) = main_thread_state::pty_handle::try_if_alive(|game_console| {
             game_console.send_connect(ip_port)
         }) {
             error!("{err}");
@@ -170,7 +170,7 @@ impl CommandContext {
                 let max_public_slots = server.max_public_slots();
 
                 if player_ct < max_public_slots {
-                    if let Err(err) = main_thread_state::PtyHandle::try_if_alive(|game_console| {
+                    if let Err(err) = main_thread_state::pty_handle::try_if_alive(|game_console| {
                         game_console.send_connect(addr)
                     }) {
                         send_msg_over(&msg_sender, Message::error(err.to_string())).await;

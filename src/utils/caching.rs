@@ -130,7 +130,7 @@ pub async fn build_cache() -> Result<(), &'static str> {
         servers
     }
 
-    let spinner = if !main_thread_state::AltScreen::is_visible() {
+    let spinner = if !main_thread_state::alt_screen::is_visible() {
         Some(Spinner::new(String::from("Updating cache")))
     } else {
         info!("Updating cache...");

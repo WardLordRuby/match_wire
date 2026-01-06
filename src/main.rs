@@ -112,6 +112,7 @@ async fn run_eval_print_loop(
             }
         }
     }
+
     Ok(())
 }
 
@@ -120,35 +121,32 @@ fn app_startup(
     local_dir: Option<PathBuf>,
     version_data: Option<Version>,
 ) -> Result<StartupData, Cow<'static, str>> {
-    let exe_path = main_thread_state::ExePath::get()
-        .map_err(|err| format!("Failed to get exe directory, {err:?}"))?;
+    main_thread_state::local_path::exe::with_borrow_path(|path_res| {
+        let exe_path = path_res.map_err(|err| format!("Failed to get exe directory, {err}"))?;
+        let exe_dir = exe_path
+            .parent()
+            .ok_or(main_thread_state::local_path::exe::GET_DIR_ERR)?;
 
-    let appdata = AppDetails::from(version_data, exe_path);
+        let cache_res = local_dir.as_deref().map(read_cache);
+        let settings = Settings::init(local_dir.as_deref());
 
-    let exe_dir = exe_path
-        .parent()
-        .ok_or("Failed to get exe parent directory")?;
+        let (game_data, no_launch) = GameDetails::get(
+            cache_res.as_ref().and_then(|res| match res {
+                Ok(cache) => Some(cache),
+                Err(backup) => backup.cache.as_ref(),
+            }),
+            exe_dir,
+            settings,
+        )?;
 
-    let cache_res = local_dir.as_deref().map(read_cache);
-    let settings = Settings::init(local_dir.as_deref());
-    let (game, no_launch) = GameDetails::get(
-        cache_res.as_ref().and_then(|res| match res {
-            Ok(cache) => Some(cache),
-            Err(backup) => backup.cache.as_ref(),
-        }),
-        exe_dir,
-        settings,
-    )?;
-
-    let launch_task = tokio::spawn(try_init_launch(game.path.clone(), no_launch));
-
-    Ok(StartupData {
-        local_dir,
-        game,
-        appdata,
-        settings,
-        cache_task: tokio::spawn(startup_cache_task(cache_res)),
-        launch_task,
-        hmw_manifest_task: tokio::spawn(get_latest_hmw_manifest()),
+        Ok(StartupData {
+            app_data: AppDetails::from(version_data, exe_path),
+            launch_task: tokio::spawn(try_init_launch(game_data.path.clone(), no_launch)),
+            cache_task: tokio::spawn(startup_cache_task(cache_res)),
+            hmw_manifest_task: tokio::spawn(get_latest_hmw_manifest()),
+            game_data,
+            local_dir,
+            settings,
+        })
     })
 }

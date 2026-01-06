@@ -200,11 +200,12 @@ pub struct GameStats {
 
 impl GameStats {
     pub fn new(games: &[String]) -> Vec<Self> {
-        main_thread_state::GameDisplayMap::with_borrow(|map| {
+        main_thread_state::IDMaps::with_borrow(|maps| {
             games
                 .iter()
                 .map(|game| Self {
-                    game: map
+                    game: maps
+                        .game_ids
                         .get(game.as_str())
                         .copied()
                         .map(Cow::Borrowed)
@@ -531,37 +532,33 @@ impl FilterPreProcess {
         }
     }
 
-    fn new(addr_lens: Vec<usize>, max_addr_len: usize) -> Self {
-        Self {
-            addr_lens,
-            max_addr_len,
-        }
-    }
-}
+    pub fn compute(filter: &mut [Server]) -> Self {
+        main_thread_state::IDMaps::with_borrow(|maps| {
+            let (mut addr_lens, mut max_addr_len) = (Vec::with_capacity(filter.len()), 0);
 
-pub fn process_stats(filter: &mut [Server]) -> FilterPreProcess {
-    main_thread_state::IDMaps::with_borrow(|map_ids, game_type_ids| {
-        let (mut addr_lens, mut max_addr_len) = (Vec::with_capacity(filter.len()), 0);
+            for server in filter.iter_mut() {
+                let pairs = [
+                    (&mut server.info.map_name, &maps.map_ids, 17),
+                    (&mut server.info.game_type, &maps.game_mode_ids, 13),
+                ];
 
-        for server in filter.iter_mut() {
-            let pairs = [
-                (&mut server.info.map_name, map_ids, 17),
-                (&mut server.info.game_type, game_type_ids, 13),
-            ];
-
-            for (field, map, max_len) in pairs {
-                if let Some(&display_name) = map.get(field.as_ref()) {
-                    *field = Cow::Borrowed(display_name);
-                } else if let Some(elided) = elide(field, max_len) {
-                    *field = Cow::Owned(elided);
+                for (field, map, max_len) in pairs {
+                    if let Some(&display_name) = map.get(field.as_ref()) {
+                        *field = Cow::Borrowed(display_name);
+                    } else if let Some(elided) = elide(field, max_len) {
+                        *field = Cow::Owned(elided);
+                    }
                 }
+
+                let ip = server.socket_addr().to_string();
+                addr_lens.push(ip.len());
+                max_addr_len = max_addr_len.max(ip.len());
             }
 
-            let ip = server.socket_addr().to_string();
-            addr_lens.push(ip.len());
-            max_addr_len = max_addr_len.max(ip.len());
-        }
-
-        FilterPreProcess::new(addr_lens, max_addr_len)
-    })
+            FilterPreProcess {
+                addr_lens,
+                max_addr_len,
+            }
+        })
+    }
 }

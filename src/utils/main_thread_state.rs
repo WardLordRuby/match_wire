@@ -1,8 +1,7 @@
 use super::{
     caching::{AddrMap, ContCodeMap, DnsResolutionMap, HostNameMap},
     display::{
-        self, GAME_DISPLAY_NAMES, GAME_TYPE_IDS, MAP_IDS,
-        indicator::Spinner,
+        self, GAME_DISPLAY_NAMES, GAME_MODE_IDS, MAP_IDS,
         table::{
             DisplayFilterStats, DisplaySourceStats, DisplaySourceStatsInner, MIN_FILTER_COLS,
             TABLE_PADDING,
@@ -12,9 +11,9 @@ use super::{
 use crate::{
     LOG_ONLY, StartupInfo,
     commands::{
-        filter::{FilterPreProcess, Server, process_stats},
-        handler::{CommandSender, Message, ReplHandle},
-        launch::{HostName, WinApiErr, game_open, terminate_process_by_id},
+        filter::{FilterPreProcess, Server},
+        handler::{Message, ReplHandle},
+        launch::{HostName, WinApiErr},
     },
     models::json_data::{CacheFile, CondManifest, Version},
     try_fit_table, try_parse_signed_json,
@@ -22,14 +21,13 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    cell::{Cell, LazyCell, OnceCell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     collections::HashMap,
     ffi::OsString,
-    fmt::Display,
     io,
     path::{Path, PathBuf},
     thread::LocalKey,
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use repl_oxide::ansi_code::{RESET, YELLOW};
@@ -43,13 +41,7 @@ const SIGNED_STARTUP_INFO: &str =
     "https://gist.githubusercontent.com/WardLordRuby/795d840e208df2de08735c152889b2e4/raw";
 
 const ENV_FILE: &str = ".env";
-const ENV_REL_KEY: &str = "HMW_ENV";
-
-type IDMapsInner = (
-    HashMap<&'static str, &'static str>,
-    HashMap<&'static str, &'static str>,
-);
-type ServerStatsInner = (Vec<DisplaySourceStatsInner>, Vec<Server>, FilterPreProcess);
+const ENV_OVERRIDE_PATH_KEY: &str = "HMW_ENV";
 
 thread_local! {
     static GAME_CONSOLE_HISTORY: RefCell<ConsoleHistory> = const { RefCell::new(ConsoleHistory::new()) };
@@ -59,31 +51,94 @@ thread_local! {
     static ENDPOINTS: OnceCell<Endpoints> = const { OnceCell::new() };
     static PTY_HANDLE: RefCell<Option<PTY>> = panic!("Attempted to access PTY prior to set");
     static SELF_HWND: Option<HWND> = crate::commands::launch::get_console_hwnd()
-        .map_err(crate::utils::display::error)
+        .map_err(display::error)
         .unwrap_or_default();
-    static LAST_SERVER_STATS: RefCell<ServerStatsInner> =
-        const { RefCell::new((Vec::new(), Vec::new(), FilterPreProcess::default())) };
-    static ID_MAPS: OnceCell<IDMapsInner> = const { OnceCell::new() };
-    static GAME_ID_MAP: OnceCell<HashMap<&'static str, &'static str>> = const { OnceCell::new() };
+    static LAST_SERVER_STATS: RefCell<LastServerStats> = const { RefCell::new(LastServerStats::default()) };
+    static ID_MAPS: IDMaps = IDMaps::new();
     static ALT_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
     static ALT_SCREEN_EVENT_BUFFER: RefCell<AltScreenEvents> = const { RefCell::new(AltScreenEvents::new()) };
-    static EXE_PATH: LazyCell<io::Result<PathBuf>> = LazyCell::new(std::env::current_exe);
+    static EXE_PATH: io::Result<PathBuf> = std::env::current_exe();
+    static ENV_PATH: io::Result<local_path::Env> = local_path::Env::new();
 }
 
-pub struct ExePath;
+pub mod local_path {
+    use super::{ENV_FILE, ENV_OVERRIDE_PATH_KEY, ENV_PATH, PathBuf, error, io};
+    use crate::CRATE_NAME;
 
-impl ExePath {
-    /// **Warning**: Calling this method outside of the main thread may result in the ability to obtain dangling references
-    pub fn get() -> Result<&'static Path, &'static io::Error> {
-        EXE_PATH.with(|cell|
-            // Safety: Initialization of the `LazyCell` and all subsequent access happen on the same thread set by
-            // tokio "Current thread" runtime. Thus making the thread local and contained `Endpoints` actually 'static.
-            unsafe {
-                std::mem::transmute::<
-                    Result<&Path, &io::Error>,
-                    Result<&'static Path, &'static io::Error>,
-                >(cell.as_deref())
+    pub mod exe {
+        use super::{
+            super::{EXE_PATH, Path, io},
+            CRATE_NAME,
+        };
+
+        pub const GET_DIR_ERR: &str =
+            constcat::concat!("Failed to find parent directory of ", CRATE_NAME, ".exe");
+
+        pub fn with_borrow_path<R>(f: impl FnOnce(Result<&Path, &io::Error>) -> R) -> R {
+            EXE_PATH.with(|path_res| f(path_res.as_deref()))
+        }
+
+        pub(crate) fn with_borrow_dir<R>(f: impl FnOnce(io::Result<&Path>) -> R) -> R {
+            EXE_PATH.with(|path_res| {
+                let exe_path = match path_res.as_deref() {
+                    Ok(path) => path,
+                    Err(err) => return f(Err(io::Error::new(err.kind(), err.to_string()))),
+                };
+
+                f(exe_path
+                    .parent()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, GET_DIR_ERR)))
             })
+        }
+    }
+
+    pub(crate) struct Env {
+        pub(crate) path: PathBuf,
+        pub(crate) exists: io::Result<bool>,
+        pub(crate) user_modified: bool,
+    }
+
+    impl Env {
+        pub(super) fn new() -> io::Result<Self> {
+            super::local_path::exe::with_borrow_dir(|dir_res| {
+                let exe_dir = dir_res?;
+
+                let path_res = std::env::var(ENV_OVERRIDE_PATH_KEY);
+                let user_modified = path_res.is_ok();
+                let path = path_res
+                    .map(|val| {
+                        let mut user_path = PathBuf::from(val);
+
+                        if user_path.is_dir() {
+                            user_path.push(ENV_FILE);
+                        }
+
+                        if user_path.is_absolute() {
+                            user_path
+                        } else {
+                            exe_dir.join(user_path)
+                        }
+                    })
+                    .unwrap_or_else(|err| {
+                        if let std::env::VarError::NotUnicode(_) = err {
+                            error!("Non-Unicode value set for environment variable: {ENV_OVERRIDE_PATH_KEY}")
+                        }
+                        exe_dir.join(ENV_FILE)
+                    });
+
+                let exists = path.try_exists();
+
+                Ok(Self {
+                    path,
+                    exists,
+                    user_modified,
+                })
+            })
+        }
+
+        pub(crate) fn with_borrow<R>(f: impl FnOnce(Result<&Self, &io::Error>) -> R) -> R {
+            ENV_PATH.with(|cell| f(cell.as_ref()))
+        }
     }
 }
 
@@ -102,12 +157,9 @@ impl AltScreenEvents {
     }
 }
 
-#[cfg(not(debug_assertions))]
-use tracing_subscriber::fmt::format::Writer;
+pub(crate) mod alt_screen {
+    use super::{ALT_SCREEN_EVENT_BUFFER, ALT_SCREEN_VIS, Message};
 
-pub(crate) struct AltScreen;
-
-impl AltScreen {
     pub(crate) fn enter() {
         ALT_SCREEN_VIS.set(true);
     }
@@ -136,6 +188,9 @@ impl AltScreen {
 
         ALT_SCREEN_EVENT_BUFFER.with_borrow_mut(|buf| buf.pre_subscriber.push(message))
     }
+
+    #[cfg(not(debug_assertions))]
+    use tracing_subscriber::fmt::format::Writer;
 
     #[cfg(not(debug_assertions))]
     pub(crate) fn push_formatter<F>(print: F) -> std::fmt::Result
@@ -198,11 +253,11 @@ impl Cache {
         UpdateCache::set(true);
     }
 
-    pub(crate) fn with_borrow<R>(f: impl FnOnce(&Cache) -> R) -> R {
+    pub(crate) fn with_borrow<R>(f: impl FnOnce(&Self) -> R) -> R {
         CACHE.with_borrow(f)
     }
 
-    pub(crate) fn with_borrow_mut<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
+    pub(crate) fn with_borrow_mut<R>(f: impl FnOnce(&mut Self) -> R) -> R {
         CACHE.with_borrow_mut(f)
     }
 }
@@ -224,13 +279,8 @@ pub struct Endpoints {
 }
 
 impl Endpoints {
-    #[expect(clippy::result_large_err)]
-    fn set(endpoints: Endpoints) -> Result<(), Endpoints> {
-        ENDPOINTS.with(|cell| cell.set(endpoints))
-    }
-
-    fn set_default() {
-        Self::set(Self {
+    const fn default() -> Self {
+        Self {
             iw4_master_server: Cow::Borrowed("https://master.iw4.zip/instance"),
             hmw_master_server: Cow::Borrowed("https://ms.horizonmw.org/game-servers"),
             hmw_manifest_signed: None,
@@ -241,47 +291,31 @@ impl Endpoints {
 
             server_info_endpoint: Cow::Borrowed("/getInfo"),
             skip_pgp: false,
-        })
-        .expect("only called if failed to reach `STARTUP_INFO_URL`")
+        }
+    }
+
+    #[expect(clippy::result_large_err)]
+    fn set(endpoints: Self) -> Result<(), Self> {
+        ENDPOINTS.with(|cell| cell.set(endpoints))
     }
 
     fn search_env() -> Option<String> {
-        let Ok(Some(exe_dir)) = ExePath::get().map(Path::parent) else {
-            return None;
-        };
+        local_path::Env::with_borrow(|env| {
+            let env = env.map_err(display::error).ok()?;
 
-        let mut env_var_found = false;
-        let env_path = std::env::var(ENV_REL_KEY)
-            .map(|val| {
-                env_var_found = true;
-                let mut user_path = PathBuf::from(val);
-
-                if user_path.is_dir() {
-                    user_path.push(ENV_FILE);
+            let Ok(true) = env.exists else {
+                if env.user_modified {
+                    match &env.exists {
+                        Ok(true) => unreachable!("by outer let"),
+                        Ok(false) => error!("{}, doesn't exist", env.path.display()),
+                        Err(err) => error!("Env var {ENV_OVERRIDE_PATH_KEY}: {err}"),
+                    }
                 }
+                return None;
+            };
 
-                if user_path.is_absolute() {
-                    user_path
-                } else {
-                    exe_dir.join(user_path)
-                }
-            })
-            .unwrap_or_else(|_| exe_dir.join(ENV_FILE));
-
-        let exists = env_path.try_exists();
-
-        let Ok(true) = exists else {
-            if env_var_found {
-                match exists {
-                    Ok(true) => unreachable!("by outer let"),
-                    Ok(false) => error!("{}, doesn't exist", env_path.display()),
-                    Err(err) => error!("Env var {ENV_REL_KEY}: {err}"),
-                }
-            }
-            return None;
-        };
-
-        Self::parse_env_file(&env_path).map_err(display::error).ok()
+            Self::parse_env_file(&env.path).map_err(display::error).ok()
+        })
     }
 
     fn parse_env_file(path: &Path) -> io::Result<String> {
@@ -328,7 +362,7 @@ impl Endpoints {
             None
         }
 
-        if let Some(prev_manifest) = &self.hmw_manifest_signed {
+        if let Some(prev_manifest) = self.hmw_manifest_signed.as_deref() {
             if let Some(endpoint) = extract_endpoint(prev_manifest) {
                 host.push_str(endpoint)
             } else {
@@ -336,7 +370,7 @@ impl Endpoints {
             }
         } else {
             error!("Failed to append endpoint to env manifest url: no known endpoint available")
-        };
+        }
 
         self.skip_pgp = true;
         self.hmw_manifest_signed = Some(host);
@@ -361,10 +395,10 @@ impl Endpoints {
                 Some(startup.version)
             }
             Err(err) => {
-                AltScreen::push_message(Message::error(format!(
+                alt_screen::push_message(Message::error(format!(
                     "Failed to verify startup data: {err}"
                 )));
-                Self::set_default();
+                Self::set(Self::default()).expect("only valid set");
                 None
             }
         }
@@ -372,18 +406,18 @@ impl Endpoints {
 
     fn get<R>(f: impl FnOnce(&'static Endpoints) -> R) -> R {
         ENDPOINTS.with(|cell| {
-            // Safety: Initialization of `OnceCell<Endpoints>` and all subsequent access to containing fields
-            // happen on the same thread set by tokio "Current thread" runtime. Thus making the thread local
-            // and contained `Endpoints` actually 'static.
-            unsafe {
-                let endpoints = cell.get().expect(
-                    "tried to access endpoints before startup process or outside of the main thread",
-                );
+            let endpoints = cell.get().expect(
+                "tried to access endpoints before startup process or outside of the main thread",
+            );
 
-                f(std::mem::transmute::<&Endpoints, &'static Endpoints>(
-                    endpoints,
-                ))
-            }
+            // Safety:
+            // - Initialization of `OnceCell<Endpoints>` and all subsequent access to containing fields
+            //   happen on the same thread set by tokio "Current thread" runtime.
+            // - The use of `OnceCell` ensures we will panic on the above 'expect' before we allow undefined behavior
+            let endpoints =
+                unsafe { std::mem::transmute::<&Endpoints, &'static Endpoints>(endpoints) };
+
+            f(endpoints)
         })
     }
 
@@ -507,86 +541,95 @@ impl ConsoleHistory {
     }
 }
 
-pub(crate) struct AppHWND;
+pub(crate) mod app_hwnd {
+    use super::{HWND, SELF_HWND};
 
-impl AppHWND {
     pub(crate) fn get() -> Option<HWND> {
         SELF_HWND.with(|&option| option)
     }
 }
 
-pub(crate) enum PtyAccessErr {
-    PtyErr(OsString),
-    UserErr(Cow<'static, str>),
-    NotAlive,
-}
+pub(crate) mod pty_handle {
+    use super::{Cow, LOG_ONLY, OsString, PTY, PTY_HANDLE, WinApiErr, display, error, info};
+    use crate::{
+        commands::{
+            handler::CommandSender,
+            launch::{game_open, terminate_process_by_id},
+        },
+        utils::display::indicator::Spinner,
+    };
 
-impl PtyAccessErr {
-    pub(crate) fn is_connection_err(&self) -> bool {
-        matches!(self, PtyAccessErr::PtyErr(_) | PtyAccessErr::NotAlive)
+    use std::{fmt::Display, time::Duration};
+
+    pub(crate) enum PtyAccessErr {
+        PtyErr(OsString),
+        UserErr(Cow<'static, str>),
+        NotAlive,
     }
-}
 
-impl From<OsString> for PtyAccessErr {
-    fn from(err: OsString) -> Self {
-        Self::PtyErr(err)
-    }
-}
-
-impl Display for PtyAccessErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PtyAccessErr::PtyErr(err) => write!(f, "{}", err.to_string_lossy()),
-            PtyAccessErr::UserErr(err) => write!(f, "{err}"),
-            PtyAccessErr::NotAlive => write!(f, "Game console not currently connected"),
+    impl PtyAccessErr {
+        pub(crate) fn is_connection_err(&self) -> bool {
+            matches!(self, PtyAccessErr::PtyErr(_) | PtyAccessErr::NotAlive)
         }
     }
-}
 
-impl From<PtyAccessErr> for Cow<'static, str> {
-    fn from(err: PtyAccessErr) -> Self {
-        match err {
-            PtyAccessErr::UserErr(cow) => cow,
-            err => err.to_string().into(),
+    impl From<OsString> for PtyAccessErr {
+        fn from(err: OsString) -> Self {
+            Self::PtyErr(err)
         }
     }
-}
 
-pub(crate) enum ConnectionErr {
-    PtyErr(OsString),
-    WinApiErr(WinApiErr),
-}
-
-impl Display for ConnectionErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::PtyErr(err) => write!(f, "{}", err.to_string_lossy()),
-            Self::WinApiErr(err) => write!(f, "{err}"),
+    impl Display for PtyAccessErr {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                PtyAccessErr::PtyErr(err) => write!(f, "{}", err.to_string_lossy()),
+                PtyAccessErr::UserErr(err) => write!(f, "{err}"),
+                PtyAccessErr::NotAlive => write!(f, "Game console not currently connected"),
+            }
         }
     }
-}
 
-impl From<OsString> for ConnectionErr {
-    fn from(err: OsString) -> Self {
-        Self::PtyErr(err)
+    impl From<PtyAccessErr> for Cow<'static, str> {
+        fn from(err: PtyAccessErr) -> Self {
+            match err {
+                PtyAccessErr::UserErr(cow) => cow,
+                err => err.to_string().into(),
+            }
+        }
     }
-}
 
-impl From<WinApiErr> for ConnectionErr {
-    fn from(err: WinApiErr) -> Self {
-        Self::WinApiErr(err)
+    pub(crate) enum ConnectionErr {
+        PtyErr(OsString),
+        WinApiErr(WinApiErr),
     }
-}
 
-pub(crate) enum PseudoConStatus {
-    Attached,
-    Unattached,
-    Closed,
-}
+    impl Display for ConnectionErr {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::PtyErr(err) => write!(f, "{}", err.to_string_lossy()),
+                Self::WinApiErr(err) => write!(f, "{err}"),
+            }
+        }
+    }
 
-pub(crate) struct PtyHandle;
+    impl From<OsString> for ConnectionErr {
+        fn from(err: OsString) -> Self {
+            Self::PtyErr(err)
+        }
+    }
 
-impl PtyHandle {
+    impl From<WinApiErr> for ConnectionErr {
+        fn from(err: WinApiErr) -> Self {
+            Self::WinApiErr(err)
+        }
+    }
+
+    pub(crate) enum PseudoConStatus {
+        Attached,
+        Unattached,
+        Closed,
+    }
+
     pub(crate) fn set(pty: Option<PTY>) {
         PTY_HANDLE.set(pty)
     }
@@ -606,20 +649,17 @@ impl PtyHandle {
     /// Only checks if the PTY console is alive, if you also need more information about the games current open
     /// state use [`Self::check_connection`]
     pub(crate) fn game_connected() -> Result<bool, OsString> {
-        PTY_HANDLE.with_borrow_mut(Self::is_alive)
+        PTY_HANDLE.with_borrow_mut(is_alive)
     }
 
     pub(crate) fn check_connection() -> Result<PseudoConStatus, ConnectionErr> {
-        PTY_HANDLE.with_borrow_mut(|handle| {
-            if Self::is_alive(handle)? {
-                return Ok(PseudoConStatus::Attached);
-            }
-            let state = match game_open()? {
-                Some(_) => PseudoConStatus::Unattached,
-                None => PseudoConStatus::Closed,
-            };
+        if game_connected()? {
+            return Ok(PseudoConStatus::Attached);
+        }
 
-            Ok(state)
+        Ok(match game_open()? {
+            Some(_) => PseudoConStatus::Unattached,
+            None => PseudoConStatus::Closed,
         })
     }
 
@@ -627,7 +667,7 @@ impl PtyHandle {
         f: impl FnOnce(&PTY) -> Result<R, E>,
     ) -> Result<R, PtyAccessErr> {
         PTY_HANDLE.with_borrow_mut(|handle| {
-            if !Self::is_alive(handle)? {
+            if !is_alive(handle)? {
                 return Err(PtyAccessErr::NotAlive);
             }
 
@@ -662,7 +702,7 @@ impl PtyHandle {
 
         if sent_quit {
             info!(name: LOG_ONLY, "{game_name}'s console accepted quit command");
-            Self::wait_for_exit(game_name);
+            wait_for_exit(game_name);
         }
     }
 
@@ -698,15 +738,27 @@ impl PtyHandle {
     }
 }
 
-pub(crate) struct LastServerStats;
+pub(crate) struct LastServerStats {
+    pub(crate) source: Vec<DisplaySourceStatsInner>,
+    pub(crate) filter: Vec<Server>,
+    pub(crate) pre_process: FilterPreProcess,
+}
 
 impl LastServerStats {
+    const fn default() -> Self {
+        Self {
+            source: Vec::new(),
+            filter: Vec::new(),
+            pre_process: FilterPreProcess::default(),
+        }
+    }
+
     /// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
     ///
     /// [`CmdErr::Critical`]: crate::commands::handler::CmdErr::Critical
     pub(crate) fn display(repl: &mut ReplHandle) -> io::Result<()> {
-        LAST_SERVER_STATS.with_borrow(|(source, filter, pre_process)| {
-            if source.is_empty() {
+        LAST_SERVER_STATS.with_borrow(|stats| {
+            if stats.source.is_empty() {
                 println!(
                     "{YELLOW}No previous filter data in memory, \
                     run a filter command using '--stats' to store{RESET}"
@@ -718,12 +770,17 @@ impl LastServerStats {
             let width = (cols.saturating_sub(TABLE_PADDING) as usize).max(MIN_FILTER_COLS);
             try_fit_table(repl, (cols, rows), width)?;
 
-            println!("\n{}", DisplaySourceStats(source));
+            println!("\n{}", DisplaySourceStats(&stats.source));
 
             Cache::with_borrow(|cache| {
                 println!(
                     "{}",
-                    DisplayFilterStats(filter, pre_process, &cache.ip_to_region, width)
+                    DisplayFilterStats(
+                        &stats.filter,
+                        &stats.pre_process,
+                        &cache.ip_to_region,
+                        width
+                    )
                 );
             });
 
@@ -732,31 +789,31 @@ impl LastServerStats {
     }
 
     pub(crate) fn set(source: Vec<DisplaySourceStatsInner>, mut filter: Vec<Server>) {
-        let pre_process = process_stats(&mut filter);
-        LAST_SERVER_STATS.set((source, filter, pre_process));
+        LAST_SERVER_STATS.set(Self {
+            pre_process: FilterPreProcess::compute(&mut filter),
+            filter,
+            source,
+        });
     }
 }
 
-pub(crate) struct IDMaps;
+pub(crate) struct IDMaps {
+    pub(crate) game_ids: HashMap<&'static str, &'static str>,
+    pub(crate) game_mode_ids: HashMap<&'static str, &'static str>,
+    pub(crate) map_ids: HashMap<&'static str, &'static str>,
+}
 
 impl IDMaps {
-    /// `map_ids, game_type_ids`
-    pub(crate) fn with_borrow<R>(
-        f: impl FnOnce(&HashMap<&str, &'static str>, &HashMap<&str, &'static str>) -> R,
-    ) -> R {
-        ID_MAPS.with(|cell| {
-            let (map_ids, game_type_ids) =
-                cell.get_or_init(|| (HashMap::from(MAP_IDS), HashMap::from(GAME_TYPE_IDS)));
-            f(map_ids, game_type_ids)
-        })
+    fn new() -> Self {
+        Self {
+            game_ids: HashMap::from(GAME_DISPLAY_NAMES),
+            game_mode_ids: HashMap::from(GAME_MODE_IDS),
+            map_ids: HashMap::from(MAP_IDS),
+        }
     }
-}
 
-pub(crate) struct GameDisplayMap;
-
-impl GameDisplayMap {
-    pub(crate) fn with_borrow<R>(f: impl FnOnce(&HashMap<&str, &'static str>) -> R) -> R {
-        GAME_ID_MAP.with(|cell| f(cell.get_or_init(|| HashMap::from(GAME_DISPLAY_NAMES))))
+    pub(crate) fn with_borrow<R>(f: impl FnOnce(&Self) -> R) -> R {
+        ID_MAPS.with(|maps| f(maps))
     }
 }
 

@@ -119,8 +119,8 @@ mod release {
                 write!(writer, "{RESET}")
             };
 
-            if main_thread_state::AltScreen::is_visible() {
-                main_thread_state::AltScreen::push_formatter(print)
+            if main_thread_state::alt_screen::is_visible() {
+                main_thread_state::alt_screen::push_formatter(print)
             } else {
                 print(writer)
             }

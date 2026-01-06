@@ -148,7 +148,7 @@ pub mod splash_screen {
                 r#"88 YY 88 dP""""Yb   88    YboodP 88  88        YP  YP    88 88  Yb 888888"#,
             ];
 
-            main_thread_state::AltScreen::enter();
+            main_thread_state::alt_screen::enter();
 
             std::thread::spawn(|| {
                 let mut stdout = io::stdout();
@@ -182,7 +182,7 @@ pub mod splash_screen {
             task.join().unwrap().unwrap();
 
             execute!(io::stdout(), terminal::LeaveAlternateScreen).unwrap();
-            main_thread_state::AltScreen::leave();
+            main_thread_state::alt_screen::leave();
         }
     }
 }
@@ -190,15 +190,24 @@ pub mod splash_screen {
 #[derive(Debug)]
 pub enum ResponseErr {
     Reqwest(reqwest::Error),
-    Status(Cow<'static, str>, reqwest::StatusCode),
+    Status {
+        msg: Cow<'static, str>,
+        status: reqwest::StatusCode,
+    },
     Pgp(pgp::errors::Error),
-    Serialize(&'static str, serde_json::Error),
+    Serialize {
+        ctx: &'static str,
+        err: serde_json::Error,
+    },
     Other(Cow<'static, str>),
 }
 
 impl ResponseErr {
     fn bad_status<T: Into<Cow<'static, str>>>(ctx: T, response: reqwest::Response) -> Self {
-        Self::Status(ctx.into(), response.status())
+        Self::Status {
+            msg: ctx.into(),
+            status: response.status(),
+        }
     }
     fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
         Self::Other(msg.into())
@@ -226,18 +235,18 @@ pub fn try_init_logger() -> Option<PathBuf> {
         match check_app_dir_exists(local) {
             Ok(app_dir_local) => {
                 init_subscriber(&app_dir_local).unwrap_or_else(|err| {
-                    main_thread_state::AltScreen::push_message(Message::error(err.to_string()))
+                    main_thread_state::alt_screen::push_message(Message::error(err.to_string()))
                 });
                 info!(name: LOG_ONLY, "App startup");
                 Some(app_dir_local)
             }
             Err(err) => {
-                main_thread_state::AltScreen::push_message(Message::error(err.to_string()));
+                main_thread_state::alt_screen::push_message(Message::error(err.to_string()));
                 None
             }
         }
     } else {
-        main_thread_state::AltScreen::push_message(Message::error(
+        main_thread_state::alt_screen::push_message(Message::error(
             "Could not find %appdata%/local",
         ));
 
@@ -265,7 +274,7 @@ pub async fn try_init_launch(
     };
 
     if let Some(window_name) = game_open {
-        main_thread_state::AltScreen::push_message(Message::str(format!(
+        main_thread_state::alt_screen::push_message(Message::str(format!(
             "{RED}{window_name} is already running{RESET}\n{ConnectionHelp}"
         )));
     }
@@ -320,8 +329,10 @@ async fn try_parse_signed_json_unverified<T: serde::de::DeserializeOwned>(
         CleartextSignedMessage::from_string(hmw_response.text().await?.trim())?;
 
     warn!("{cleartext_ctx} verification bypassed");
-    serde_json::from_str::<T>(&msg.signed_text())
-        .map_err(|err| ResponseErr::Serialize(cleartext_ctx, err))
+    serde_json::from_str::<T>(&msg.signed_text()).map_err(|err| ResponseErr::Serialize {
+        ctx: cleartext_ctx,
+        err,
+    })
 }
 
 pub(crate) async fn try_parse_signed_json<T: serde::de::DeserializeOwned>(
@@ -351,8 +362,10 @@ pub(crate) async fn try_parse_signed_json<T: serde::de::DeserializeOwned>(
     let signed_string = pgp_verify_cleartext(&cleartext_string, &public_key_string)?;
     info!(name: LOG_ONLY, "{cleartext_ctx} PGP signature verified!");
 
-    serde_json::from_str::<T>(&signed_string)
-        .map_err(|err| ResponseErr::Serialize(cleartext_ctx, err))
+    serde_json::from_str::<T>(&signed_string).map_err(|err| ResponseErr::Serialize {
+        ctx: cleartext_ctx,
+        err,
+    })
 }
 
 pub fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> Result<String, ResponseErr> {
@@ -453,7 +466,7 @@ fn check_app_dir_exists(local: &Path) -> io::Result<PathBuf> {
     if prev_local_dir
         .try_exists()
         .map_err(|err| {
-            main_thread_state::AltScreen::push_message(Message::error(format!(
+            main_thread_state::alt_screen::push_message(Message::error(format!(
                 "{err}, looking for {}",
                 prev_local_dir.display()
             )))
@@ -533,8 +546,8 @@ pub fn print_help() {
 }
 
 pub(crate) async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, message: Message) {
-    if main_thread_state::AltScreen::is_visible() {
-        main_thread_state::AltScreen::push_message(message);
+    if main_thread_state::alt_screen::is_visible() {
+        main_thread_state::alt_screen::push_message(message);
     } else {
         sender
             .send(message)
@@ -564,7 +577,7 @@ pub async fn startup_cache_task(
                         Some(file_contents.into()),
                     )
                 })
-                .unwrap_or((None, None))
+                .unwrap_or_default()
         }
         None => (None, None),
     };
@@ -686,8 +699,9 @@ impl<T: RateLimitConfig> RateLimiter<T> {
             self.start = Some(Instant::now())
         } else if self.ct >= self.limit {
             return if self.elapsed().unwrap() > self.interval {
-                self.ct = 0;
-                self.within_limit()
+                self.start = Some(Instant::now());
+                self.ct = 1;
+                true
             } else {
                 false
             };

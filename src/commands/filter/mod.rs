@@ -2,7 +2,7 @@ pub(crate) mod ops;
 pub(crate) mod strategies;
 
 use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
-pub use strategies::{FilterPreProcess, GameStats, process_stats};
+pub use strategies::{FilterPreProcess, GameStats};
 
 use crate::{
     LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, client_with_timeout, command_err,
@@ -223,9 +223,7 @@ impl Filters {
             || self.includes.is_some()
             || self.player_min.is_some()
             || self.team_size_max.is_some()
-            || self.with_bots
-            || self.without_bots
-            || !self.include_unresponsive
+            || self.with_bots | self.without_bots | !self.include_unresponsive
     }
 
     /// Possible to execute filters using data found from the iw4 master server endpoint

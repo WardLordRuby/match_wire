@@ -543,7 +543,7 @@ impl CommandContext {
                 let term = handle.writer();
                 execute!(term, BeginSynchronizedUpdate)?;
 
-                main_thread_state::AltScreen::enter();
+                main_thread_state::alt_screen::enter();
                 queue!(term, EnterAlternateScreen, cursor::Hide, Clear(All))?;
                 context.settings_disp.draw(term, context.settings)?;
 
@@ -553,7 +553,7 @@ impl CommandContext {
             |handle, _context| {
                 execute!(handle.writer(), LeaveAlternateScreen, cursor::Show)?;
 
-                main_thread_state::AltScreen::leave();
+                main_thread_state::alt_screen::leave();
                 handle.enable_render();
                 Ok(())
             },
