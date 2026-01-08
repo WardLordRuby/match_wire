@@ -199,35 +199,54 @@ async fn add_to_history(msg_sender: &Sender<Message>, line: &str, kind: Connecti
     fn cache_insert(host_name_meta: HostNameRequestMeta) {
         main_thread_state::Cache::with_borrow_mut(|cache| {
             let mut modified = true;
-            if let Some(Ok(ip)) = host_name_meta.socket_addr {
+            let ip_opt = if let Some(Ok(ip)) = host_name_meta.socket_addr {
                 cache
                     .host_to_connect
                     .entry(host_name_meta.host_name.raw.clone())
                     .and_modify(|cache_ip| {
                         if *cache_ip == ip {
-                            modified = false;
+                            modified = false
                         } else {
                             *cache_ip = ip
                         }
                     })
                     .or_insert(ip);
+                Some(ip)
+            } else {
+                cache
+                    .host_to_connect
+                    .get(&host_name_meta.host_name.raw)
+                    .copied()
+            };
+            let (mut in_history, mut stale) = (None, None);
+            for (i, host) in cache.connection_history.iter().enumerate() {
+                if in_history.is_some() && (stale.is_some() || ip_opt.is_none()) {
+                    break;
+                }
+                if host.raw == host_name_meta.host_name.raw {
+                    in_history = Some(i)
+                } else if let Some(curr_ip) = ip_opt
+                    && let Some(&ip) = cache.host_to_connect.get(&host.raw)
+                    && curr_ip == ip
+                {
+                    stale = Some(i)
+                }
             }
-            if let Some(index) = cache
-                .connection_history
-                .iter()
-                .position(|prev| prev.raw == host_name_meta.host_name.raw)
-            {
-                let history_last = cache.connection_history.len() - 1;
-                if index != history_last {
-                    let entry = cache.connection_history.remove(index);
+            if let Some(i) = in_history {
+                if i != cache.connection_history.len() - 1 {
+                    let entry = cache.connection_history.remove(i);
                     cache.connection_history.push(entry);
-                    modified = true;
+                    modified = true
                 }
             } else {
                 cache.connection_history.push(host_name_meta.host_name);
                 modified = true
             };
-            main_thread_state::UpdateCache::and_modify(|curr| curr || modified);
+            if let Some(i) = stale {
+                cache.connection_history.remove(i);
+                modified = true
+            }
+            main_thread_state::UpdateCache::and_modify(|curr| curr | modified);
         });
     }
 
