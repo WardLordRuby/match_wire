@@ -50,6 +50,12 @@ macro_rules! utf16_array {
     };
 }
 
+macro_rules! uppercase_pairs {
+    ($($c:literal),* $(,)?) => {
+        [$(($c, $c.to_ascii_uppercase())),*]
+    };
+}
+
 const CMP_LEN: usize = 8;
 
 const WINDOW_NAMES_GAME: [&str; 3] = ["h2m", "hmw", "horizonmw"];
@@ -58,39 +64,35 @@ const WINDOW_CLASS_NAME_WIN_CONSOLE_HOST: &str = "ConsoleWindowClass";
 // WINDOW_CLASS_NAME_GAME_CLIENT = "H1" | WINDOW_CLASS_NAME_GAME_SPLASH_SCREEN = "H2M Splash Screen"
 const WINDOW_CLASS_NAMES_GAME: [&str; 3] = ["H1", "H2M Splash Screen", "HMW Splash Screen"];
 const WINDOW_CLASS_NAME_PSEUDO_CONSOLE: &str = "PseudoConsoleWindow";
-const JOIN_STR: &str = "Joining ";
-const JOIN_BYTES: [u16; CMP_LEN] = utf16_array!['J', 'o', 'i', 'n', 'i', 'n', 'g', ' '];
-const CONNECTING_BYTES: [u16; CMP_LEN] = utf16_array!['C', 'o', 'n', 'n', 'e', 'c', 't', 'i'];
-const CONNECT_STR: &str = "connect ";
-const CONNECT_BYTES: [(u16, u16); CMP_LEN] = utf16_array![pairs:
-    ('c', 'C'),
-    ('o', 'O'),
-    ('n', 'N'),
-    ('n', 'N'),
-    ('e', 'E'),
-    ('c', 'C'),
-    ('t', 'T'),
-    (' ', ' '),
-];
-
-const ANSI_CODE_START: [u16; 2] = utf16_array!['\x1b', '['];
+const JOINING_STR: &str = "Joining ";
+const CONNECTING_STR: &str = "Connecti";
+const CONNECT_STR: [(char, char); CMP_LEN] =
+    uppercase_pairs!['c', 'o', 'n', 'n', 'e', 'c', 't', ' '];
 const ESCAPE_CHAR: char = '\x1b';
 const COLOR_CMD: char = 'm';
 const CARRIAGE_RETURN: u16 = '\r' as u16;
 const NEW_LINE: u16 = '\n' as u16;
 
+const _: () = assert!(JOINING_STR.len() == CMP_LEN);
+const _: () = assert!(CONNECTING_STR.len() == CMP_LEN);
+
 #[inline]
-fn case_insensitive_cmp_direct(window: &[u16], kind: &mut Connection) -> bool {
-    debug_assert_eq!(window.len(), CONNECT_BYTES.len());
-    if window
-        .iter()
-        .zip(CONNECT_BYTES)
-        .any(|(&byte, (lower, upper))| byte != lower && byte != upper)
-    {
-        return false;
+fn case_insensitive_cmp_direct(line: &str) -> Option<Connection> {
+    let mut chars = line.char_indices();
+    let (_, first) = chars.find(|(_, ch)| ch.is_alphabetic())?;
+
+    let (lower_fist, upper_first) = CONNECT_STR[0];
+    if first != lower_fist && first != upper_first {
+        return None;
     }
-    *kind = Connection::Direct;
-    true
+
+    for (&(lower, upper), (_, ch)) in CONNECT_STR[1..].iter().zip(chars.by_ref()) {
+        if ch != lower && ch != upper {
+            return None;
+        }
+    }
+
+    chars.next().map(|(i, _)| Connection::Direct(i))
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -138,13 +140,11 @@ impl From<GetInfoMetaData> for HostRequestErr {
 }
 
 impl HostName {
-    pub fn from_browser(value: &[u16], version: f64) -> Result<HostNameRequestMeta, String> {
-        let stripped = strip_ansi(&String::from_utf16_lossy(value));
-
+    pub fn from_browser(stripped: &str, version: f64) -> Result<HostNameRequestMeta, String> {
         let (host_name, socket_addr) = if version < 1.0 {
             let host_name = stripped
-                .split_once(JOIN_STR)
-                .expect("`Connection::Browser` is found and client is 'original h2m', meaning `JOIN_BYTES` were found in the `value` array")
+                .split_once(JOINING_STR)
+                .expect("`Connection::Browser` is found and client is 'original h2m', meaning `JOINING_STR` was found in the `value` array")
                 .1
                 .strip_suffix("...")
                 .ok_or_else(|| {
@@ -170,17 +170,11 @@ impl HostName {
         Ok(HostNameRequestMeta::new(host_name.to_string(), socket_addr))
     }
 
-    async fn from_request(value: &[u16]) -> Result<HostNameRequestMeta, HostRequestErr> {
-        let mut input = String::from_utf16_lossy(value);
-        input.make_ascii_lowercase();
-
-        let ip_str = input
-            .split_once(CONNECT_STR)
-            .expect("`Connection::Direct` is found, meaning `CONNECT_BYTES` were found in the `value` array")
-            .1
-            .trim();
-
-        let socket_addr = ip_str.parse::<SocketAddr>()?;
+    async fn from_request(
+        stripped: &str,
+        offset: usize,
+    ) -> Result<HostNameRequestMeta, HostRequestErr> {
+        let socket_addr = stripped[offset..].trim().parse::<SocketAddr>()?;
         let server_info = try_get_info(
             Request::New(Sourced::Hmw(socket_addr)),
             client_with_timeout(5),
@@ -197,15 +191,11 @@ impl HostName {
 
 enum Connection {
     Browser,
-    Direct,
+    Direct(usize),
 }
 
-async fn add_to_history(
-    background_msg: &Sender<Message>,
-    wide_encode: &[u16],
-    kind: Connection,
-    version: f64,
-) {
+/// Caller must guarantee that the given `Connection` kind is valid within `line`
+async fn add_to_history(msg_sender: &Sender<Message>, line: &str, kind: Connection, version: f64) {
     fn cache_insert(host_name_meta: HostNameRequestMeta) {
         main_thread_state::Cache::with_borrow_mut(|cache| {
             let mut modified = true;
@@ -241,17 +231,18 @@ async fn add_to_history(
         });
     }
 
+    debug_assert_eq!(strip_ansi(line), line);
     let res = match kind {
-        Connection::Browser => match HostName::from_browser(wide_encode, version) {
+        Connection::Browser => match HostName::from_browser(line, version) {
             Ok(mut data) => {
                 if let Some(Err(ref mut err)) = data.socket_addr {
-                    send_msg_over(background_msg, Message::error(std::mem::take(err))).await;
+                    send_msg_over(msg_sender, Message::error(std::mem::take(err))).await;
                 }
                 Ok(data)
             }
             Err(err) => Err(err),
         },
-        Connection::Direct => match HostName::from_request(wide_encode).await {
+        Connection::Direct(offset) => match HostName::from_request(line, offset).await {
             Ok(data) => Ok(data),
             Err(HostRequestErr::AddrParseErr(err)) => Err(err.to_string()),
             Err(HostRequestErr::RequestErr(err)) => Err(err),
@@ -262,7 +253,7 @@ async fn add_to_history(
             info!(name: LOG_ONLY, "Connected to {}", meta.host_name.parsed);
             cache_insert(meta);
         }
-        Err(err) => send_msg_over(background_msg, Message::error(err)).await,
+        Err(err) => send_msg_over(msg_sender, Message::error(err)).await,
     }
 }
 
@@ -282,8 +273,7 @@ impl CommandContext {
 
         tokio::spawn(async move {
             let mut buffer = OsString::new();
-
-            let connecting_bytes = if version < 1.0 { JOIN_BYTES } else { CONNECTING_BYTES };
+            let connecting_str = if version < 1.0 { JOINING_STR } else { CONNECTING_STR };
 
             /// 16 KB
             const BUFFER_SIZE: u32 = 16384;
@@ -328,31 +318,21 @@ impl CommandContext {
                         wide_encode_buf.push(byte);
                         continue;
                     }
-                    let mut connect_kind = Connection::Browser;
-                    if !wide_encode_buf.starts_with(&ANSI_CODE_START) && {
-                        if wide_encode_buf.starts_with(&[']' as u16]) {
-                            wide_encode_buf[1..]
-                                .windows(connecting_bytes.len())
-                                .any(|window| {
-                                    case_insensitive_cmp_direct(window, &mut connect_kind)
-                                })
-                        } else {
-                            wide_encode_buf
-                                .windows(connecting_bytes.len())
-                                .any(|window| window == connecting_bytes)
-                        }
-                    } {
-                        add_to_history(&msg_sender, &wide_encode_buf, connect_kind, version).await;
+
+                    if wide_encode_buf.is_empty() {
+                        continue;
                     }
 
                     let cur = String::from_utf16_lossy(&wide_encode_buf);
                     let line = strip_ansi_private_modes(&cur);
+
                     if !line.is_empty() {
                         // don't store lines that that _only_ contain ansi escape commands,
                         // unless a color command is found then append it to the next line
                         let mut chars = line.char_indices().peekable();
                         let mut color_cmd = None;
-                        while let Some((i, ESCAPE_CHAR)) = chars.next() {
+                        while let Some((_, ESCAPE_CHAR)) = chars.peek() {
+                            let (i, _) = chars.next().expect("Escape char found");
                             if let Some((j, c)) = chars.find(|(_, c)| c.is_alphabetic())
                                 && c == COLOR_CMD
                             {
@@ -370,6 +350,24 @@ impl CommandContext {
                                 continue 'byte_iter;
                             }
                         }
+
+                        let mut trimmed = chars.next().map(|(i, _)| &line[i..]).expect(
+                            "must be `Some` otherwise we would have continued `'byte_iter` & `line` must not be empty",
+                        );
+
+                        let connection_ln = if let Some(rest) = trimmed.strip_prefix(']') {
+                            trimmed = rest;
+                            case_insensitive_cmp_direct(trimmed)
+                        } else {
+                            trimmed
+                                .contains(connecting_str)
+                                .then_some(Connection::Browser)
+                        };
+
+                        if let Some(connect_kind) = connection_ln {
+                            add_to_history(&msg_sender, trimmed, connect_kind, version).await;
+                        }
+
                         main_thread_state::ConsoleHistory::push(line.into_owned());
                     }
 
