@@ -2,7 +2,7 @@
 mod test {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use match_wire::{commands::launch::HostName, strip_ansi_private_modes};
+    use match_wire::{commands::launch::HostName, strip_unwanted_ansi_sequences};
     use repl_oxide::strip_ansi;
 
     #[test]
@@ -94,7 +94,7 @@ mod test {
             "Loading fastfile imagefile1",
         ];
 
-        for (i, input) in INPUT.iter().enumerate() {
+        for (i, &input) in INPUT.iter().enumerate() {
             let parsed = strip_ansi(input);
             assert_eq!(parsed, OUTPUT[i]);
         }
@@ -116,8 +116,44 @@ mod test {
             "Loading fastfile mp_shirt_028_p_tr",
         ];
 
-        for (i, input) in INPUT.iter().enumerate() {
-            let parsed = strip_ansi_private_modes(input);
+        for (i, &input) in INPUT.iter().enumerate() {
+            let parsed = strip_unwanted_ansi_sequences(input);
+            assert_eq!(parsed, OUTPUT[i]);
+        }
+    }
+
+    #[test]
+    fn parse_ansi_window_manipulation() {
+        const INPUT: &[&str] = &["\u{1b}[1tLoading fastfile mp_shirt_028_p_tr", "\u{1b}[2t]"];
+        const OUTPUT: &[&str] = &["Loading fastfile mp_shirt_028_p_tr", "]"];
+
+        for (i, &input) in INPUT.iter().enumerate() {
+            let parsed = strip_unwanted_ansi_sequences(input);
+            assert_eq!(parsed, OUTPUT[i]);
+        }
+    }
+
+    #[test]
+    fn parse_ansi_osc() {
+        const INPUT: &[&str] = &[
+            "\u{1b}]0;title\u{1b}\\Loading fastfile mp_shirt_028_p_tr",
+            "\u{1b}]1;New Icon\u{1b}\\]",
+            "\u{1b}]2;New Title\u{1b}\\]",
+            "\u{1b}]0;title\u{07}Loading fastfile mp_shirt_028_p_tr",
+            "\u{1b}]1;New Icon\u{07}]",
+            "\u{1b}]2;New Title\u{07}]",
+        ];
+        const OUTPUT: &[&str] = &[
+            "Loading fastfile mp_shirt_028_p_tr",
+            "]",
+            "]",
+            "Loading fastfile mp_shirt_028_p_tr",
+            "]",
+            "]",
+        ];
+
+        for (i, &input) in INPUT.iter().enumerate() {
+            let parsed = strip_unwanted_ansi_sequences(input);
             assert_eq!(parsed, OUTPUT[i]);
         }
     }

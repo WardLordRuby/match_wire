@@ -4,7 +4,7 @@ use crate::{
         filter::{Addressable, GetInfoMetaData, Request, Sourced, try_get_info},
         handler::{CommandContext, Message},
     },
-    parse_hostname, send_msg_over, strip_ansi_private_modes,
+    parse_hostname, send_msg_over, strip_unwanted_ansi_sequences,
     utils::{
         display,
         main_thread_state::{self, ThreadCopyState, pty_handle::PseudoConStatus},
@@ -343,7 +343,7 @@ impl CommandContext {
                     }
 
                     let cur = String::from_utf16_lossy(&wide_encode_buf);
-                    let line = strip_ansi_private_modes(&cur);
+                    let line = strip_unwanted_ansi_sequences(&cur);
 
                     if !line.is_empty() {
                         // don't store lines that that _only_ contain ansi escape commands,

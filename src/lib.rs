@@ -529,8 +529,18 @@ pub(crate) fn parse_hostname(name: &str) -> String {
     host_name
 }
 
-pub fn strip_ansi_private_modes(input: &str) -> Cow<'_, str> {
-    let re = regex::Regex::new(r"\x1b\[\?(?:25[hl]|47[hl]|1049[hl])").unwrap();
+/// Uses a regex to strip ansi OSC sequences, window manipulation sequences, and private modes
+pub fn strip_unwanted_ansi_sequences(input: &str) -> Cow<'_, str> {
+    let re = regex::Regex::new(
+        r"(?x)
+        \x1b\[\?(?:25[hl]|47[hl]|1049[hl])      # Private modes
+        |
+        \x1b\][^\x07\x1b]*(?:\x07|\x1b\\)       # OSC sequences
+        |
+        \x1b\[[\d;]*t                           # Window manipulation
+        ",
+    )
+    .unwrap();
     re.replace_all(input, "")
 }
 
