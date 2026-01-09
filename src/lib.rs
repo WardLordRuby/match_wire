@@ -52,6 +52,7 @@ use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
 use pgp::composed::{CleartextSignedMessage, Deserializable, SignedPublicKey};
+use regex::Regex;
 use repl_oxide::ansi_code::{RED, RESET};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -529,19 +530,18 @@ pub(crate) fn parse_hostname(name: &str) -> String {
     host_name
 }
 
+const ANSI_REGEX_PATTERN: &str = r"(?x)
+    \x1b\[\?(?:25[hl]|47[hl]|1049[hl])      # Private modes
+    |
+    \x1b\][^\x07\x1b]*(?:\x07|\x1b\\)       # OSC sequences
+    |
+    \x1b\[[\d;]*t                           # Window manipulation
+";
+
 /// Uses a regex to strip ansi OSC sequences, window manipulation sequences, and private modes
 pub fn strip_unwanted_ansi_sequences(input: &str) -> Cow<'_, str> {
-    let re = regex::Regex::new(
-        r"(?x)
-        \x1b\[\?(?:25[hl]|47[hl]|1049[hl])      # Private modes
-        |
-        \x1b\][^\x07\x1b]*(?:\x07|\x1b\\)       # OSC sequences
-        |
-        \x1b\[[\d;]*t                           # Window manipulation
-        ",
-    )
-    .unwrap();
-    re.replace_all(input, "")
+    thread_local! { static ANSI_RE: Regex = Regex::new(ANSI_REGEX_PATTERN).expect("valid pattern") }
+    ANSI_RE.with(|re| re.replace_all(input, ""))
 }
 
 pub fn print_help() {
