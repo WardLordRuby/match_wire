@@ -218,21 +218,23 @@ async fn add_to_history(msg_sender: &Sender<Message>, line: &str, kind: Connecti
                     .get(&host_name_meta.host_name.raw)
                     .copied()
             };
-            let (mut in_history, mut stale) = (None, None);
-            for (i, host) in cache.connection_history.iter().enumerate() {
-                if in_history.is_some() && (stale.is_some() || ip_opt.is_none()) {
-                    break;
-                }
-                if host.raw == host_name_meta.host_name.raw {
-                    in_history = Some(i)
-                } else if let Some(curr_ip) = ip_opt
-                    && let Some(&ip) = cache.host_to_connect.get(&host.raw)
-                    && curr_ip == ip
-                {
-                    stale = Some(i)
-                }
+            if let Some(curr_ip) = ip_opt
+                && let Some(i) = cache.connection_history.iter().position(|prev| {
+                    prev.raw != host_name_meta.host_name.raw
+                        && cache
+                            .host_to_connect
+                            .get(&prev.raw)
+                            .is_some_and(|&ip| ip == curr_ip)
+                })
+            {
+                cache.connection_history.remove(i);
+                modified = true
             }
-            if let Some(i) = in_history {
+            if let Some(i) = cache
+                .connection_history
+                .iter()
+                .position(|prev| prev.raw == host_name_meta.host_name.raw)
+            {
                 if i != cache.connection_history.len() - 1 {
                     let entry = cache.connection_history.remove(i);
                     cache.connection_history.push(entry);
@@ -240,10 +242,6 @@ async fn add_to_history(msg_sender: &Sender<Message>, line: &str, kind: Connecti
                 }
             } else {
                 cache.connection_history.push(host_name_meta.host_name);
-                modified = true
-            };
-            if let Some(i) = stale {
-                cache.connection_history.remove(i);
                 modified = true
             }
             main_thread_state::UpdateCache::and_modify(|curr| curr | modified);
