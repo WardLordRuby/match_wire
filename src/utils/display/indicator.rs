@@ -21,7 +21,9 @@ macro_rules! finish {
 }
 
 const P_BAR_LEN: usize = 35;
+const SPINNER_CHARS: &str = "-\\|/";
 const WRITE_INTERVAL: Duration = Duration::from_millis(60);
+const PARTIAL_INTERVAL: Duration = WRITE_INTERVAL.checked_div(3).unwrap();
 
 pub(crate) struct Spinner {
     task: std::thread::JoinHandle<io::Result<()>>,
@@ -33,7 +35,6 @@ impl Spinner {
         let (tx, rx) = mpsc::channel();
 
         let task = std::thread::spawn(move || {
-            const SPINNER_CHARS: &str = "-\\|/";
             let mut stdout = std::io::stdout();
             for ch in SPINNER_CHARS.chars().cycle() {
                 match rx.try_recv() {
@@ -80,7 +81,7 @@ impl ProgressBar {
     }
 
     pub(crate) fn new(label_a: &'static str, label_b: &'static str, total: NonZero<usize>) -> Self {
-        let tick_div = Self::tick_div(usize::from(total));
+        let tick_div = Self::tick_div(total.get());
 
         let (tx, rx) = mpsc::channel();
 
@@ -96,7 +97,7 @@ impl ProgressBar {
                             if start.elapsed() > WRITE_INTERVAL {
                                 break 'update_ct;
                             }
-                            std::thread::sleep(Duration::from_millis(20));
+                            std::thread::sleep(PARTIAL_INTERVAL);
                         }
                         Err(TryRecvError::Disconnected) => break 'task,
                     }
