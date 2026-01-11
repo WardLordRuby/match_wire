@@ -81,8 +81,8 @@ fn case_insensitive_cmp_direct(line: &str) -> Option<Connection> {
     let mut chars = line.char_indices();
     let (_, first) = chars.find(|(_, ch)| ch.is_alphabetic())?;
 
-    let (lower_fist, upper_first) = CONNECT_STR[0];
-    if first != lower_fist && first != upper_first {
+    let (lower_first, upper_first) = CONNECT_STR[0];
+    if first != lower_first && first != upper_first {
         return None;
     }
 

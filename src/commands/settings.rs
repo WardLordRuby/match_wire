@@ -320,7 +320,6 @@ impl Settings {
 
 pub(crate) struct SettingsRenderer {
     selected: usize,
-    entries: &'static [Entry],
     entry_loc: Vec<(u16, u16)>,
     tip_loc: (u16, u16),
 }
@@ -375,7 +374,6 @@ impl SettingsRenderer {
     pub(crate) const fn new() -> Self {
         Self {
             selected: 0,
-            entries: SETTING_ENTRIES,
             entry_loc: Vec::new(),
             tip_loc: (
                 SETTINGS_TEXT[0].len() as u16 - 2,
@@ -387,7 +385,10 @@ impl SettingsRenderer {
     /// Will panic if called before `Self` has been drawn
     #[inline]
     fn selected(&self) -> (&Entry, (u16, u16)) {
-        (&self.entries[self.selected], self.entry_loc[self.selected])
+        (
+            &SETTING_ENTRIES[self.selected],
+            self.entry_loc[self.selected],
+        )
     }
 
     fn draw_change(
@@ -430,7 +431,7 @@ impl SettingsRenderer {
 
     #[inline]
     fn move_down(&mut self, settings: Settings, term: &mut Stdout) -> io::Result<()> {
-        Self::draw_change(self, settings, term, self.entries.len() - 1, |i| *i += 1)
+        Self::draw_change(self, settings, term, SETTING_ENTRIES.len() - 1, |i| *i += 1)
     }
 
     fn draw(&mut self, term: &mut Stdout, settings: Settings) -> io::Result<()> {
@@ -445,7 +446,7 @@ impl SettingsRenderer {
         let mut found_regions = false;
         self.entry_loc.clear();
 
-        for (i, entry) in self.entries.iter().enumerate() {
+        for (i, entry) in SETTING_ENTRIES.iter().enumerate() {
             if !found_regions && matches!(entry.kind, Kind::SubSetBool) {
                 found_regions = true;
 
@@ -469,7 +470,7 @@ impl SettingsRenderer {
         term.queue(cursor::MoveTo(curr_col, curr_row - 1))?
             .queue(Print(BoxTop(Some("ToolTip"), TOOLTIP_WIDTH)))?;
 
-        for line in self.entries[self.selected].tip {
+        for line in SETTING_ENTRIES[self.selected].tip {
             term.queue(cursor::MoveTo(curr_col, curr_row))?;
             draw_table_content(term, line)?;
             curr_row += 1;
