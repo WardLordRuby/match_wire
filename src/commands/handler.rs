@@ -108,6 +108,16 @@ macro_rules! command_err {
     }};
 }
 
+#[macro_export]
+macro_rules! from_static_cow_fn {
+    ($ident:ident, $fn_name:ident) => {
+        #[inline]
+        pub fn $fn_name<T: Into<Cow<'static, str>>>(msg: T) -> Self {
+            Self::$ident(msg.into())
+        }
+    };
+}
+
 pub enum Message {
     Str(Cow<'static, str>),
     Info(Cow<'static, str>),
@@ -140,22 +150,10 @@ impl Message {
         }
     }
 
-    #[inline]
-    pub fn str<T: Into<Cow<'static, str>>>(value: T) -> Self {
-        Self::Str(value.into())
-    }
-    #[inline]
-    pub fn info<T: Into<Cow<'static, str>>>(value: T) -> Self {
-        Self::Info(value.into())
-    }
-    #[inline]
-    pub fn error<T: Into<Cow<'static, str>>>(value: T) -> Self {
-        Self::Err(value.into())
-    }
-    #[inline]
-    pub fn warn<T: Into<Cow<'static, str>>>(value: T) -> Self {
-        Self::Warn(value.into())
-    }
+    from_static_cow_fn!(Str, str);
+    from_static_cow_fn!(Info, info);
+    from_static_cow_fn!(Warn, warn);
+    from_static_cow_fn!(Err, error);
 }
 
 impl Display for Message {

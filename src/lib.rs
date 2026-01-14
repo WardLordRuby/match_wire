@@ -210,9 +210,7 @@ impl ResponseErr {
             status: response.status(),
         }
     }
-    fn other<T: Into<Cow<'static, str>>>(msg: T) -> Self {
-        Self::Other(msg.into())
-    }
+    crate::from_static_cow_fn!(Other, other);
 }
 
 impl From<reqwest::Error> for ResponseErr {
