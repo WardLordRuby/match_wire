@@ -503,17 +503,31 @@ pub struct CommandContext {
     queued_con_task: Option<JoinHandle<()>>,
 }
 
+macro_rules! unitOnlyDiscriminant {
+    ($self:ty) => {
+        impl $self {
+            #[inline]
+            const fn discriminant(self) -> u32 {
+                self as u32
+            }
+        }
+
+        impl From<$self> for u32 {
+            fn from(tag: $self) -> Self {
+                tag.discriminant()
+            }
+        }
+    };
+}
+
 // Note: `discriminant` impl will break if `HistoryTag` contains a non unit variant
 pub enum HistoryTag {
     Invalid,
 }
 
-impl HistoryTag {
-    #[inline]
-    const fn discriminant(self) -> u32 {
-        self as u32
-    }
+unitOnlyDiscriminant!(HistoryTag);
 
+impl HistoryTag {
     pub fn filter(tag: Option<u32>) -> bool {
         tag != Some(Self::Invalid.discriminant())
     }
@@ -578,18 +592,7 @@ enum HookTag {
     GameConsole,
 }
 
-impl HookTag {
-    #[inline]
-    const fn discriminant(self) -> u32 {
-        self as u32
-    }
-}
-
-impl From<HookTag> for u32 {
-    fn from(tag: HookTag) -> Self {
-        tag.discriminant()
-    }
-}
+unitOnlyDiscriminant!(HookTag);
 
 impl CommandContext {
     pub async fn from(
