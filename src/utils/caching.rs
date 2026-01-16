@@ -1,5 +1,5 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY, client_with_timeout,
+    CACHED_DATA, CRATE_VER, LOG_ONLY, SAVED_HISTORY_CAP, client_with_timeout,
     commands::{
         filter::{
             Addressable, DEFAULT_SOURCES, GetInfoMetaData, Server, Sourced,
@@ -7,7 +7,7 @@ use crate::{
             strategies::FastStrategy,
             try_batched_location_lookup,
         },
-        handler::CommandContext,
+        handler::{CommandContext, HistoryTag, ReplHandle},
         reconnect::HISTORY_MAX,
     },
     models::{
@@ -272,11 +272,14 @@ pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
 }
 
 #[instrument(level = "trace", skip_all)]
-pub fn write_cache(context: &CommandContext, cmd_history: &[String]) -> io::Result<()> {
+pub fn write_cache(context: &CommandContext, line_handle: &ReplHandle) -> io::Result<()> {
     let Some(local_path) = context.local_dir() else {
         return Err(io::Error::other("No valid location to save cache to"));
     };
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
+
+    let cmd_history =
+        line_handle.export_filtered_history(HistoryTag::is_valid, Some(SAVED_HISTORY_CAP));
 
     main_thread_state::Cache::with_borrow(|cache| {
         serde_json::to_writer_pretty(

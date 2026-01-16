@@ -2,7 +2,10 @@ use crate::{
     LOG_ONLY, client_with_timeout,
     commands::{
         filter::{Request, Sourced, try_get_info},
-        handler::{CmdErr, CommandContext, CommandHandle, CommandSender, Message, ReplHandle},
+        handler::{
+            CommandContext, CommandErr, CommandReturn, CommandSender, HistoryTag, Message,
+            ReplHandle,
+        },
         launch::HostName,
     },
     models::cli::HistoryArgs,
@@ -64,22 +67,20 @@ fn display_history(
 }
 
 impl CommandContext {
-    pub(crate) fn reconnect(
-        &mut self,
-        repl: &mut ReplHandle,
-        args: HistoryArgs,
-    ) -> io::Result<CommandHandle> {
+    pub(super) fn reconnect(&mut self, repl: &mut ReplHandle, args: HistoryArgs) -> CommandReturn {
         if args.abort {
-            if !self.try_abort_queued_con() {
-                println!("{RED}No queued connection attempt to abort{RESET}")
+            return if self.try_abort_queued_con() {
+                CommandReturn::processed()
+            } else {
+                println!("{RED}No queued connection attempt to abort{RESET}");
+                CommandReturn::command_err()
             };
-            return Ok(CommandHandle::Processed);
         }
 
         let ip_port = match main_thread_state::Cache::with_borrow(|cache| {
             if cache.connection_history.is_empty() {
                 info!("No joined servers in history, connect to a server to add it to history");
-                return Err(CmdErr::Command);
+                return Err(CommandErr::Command);
             }
 
             if args.history {
@@ -90,7 +91,7 @@ impl CommandContext {
             let target_i = if let Some(num) = args.connect.filter(|&i| i > 1).map(usize::from) {
                 if num > cache.connection_history.len() {
                     error!("{}", DisplayHistoryErr(cache.connection_history.len()));
-                    return Err(CmdErr::Command);
+                    return Err(CommandErr::Command);
                 }
                 cache.connection_history.len() - num
             } else {
@@ -107,20 +108,24 @@ impl CommandContext {
                     println!(
                         "use command '{YELLOW}cache{RESET} update' to attempt to locate missing server"
                     );
-                    Err(CmdErr::Command)
+                    Err(CommandErr::NonCritical)
                 }
             }
         }) {
             Ok(Some(addr)) => addr,
-            Ok(None) | Err(CmdErr::Command) => return Ok(CommandHandle::Processed),
-            Err(CmdErr::Critical(err)) => return Err(err),
+            Ok(None) => return CommandReturn::processed(),
+            Err(err) => return CommandReturn::err(err),
         };
 
         self.try_abort_queued_con();
 
+        // Since the history stack is always changing as players connect to servers, reconnect commands are tagged
+        // non-deterministic since running the same command again will likely not connect you to the same server
+        const HISTORY_OUTPUT: CommandReturn = CommandReturn::tagged(HistoryTag::Nondeterministic);
+
         if args.queue {
             self.init_queued_connection(ip_port);
-            return Ok(CommandHandle::Processed);
+            return HISTORY_OUTPUT;
         }
 
         if let Err(err) = main_thread_state::pty_handle::try_if_alive(|game_console| {
@@ -136,7 +141,7 @@ impl CommandContext {
         // Since other parts of the process are always scanning the game console looking for direct connection
         // attempts when it is alive.
 
-        Ok(CommandHandle::Processed)
+        HISTORY_OUTPUT
     }
 
     fn init_queued_connection(&mut self, addr: SocketAddr) {

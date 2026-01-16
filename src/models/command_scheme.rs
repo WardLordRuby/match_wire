@@ -1,11 +1,11 @@
 use super::cli::{REGION_LEN, SOURCE_LEN};
-use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE, commands::reconnect::HISTORY_MAX};
+use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE, main_thread_state};
 
 use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKind};
 
 // MARK: IMPROVE
 // HARD: this ideally would be done by a proc-macro
-pub const COMPLETION: CommandScheme = init_command_scheme();
+pub const COMPLETION: &CommandScheme = &init_command_scheme();
 
 const COMMAND_RECS: &[&str] = &[
     "filter",
@@ -169,7 +169,7 @@ const FILTER_INNER: &[InnerScheme] = &[
     // team-size-max
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
-        .with_parsing_rule(|value| u8_bounds(value, |v| (1..=H2M_MAX_TEAM_SIZE).contains(&v))),
+        .with_parsing_rule(|value| u8_bounds(value, |v| v > 0 && v <= H2M_MAX_TEAM_SIZE)),
     // region
     InnerScheme::new(
         RecData::new(RecKind::value_with_num_args(REGION_LEN))
@@ -216,7 +216,11 @@ const RECONNECT_INNER: &[InnerScheme] = &[
     // connect
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[1]))
-        .with_parsing_rule(|value| u8_bounds(value, |v| (1..=HISTORY_MAX as u8).contains(&v))),
+        .with_parsing_rule(|value| {
+            u8_bounds(value, |v| {
+                v > 0 && v <= main_thread_state::Cache::history_len()
+            })
+        }),
     // queue
     InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[1])),
     // abort

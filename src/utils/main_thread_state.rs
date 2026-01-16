@@ -260,6 +260,10 @@ impl Cache {
     pub(crate) fn with_borrow_mut<R>(f: impl FnOnce(&mut Self) -> R) -> R {
         CACHE.with_borrow_mut(f)
     }
+
+    pub(crate) fn history_len() -> u8 {
+        Self::with_borrow(|cache| cache.connection_history.len()) as u8
+    }
 }
 
 #[derive(serde::Deserialize, Debug)]

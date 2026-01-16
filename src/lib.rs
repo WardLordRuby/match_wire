@@ -74,7 +74,7 @@ const MOD_FILES_MODULE_NAME: &str = "mod";
 pub const H2M_MAX_CLIENT_NUM: u8 = 18;
 pub(crate) const H2M_MAX_TEAM_SIZE: u8 = 9;
 
-pub const SAVED_HISTORY_CAP: usize = 20;
+pub(crate) const SAVED_HISTORY_CAP: usize = 20;
 
 pub(crate) mod files {
     pub(crate) const GAME_ENTRIES: [&str; 5] = [
@@ -375,10 +375,8 @@ pub fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> Result<String,
     Ok(msg.signed_text())
 }
 
-pub(crate) fn open_dir(path: &Path) {
-    if let Err(err) = std::process::Command::new("explorer").arg(path).spawn() {
-        error!("{err}")
-    }
+pub(crate) fn open_dir(path: &Path) -> io::Result<std::process::Child> {
+    std::process::Command::new("explorer").arg(path).spawn()
 }
 
 #[cfg(not(debug_assertions))]

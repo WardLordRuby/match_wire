@@ -5,9 +5,9 @@ use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 pub use strategies::{FilterPreProcess, GameStats};
 
 use crate::{
-    LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, client_with_timeout, command_err,
+    LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, client_with_timeout,
     commands::{
-        handler::{CmdErr, CommandContext, ReplHandle},
+        handler::{CommandContext, CommandErr, ReplHandle},
         settings::Settings,
     },
     impl_rate_limit_config,
@@ -15,7 +15,7 @@ use crate::{
         cli::{Filters, Region, Source},
         json_data::{GetInfo, IpLocation, LocationApiResponse, ServerInfo},
     },
-    parse_hostname,
+    non_critical_err, parse_hostname,
     utils::{
         caching::ContCode,
         display::{
@@ -87,7 +87,7 @@ pub(crate) async fn build_favorites(
     ctx: &CommandContext,
     repl: &mut ReplHandle,
     args: Option<Filters>,
-) -> Result<bool, CmdErr> {
+) -> Result<bool, CommandErr> {
     let args = args.unwrap_or_default();
     let version = ctx.game_version().unwrap_or(1.0);
 
@@ -96,12 +96,12 @@ pub(crate) async fn build_favorites(
         Ok(true) => (),
         Ok(false) => {
             std::fs::create_dir(&favorites_path).map_err(|err| {
-                command_err!("Could not create missing {FAVORITES_LOC} directory, err: {err}")
+                non_critical_err!("Could not create missing {FAVORITES_LOC} directory, err: {err}")
             })?;
             info!("\"players2\" folder is missing, a new one was created");
         }
         Err(err) => {
-            return Err(command_err!(
+            return Err(non_critical_err!(
                 "Could not confirm the existence of \"players2\" folder: {err}"
             ));
         }
@@ -109,7 +109,7 @@ pub(crate) async fn build_favorites(
 
     favorites_path.push(FAVORITES);
     let mut favorites_json = File::create(&favorites_path)
-        .map_err(|err| command_err!("Could not create {FAVORITES}, err: {err}"))?;
+        .map_err(|err| non_critical_err!("Could not create {FAVORITES}, err: {err}"))?;
 
     let spinner = Spinner::new(String::new());
 
@@ -155,7 +155,7 @@ pub(crate) async fn build_favorites(
         &mut favorites_json,
         filter.servers.into_iter().take(ips_saved),
     )
-    .map_err(|err| command_err!("Could not write to {FAVORITES}, err: {err}"))?;
+    .map_err(|err| non_critical_err!("Could not write to {FAVORITES}, err: {err}"))?;
 
     println!(
         "{GREEN}{FAVORITES} updated with {}{RESET}",
@@ -246,7 +246,7 @@ async fn filter_server_list(
     args: Filters,
     settings: Settings,
     spinner: Spinner,
-) -> Result<FilterData, CmdErr> {
+) -> Result<FilterData, CommandErr> {
     let sources = args
         .source
         .as_deref()

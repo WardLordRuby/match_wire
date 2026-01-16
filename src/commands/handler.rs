@@ -1,5 +1,5 @@
 use crate::{
-    CRATE_NAME, LOG_ONLY, MAIN_PROMPT, MOD_FILES_MODULE_NAME, ResponseErr, SAVED_HISTORY_CAP,
+    CRATE_NAME, LOG_ONLY, MAIN_PROMPT, MOD_FILES_MODULE_NAME, ResponseErr,
     commands::{
         filter::build_favorites,
         launch::{LaunchError, WinApiErr, game_open, hide_pseudo_console, spawn_pseudo},
@@ -77,12 +77,16 @@ const QUIT_PROMPT: &str = concat!(
     ") to close"
 );
 
-pub(crate) enum CmdErr {
+pub(crate) enum CommandErr {
+    /// An `io::Error` originating from the REPL's writer
     Critical(io::Error),
+    /// An error that is **not** stemming from an ill formed command input
+    NonCritical,
+    /// An error from an attempt to process an invalid command
     Command,
 }
 
-impl From<io::Error> for CmdErr {
+impl From<io::Error> for CommandErr {
     /// This implementation of `from` should be used carefully, not _all_ `io::Error`s are critical,
     /// but **all** `io::Error`s that originate from the repl_oxide crate are.
     fn from(err: io::Error) -> Self {
@@ -90,21 +94,22 @@ impl From<io::Error> for CmdErr {
     }
 }
 
-impl CmdErr {
-    pub(crate) fn transpose<T>(res: Result<T, Self>) -> io::Result<Option<T>> {
-        match res {
-            Ok(t) => Ok(Some(t)),
-            Err(CmdErr::Command) => Ok(None),
-            Err(CmdErr::Critical(err)) => Err(err),
-        }
-    }
-}
+// MARK: TODO
+// Make error messages part of `CommandReturn` / `CommandErr` then remove these macros
 
 #[macro_export]
 macro_rules! command_err {
     ($($arg:tt)*) => {{
         tracing::error!($($arg)*);
-        CmdErr::Command
+        CommandErr::Command
+    }};
+}
+
+#[macro_export]
+macro_rules! non_critical_err {
+    ($($arg:tt)*) => {{
+        tracing::error!($($arg)*);
+        CommandErr::NonCritical
     }};
 }
 
@@ -475,13 +480,13 @@ pub struct AppDetails {
 }
 
 impl AppDetails {
-    pub fn from(remote: Option<Version>, exe_dir: &Path) -> Self {
+    pub fn from(remote: Option<Version>, exe_path: &Path) -> Self {
         let (hash_latest, update_msg) = remote
             .map(|ver| (Some(ver.latest), Some(ver.message)))
             .unwrap_or_default();
 
         AppDetails {
-            hash_curr: hash_file_hex(exe_dir).map_err(display::error).ok(),
+            hash_curr: hash_file_hex(exe_path).map_err(display::error).ok(),
             hash_latest,
             update_msg,
         }
@@ -520,22 +525,109 @@ macro_rules! unitOnlyDiscriminant {
     };
 }
 
-// Note: `discriminant` impl will break if `HistoryTag` contains a non unit variant
+/// Notes:
+/// - `discriminant` impl will break if `HistoryTag` contains a non unit variant
+/// - [`Self::is_valid`] will need to be updated if any _valid_ variant is added
+#[derive(Clone, Copy)]
 pub enum HistoryTag {
     Invalid,
+    Nondeterministic,
 }
 
 unitOnlyDiscriminant!(HistoryTag);
 
 impl HistoryTag {
-    pub fn filter(tag: Option<u32>) -> bool {
-        tag != Some(Self::Invalid.discriminant())
+    pub(crate) fn is_valid(tag: Option<u32>) -> bool {
+        tag.is_none()
     }
 }
 
-fn mark_last_cmd_invalid(repl: &mut ReplHandle) {
-    repl.tag_last_history(|tag| *tag = Some(HistoryTag::Invalid.discriminant()))
+/// Caller must guarantee an entry exists in history
+fn tag_last_cmd(repl: &mut ReplHandle, tag: HistoryTag) {
+    repl.tag_last_history(|entry_tag| *entry_tag = Some(tag.discriminant()))
         .expect("command was added")
+}
+
+pub(super) struct CommandReturn {
+    outcome: CommandHandle,
+    tag: Option<HistoryTag>,
+    err: Option<CommandErr>,
+}
+
+impl CommandReturn {
+    pub(super) const fn processed() -> Self {
+        Self {
+            outcome: CommandHandle::Processed,
+            tag: None,
+            err: None,
+        }
+    }
+
+    pub(super) fn insert_hook(hook: InputHook<CommandContext, Stdout>) -> Self {
+        Self {
+            outcome: CommandHandle::InsertHook(hook),
+            tag: None,
+            err: None,
+        }
+    }
+
+    pub(super) const fn tagged(tag: HistoryTag) -> Self {
+        Self {
+            outcome: CommandHandle::Processed,
+            tag: Some(tag),
+            err: None,
+        }
+    }
+
+    pub(super) const fn exit() -> Self {
+        Self {
+            outcome: CommandHandle::Exit,
+            tag: None,
+            err: None,
+        }
+    }
+
+    pub(super) const fn command_err() -> Self {
+        Self {
+            outcome: CommandHandle::Processed,
+            tag: Some(HistoryTag::Invalid),
+            err: Some(CommandErr::Command),
+        }
+    }
+
+    pub(super) const fn non_critical_err() -> Self {
+        Self {
+            outcome: CommandHandle::Processed,
+            tag: None,
+            err: Some(CommandErr::NonCritical),
+        }
+    }
+
+    pub(super) fn critical_err(err: io::Error) -> Self {
+        Self {
+            outcome: CmdHandle::Exit,
+            tag: None,
+            err: Some(CommandErr::Critical(err)),
+        }
+    }
+
+    pub(super) fn err(err: CommandErr) -> Self {
+        let outcome = match err {
+            CommandErr::Critical(_) => CommandHandle::Exit,
+            CommandErr::Command | CommandErr::NonCritical => CommandHandle::Processed,
+        };
+
+        let tag = match err {
+            CommandErr::Critical(_) | CommandErr::NonCritical => None,
+            CommandErr::Command => Some(HistoryTag::Invalid),
+        };
+
+        Self {
+            outcome,
+            tag,
+            err: Some(err),
+        }
+    }
 }
 
 impl Executor<Stdout> for CommandContext {
@@ -547,17 +639,16 @@ impl Executor<Stdout> for CommandContext {
         let command = match try_parse_from(&user_tokens) {
             Ok(c) => c,
             Err(err) => {
-                mark_last_cmd_invalid(line_handle);
+                tag_last_cmd(line_handle, HistoryTag::Invalid);
                 return err.print().map(|_| CommandHandle::Processed);
             }
         };
 
-        main_thread_state::UpdateCache::set(true);
-
-        match command {
+        let command_res = match command {
             Command::Filter { args } => self.new_favorites_with(line_handle, args).await,
             Command::Last => main_thread_state::LastServerStats::display(line_handle)
-                .map(|_| CommandHandle::Processed),
+                .map(|_| CommandReturn::processed())
+                .unwrap_or_else(CommandReturn::critical_err),
             Command::Reconnect { args } => self.reconnect(line_handle, args),
             Command::Launch => self.launch_handler(),
             Command::Cache { option } => self.modify_cache(option).await,
@@ -567,7 +658,21 @@ impl Executor<Stdout> for CommandContext {
             Command::Version { verify_all } => self.print_version(verify_all).await,
             Command::Settings { use_default } => self.settings(line_handle, use_default),
             Command::Quit => self.quit(),
+        };
+
+        if let Some(CommandErr::Critical(err)) = command_res.err {
+            return Err(err);
         }
+
+        if HistoryTag::is_valid(command_res.tag.map(Into::into)) {
+            main_thread_state::UpdateCache::set(true);
+        }
+
+        if let Some(tag) = command_res.tag {
+            tag_last_cmd(line_handle, tag);
+        }
+
+        Ok(command_res.outcome)
     }
 }
 
@@ -695,11 +800,11 @@ impl CommandContext {
 
         let repl = Repl::new(term)
             .with_prompt(MAIN_PROMPT)
-            .with_completion(&crate::models::command_scheme::COMPLETION)
+            .with_completion(crate::models::command_scheme::COMPLETION)
             .with_custom_quit_command("quit")
             .with_history_entries(&startup_contents.command_history)
             .with_custom_parse_err_hook(|repl, err| {
-                mark_last_cmd_invalid(repl);
+                tag_last_cmd(repl, HistoryTag::Invalid);
                 println!("{RED}{err}{RESET}");
                 Ok(())
             })
@@ -759,27 +864,36 @@ impl CommandContext {
         )
     }
 
-    fn try_open_game_dir(&self) -> io::Result<CommandHandle> {
-        self.game.path.parent().map(open_dir).unwrap_or_else(|| {
+    fn try_open_explorer(dir: &Path) -> CommandReturn {
+        if let Err(err) = open_dir(dir) {
+            error!("{err}");
+            return CommandReturn::non_critical_err();
+        }
+        CommandReturn::processed()
+    }
+
+    fn try_open_game_dir(&self) -> CommandReturn {
+        let Some(dir) = self.game.path.parent() else {
             error!(
                 "Game path: {}, has no valid parent",
                 self.game.path.display()
             );
-        });
-        Ok(CommandHandle::Processed)
+            return CommandReturn::non_critical_err();
+        };
+        Self::try_open_explorer(dir)
     }
 
-    fn try_open_local_dir(&self) -> io::Result<CommandHandle> {
-        self.local_dir.as_deref().map(open_dir).unwrap_or_else(|| {
+    fn try_open_local_dir(&self) -> CommandReturn {
+        let Some(dir) = self.local_dir.as_deref() else {
             error!("Failed to find local environment directory on startup");
-        });
-        Ok(CommandHandle::Processed)
+            return CommandReturn::non_critical_err();
+        };
+        Self::try_open_explorer(dir)
     }
 
-    pub fn graceful_shutdown(&mut self, cmd_history: &[String]) {
-        if main_thread_state::UpdateCache::get() {
-            write_cache(self, cmd_history).unwrap_or_else(display::log_error)
-        }
+    pub fn graceful_shutdown(&mut self, line_handle: &ReplHandle) {
+        self.save_cache_if_needed(line_handle)
+            .unwrap_or_else(display::log_error);
 
         main_thread_state::pty_handle::try_drop_pty(&self.game_name());
 
@@ -796,12 +910,12 @@ impl CommandContext {
             .map_err(Into::into)
     }
 
-    pub(crate) fn launch_handler(&mut self) -> io::Result<CommandHandle> {
+    pub(super) fn launch_handler(&mut self) -> CommandReturn {
         let game_open = match game_open() {
             Ok(open_status) => open_status,
             Err(err) => {
                 error!("{err}, could not determine if it is okay to launch");
-                return Ok(CommandHandle::Processed);
+                return CommandReturn::non_critical_err();
             }
         };
 
@@ -812,7 +926,7 @@ impl CommandContext {
                     "{}, could not determine if it is okay to launch",
                     err.to_string_lossy()
                 );
-                return Ok(CommandHandle::Processed);
+                return CommandReturn::non_critical_err();
             }
         };
 
@@ -825,7 +939,7 @@ impl CommandContext {
             } else {
                 println!("{RED}{window_name} is already running{RESET}\n{ConnectionHelp}");
             }
-            return Ok(CommandHandle::Processed);
+            return CommandReturn::non_critical_err();
         } else if pty_active {
             // Game window is not present, it must be in the process of closing
             main_thread_state::pty_handle::wait_for_exit(&self.game_name());
@@ -837,22 +951,20 @@ impl CommandContext {
                 self.game.update(exe_details(&self.game.path));
                 main_thread_state::pty_handle::set(Some(conpty));
                 self.listener_routine().unwrap_or_else(display::error);
+                CommandReturn::processed()
             }
-            Err(err) => error!("{err}"),
-        };
-
-        Ok(CommandHandle::Processed)
+            Err(err) => {
+                error!("{err}");
+                CommandReturn::non_critical_err()
+            }
+        }
     }
 
     pub fn save_cache_if_needed(&self, line_handle: &ReplHandle) -> io::Result<()> {
-        if main_thread_state::UpdateCache::take() {
-            return write_cache(
-                self,
-                &line_handle.export_filtered_history(HistoryTag::filter, Some(SAVED_HISTORY_CAP)),
-            );
+        if !main_thread_state::UpdateCache::take() {
+            return Ok(());
         }
-
-        Ok(())
+        write_cache(self, line_handle)
     }
 
     pub fn handle_game_state_change(
@@ -928,17 +1040,17 @@ impl CommandContext {
         &self,
         repl: &mut ReplHandle,
         args: Option<Filters>,
-    ) -> io::Result<CommandHandle> {
-        let build_res = build_favorites(self, repl, args).await;
-
-        if let Some(cache_modified) = CmdErr::transpose(build_res)? {
-            main_thread_state::UpdateCache::and_modify(|curr| curr || cache_modified);
+    ) -> CommandReturn {
+        match build_favorites(self, repl, args).await {
+            Ok(cache_modified) => {
+                main_thread_state::UpdateCache::and_modify(|curr| curr | cache_modified);
+                CommandReturn::processed()
+            }
+            Err(err) => CommandReturn::err(err),
         }
-
-        Ok(CommandHandle::Processed)
     }
 
-    async fn print_version(&mut self, verify_all: bool) -> io::Result<CommandHandle> {
+    async fn print_version(&mut self, verify_all: bool) -> CommandReturn {
         if let ModFileStatus::Initial = self.game.mod_verification {
             let _ = self.game.prep_verification_state();
         }
@@ -948,20 +1060,20 @@ impl CommandContext {
 
             if !self.game.manifest_verified() {
                 println!("{RED}Failed to verify integrity of HMW manifest{RESET}");
-                return Ok(CommandHandle::Processed);
+                return CommandReturn::non_critical_err();
             }
 
             let _ = self.game.verify_hmw_files();
         }
 
         println!("{}\n\n{}", self.appdata, self.game);
-        Ok(CommandHandle::Processed)
+        CommandReturn::processed()
     }
 
-    async fn modify_cache(&mut self, arg: CacheCmd) -> io::Result<CommandHandle> {
+    async fn modify_cache(&mut self, arg: CacheCmd) -> CommandReturn {
         if self.local_dir.is_none() {
             error!("Can not create cache with out a valid save directory");
-            return Ok(CommandHandle::Processed);
+            return CommandReturn::non_critical_err();
         }
 
         if let CacheCmd::Reset = arg {
@@ -970,12 +1082,17 @@ impl CommandContext {
 
         let hmw_manifest_task = tokio::spawn(get_latest_hmw_manifest());
 
-        let mut cache_modified = build_cache()
+        let build_res = build_cache()
             .await
-            .map_err(|err| error!("{err}, cache remains unchanged"))
-            .is_ok();
+            .map_err(|err| error!("{err}, cache remains unchanged"));
 
-        match hmw_manifest_task.await {
+        let mut cache_modified = build_res.is_ok();
+        let mut encountered_err = !cache_modified;
+
+        let manifest_res = hmw_manifest_task.await;
+        encountered_err |= matches!(manifest_res, Ok(Err(_)) | Err(_));
+
+        match manifest_res {
             Ok(Ok(latest_manifest)) => {
                 cache_modified |= self
                     .game
@@ -986,12 +1103,16 @@ impl CommandContext {
             Err(err) => hmw_hash_err!("{err}"),
         };
 
-        main_thread_state::UpdateCache::and_modify(|curr| curr || cache_modified);
+        main_thread_state::UpdateCache::and_modify(|curr| curr | cache_modified);
 
-        Ok(CommandHandle::Processed)
+        if encountered_err {
+            return CommandReturn::non_critical_err();
+        }
+
+        CommandReturn::processed()
     }
 
-    fn open_game_console(&mut self, all: bool) -> io::Result<CommandHandle> {
+    fn open_game_console(&mut self, all: bool) -> CommandReturn {
         if all {
             main_thread_state::ConsoleHistory::with_borrow_mut(|history| history.reset_i());
         }
@@ -1017,7 +1138,7 @@ impl CommandContext {
             } else {
                 println!()
             }
-            return Ok(CommandHandle::Processed);
+            return CommandReturn::non_critical_err();
         }
 
         print!("{DisplayLogs}");
@@ -1096,18 +1217,18 @@ impl CommandContext {
             },
         );
 
-        Ok(CommandHandle::InsertHook(input_hook))
+        CommandReturn::insert_hook(input_hook)
     }
 
-    fn quit(&mut self) -> io::Result<CommandHandle> {
+    fn quit(&mut self) -> CommandReturn {
         if game_open()
             .unwrap_or_else(WinApiErr::resolve_to_open)
             .is_none()
         {
             main_thread_state::pty_handle::wait_for_exit(&self.game_name());
-            return Ok(CommandHandle::Exit);
+            return CommandReturn::exit();
         } else if main_thread_state::pty_handle::check_connection().is_err() {
-            return Ok(CommandHandle::Exit);
+            return CommandReturn::exit();
         }
 
         println!(
@@ -1142,7 +1263,7 @@ impl CommandContext {
                 _ => HookedEvent::release_hook(),
             });
 
-        Ok(CommandHandle::InsertHook(input_hook))
+        CommandReturn::insert_hook(input_hook)
     }
 }
 

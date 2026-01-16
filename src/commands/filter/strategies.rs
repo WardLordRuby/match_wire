@@ -3,9 +3,8 @@ use super::{
     Request, Server, Sourced, ops::*, try_batched_location_lookup, try_get_info,
 };
 use crate::{
-    command_err,
     commands::{
-        handler::{CmdErr, ReplHandle},
+        handler::{CommandErr, ReplHandle},
         settings::Settings,
     },
     display::{indicator::Spinner, table::DisplaySourceStatsInner},
@@ -14,6 +13,7 @@ use crate::{
         cli::{Filters, Source},
         json_data::{GetInfo, ServerInfo},
     },
+    non_critical_err,
     utils::main_thread_state,
 };
 
@@ -29,12 +29,12 @@ use tokio::task::JoinSet;
 pub(crate) trait FilterStrategy:
     Default + Extend<Sourced> + Extend<Iw4JsonFmt> + Extend<HmwJsonFmt> + IntoIterator<Item = Sourced>
 {
-    async fn new(sources: Option<HashSet<Source>>, client: &Client) -> Result<Self, CmdErr> {
+    async fn new(sources: Option<HashSet<Source>>, client: &Client) -> Result<Self, CommandErr> {
         match sources {
             Some(user_sources) => get_sourced_servers::<_, Self>(user_sources, client).await,
             None => get_sourced_servers::<_, Self>(DEFAULT_SOURCES, client).await,
         }
-        .map_err(|err| command_err!("{err}"))
+        .map_err(|err| non_critical_err!("{err}"))
     }
 
     fn is_empty(&self) -> bool;
@@ -49,7 +49,7 @@ pub(crate) trait FilterStrategy:
         settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
-    ) -> Result<FilterData, CmdErr>;
+    ) -> Result<FilterData, CommandErr>;
 }
 
 #[derive(Default)]
@@ -126,7 +126,7 @@ impl FilterStrategy for FastStrategy {
         settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
-    ) -> Result<FilterData, CmdErr> {
+    ) -> Result<FilterData, CommandErr> {
         let mut sourced_servers = Self::new(sources, &client).await?;
         let mut cache_modified = false;
 
@@ -329,7 +329,7 @@ impl FilterStrategy for StatTrackStrategy {
         settings: Settings,
         sources: Option<HashSet<Source>>,
         spinner: Spinner,
-    ) -> Result<FilterData, CmdErr> {
+    ) -> Result<FilterData, CommandErr> {
         let mut stat_track = Self::new(sources, &client).await?;
 
         let requests = Self::queue_requests(

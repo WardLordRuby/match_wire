@@ -2,7 +2,7 @@ use crate::{
     LOG_ONLY,
     commands::{
         filter::{RegionContainer, continent},
-        handler::{CommandContext, CommandHandle, ReplHandle},
+        handler::{CommandContext, CommandReturn, ReplHandle},
     },
     utils::{
         caching::ContCode,
@@ -520,21 +520,22 @@ impl CommandContext {
         self.settings.write(&local_dir.join(SETTINGS))
     }
 
-    pub(crate) fn settings(
-        &mut self,
-        handle: &ReplHandle,
-        use_default: bool,
-    ) -> io::Result<CommandHandle> {
+    pub(super) fn settings(&mut self, handle: &ReplHandle, use_default: bool) -> CommandReturn {
         if use_default {
             self.settings = Settings::default();
-            self.try_write_settings().unwrap_or_else(display::error);
-            return Ok(CommandHandle::Processed);
+            return match self.try_write_settings() {
+                Ok(()) => CommandReturn::processed(),
+                Err(err) => {
+                    error!("{err}");
+                    CommandReturn::non_critical_err()
+                }
+            };
         }
 
         let term_size = handle.terminal_size();
         if term_size.0 < TERM_SIZE_MIN.0 || term_size.1 < TERM_SIZE_MIN.1 {
             println!("{YELLOW}Terminal to small. Resize window to edit settings{RESET}");
-            return Ok(CommandHandle::Processed);
+            return CommandReturn::non_critical_err();
         }
 
         let state_changes = HookStates::<CommandContext, Stdout>::new(
@@ -610,6 +611,6 @@ impl CommandContext {
             HookedEvent::continue_hook()
         });
 
-        Ok(CommandHandle::InsertHook(input_hook))
+        CommandReturn::insert_hook(input_hook)
     }
 }
