@@ -78,15 +78,11 @@ const _: () = assert!(CONNECTING_STR.len() == CMP_LEN);
 
 #[inline]
 fn case_insensitive_cmp_direct(line: &str) -> Option<Connection> {
-    let mut chars = line.char_indices();
-    let (_, first) = chars.find(|(_, ch)| ch.is_alphabetic())?;
+    let mut chars = line
+        .char_indices()
+        .skip_while(|(_, ch)| !ch.is_alphabetic());
 
-    let (lower_first, upper_first) = CONNECT_STR[0];
-    if first != lower_first && first != upper_first {
-        return None;
-    }
-
-    for (&(lower, upper), (_, ch)) in CONNECT_STR[1..].iter().zip(chars.by_ref()) {
+    for ((lower, upper), (_, ch)) in CONNECT_STR.into_iter().zip(chars.by_ref()) {
         if ch != lower && ch != upper {
             return None;
         }
