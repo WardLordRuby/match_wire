@@ -1,5 +1,5 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY, SAVED_HISTORY_CAP, client_with_timeout,
+    CACHED_DATA, CRATE_VER, LOG_ONLY, SAVED_HISTORY_CAP,
     commands::{
         CommandContext, HistoryTag, ReplHandle,
         filter::{
@@ -17,6 +17,7 @@ use crate::{
     utils::{
         display::indicator::Spinner,
         main_thread_state::{self, ThreadCopyState},
+        request::client_with_timeout,
     },
 };
 

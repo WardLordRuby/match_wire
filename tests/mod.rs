@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test {
-    use match_wire::{RateLimiter, impl_rate_limit_config};
+    use match_wire::{impl_rate_limit_config, utils::limiter::RateLimiter};
     use std::time::Duration;
 
     const TEST_LIMIT: usize = 10;

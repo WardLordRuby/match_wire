@@ -5,7 +5,7 @@ use strategies::{FastStrategy, FilterStrategy, StatTrackStrategy};
 pub use strategies::{FilterPreProcess, GameStats};
 
 use crate::{
-    LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, client_with_timeout,
+    LOG_ONLY,
     commands::{CommandContext, CommandErr, ReplHandle, settings::Settings},
     impl_rate_limit_config,
     models::{
@@ -18,7 +18,10 @@ use crate::{
         display::{
             DisplayCountOf, DisplayServerCount, SOURCE_HMW, SingularPlural, indicator::Spinner,
         },
+        limiter::RateLimiter,
         main_thread_state,
+        request::STATUS_OK,
+        request::{ResponseErr, client_with_timeout},
     },
 };
 

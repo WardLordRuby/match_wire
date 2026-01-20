@@ -2,7 +2,7 @@ pub(crate) mod indicator;
 pub mod table;
 
 use crate::{
-    CRATE_NAME, CRATE_VER, LOG_ONLY, RateLimitConfig, RateLimiter, ResponseErr,
+    CRATE_NAME, CRATE_VER, LOG_ONLY,
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::status::ModFileStatus,
@@ -136,18 +136,6 @@ pub fn warning<E: Display>(warning: E) {
 #[inline]
 pub fn log_error<E: Display>(err: E) {
     tracing::error!(name: LOG_ONLY, "{err}")
-}
-
-impl Display for ResponseErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResponseErr::Reqwest(err) => write!(f, "{err}"),
-            ResponseErr::Status { msg, status } => write!(f, "{msg}: {status}"),
-            ResponseErr::Other(msg) => write!(f, "{msg}"),
-            ResponseErr::Pgp(err) => write!(f, "PGP verification failed: {err}"),
-            ResponseErr::Serialize { ctx, err } => write!(f, "{ctx} formatting has changed: {err}"),
-        }
-    }
 }
 
 pub(crate) struct ConnectionHelp;
@@ -605,21 +593,6 @@ pub(crate) struct Space(pub(crate) usize);
 impl Display for Space {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write_div_str!(f, ' ', self.0)
-    }
-}
-
-impl<T: RateLimitConfig> Display for RateLimiter<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.limited() {
-            write!(
-                f,
-                "{} service rate limited for another {} seconds",
-                T::DISP_NAME,
-                (self.interval - self.elapsed().unwrap_or_default()).as_secs()
-            )
-        } else {
-            write!(f, "{} service not currently rate limited", T::DISP_NAME)
-        }
     }
 }
 

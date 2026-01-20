@@ -5,7 +5,7 @@ pub mod reconnect;
 pub mod settings;
 
 use crate::{
-    LOG_ONLY, MAIN_PROMPT, ResponseErr,
+    LOG_ONLY, MAIN_PROMPT,
     display::{self, ConnectionHelp, UPDATE_MSG_HMW},
     hmw_hash_err,
     models::json_data::HmwManifest,
@@ -13,6 +13,7 @@ use crate::{
     utils::{
         details::{AppDetails, GameDetails},
         main_thread_state::{self, ThreadCopyState},
+        request::ResponseErr,
     },
 };
 use handler::status::ModFileStatus;

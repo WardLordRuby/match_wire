@@ -4,7 +4,7 @@ use super::{
     try_get_info,
 };
 use crate::{
-    LOG_ONLY, ResponseErr, STATUS_OK,
+    LOG_ONLY,
     commands::settings::Settings,
     make_slice_ascii_lowercase,
     models::{
@@ -18,6 +18,7 @@ use crate::{
             DisplayServerCount, SingularPlural, indicator::Spinner,
         },
         main_thread_state,
+        request::{ResponseErr, STATUS_OK},
     },
 };
 

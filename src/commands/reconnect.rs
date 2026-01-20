@@ -1,5 +1,5 @@
 use crate::{
-    LOG_ONLY, client_with_timeout,
+    LOG_ONLY,
     commands::{
         CommandContext, CommandErr, CommandReturn, CommandSender, HistoryTag, Message, ReplHandle,
         filter::{Request, Sourced, try_get_info},
@@ -14,6 +14,7 @@ use crate::{
             table::{DisplayHistory, TABLE_PADDING},
         },
         main_thread_state,
+        request::client_with_timeout,
     },
 };
 

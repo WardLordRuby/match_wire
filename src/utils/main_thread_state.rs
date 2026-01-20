@@ -7,6 +7,7 @@ use super::{
             TABLE_PADDING,
         },
     },
+    request::crypto::try_parse_signed_json,
 };
 use crate::{
     LOG_ONLY, StartupInfo,
@@ -16,7 +17,7 @@ use crate::{
         launch::{HostName, WinApiErr},
     },
     models::json_data::{CacheFile, CondManifest, Version},
-    try_fit_table, try_parse_signed_json,
+    try_fit_table,
 };
 
 use std::{
@@ -824,7 +825,10 @@ impl IDMaps {
 #[cfg(test)]
 mod test {
     use super::{MATCH_WIRE_PUBLIC_PGP_KEY, SIGNED_STARTUP_INFO};
-    use crate::{ResponseErr, models::json_data::StartupInfo, pgp_verify_cleartext};
+    use crate::{
+        models::json_data::StartupInfo,
+        utils::request::{ResponseErr, crypto::pgp_verify_cleartext},
+    };
     use reqwest::{StatusCode, blocking::get};
 
     fn blocking_verify(

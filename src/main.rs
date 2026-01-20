@@ -1,14 +1,17 @@
 use match_wire::{
     CRATE_NAME, LOG_ONLY, await_user_for_end,
-    commands::{CommandContext, Message, ReplHandle, StartupData, settings::Settings},
-    get_latest_hmw_manifest,
+    commands::{
+        CommandContext, Message, ReplHandle, StartupData, launch::try_init_launch,
+        settings::Settings,
+    },
     models::json_data::Version,
-    print_help, splash_screen, startup_cache_task, try_init_launch, try_init_logger,
+    print_help, splash_screen, startup_cache_task, try_init_logger,
     utils::{
         caching::read_cache,
         details::{AppDetails, GameDetails},
         display::{self, DisplayPanic},
         main_thread_state,
+        request::crypto::get_latest_hmw_manifest,
     },
 };
 

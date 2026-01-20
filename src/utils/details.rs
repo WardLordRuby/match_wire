@@ -1,5 +1,5 @@
 use crate::{
-    commands::{handler::status::ModFileStatus, settings::Settings},
+    commands::{handler::status::ModFileStatus, launch::get_exe_version, settings::Settings},
     files::*,
     hash_file_hex,
     models::json_data::{CacheFile, Version},
@@ -10,6 +10,33 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
 };
+
+use repl_oxide::ansi_code::{RED, RESET};
+
+fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
+    let version = get_exe_version(game_exe_path).or_else(|| {
+        println!(
+            "{RED}Failed to get version of {}{RESET}",
+            game_exe_path
+                .file_name()
+                .expect("input was not modified")
+                .to_string_lossy()
+        );
+        None
+    });
+    let hash = hash_file_hex(game_exe_path)
+        .map_err(|err| {
+            println!(
+                "{RED}{err}, input file_name: {}{RESET}",
+                game_exe_path
+                    .file_name()
+                    .expect("input was not modified")
+                    .to_string_lossy()
+            )
+        })
+        .ok();
+    (version, hash)
+}
 
 #[derive(Debug)]
 pub struct GameDetails {
@@ -48,7 +75,7 @@ impl GameDetails {
         {
             let game = match crate::contains_required_files(&exe_dir) {
                 Ok(game_exe_path) => {
-                    let (version, hash) = crate::exe_details(&game_exe_path);
+                    let (version, hash) = exe_details(&game_exe_path);
                     GameDetails::new(game_exe_path, version, hash, mod_verification)
                 }
                 Err(err) if no_launch => {
@@ -136,12 +163,14 @@ impl GameDetails {
             .to_string_lossy()
     }
 
-    pub(crate) fn update(&mut self, from: (Option<f64>, Option<String>)) {
-        if from.0.is_some() {
-            self.version = from.0;
+    pub(crate) fn update(&mut self) {
+        let (version, hash) = exe_details(&self.path);
+
+        if version.is_some() {
+            self.version = version;
         }
-        if from.1.is_some() {
-            self.hash_curr = from.1;
+        if hash.is_some() {
+            self.hash_curr = hash;
         }
     }
 }

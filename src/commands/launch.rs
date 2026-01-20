@@ -1,13 +1,14 @@
 use crate::{
-    CRATE_NAME, LOG_ONLY, client_with_timeout,
+    CRATE_NAME, LOG_ONLY,
     commands::{
         CommandContext, Message,
         filter::{Addressable, GetInfoMetaData, Request, Sourced, try_get_info},
     },
     parse_hostname, send_msg_over, strip_unwanted_ansi_sequences,
     utils::{
-        display,
+        display::{self, ConnectionHelp},
         main_thread_state::{self, ThreadCopyState, pty_handle::PseudoConStatus},
+        request::client_with_timeout,
     },
 };
 
@@ -15,11 +16,14 @@ use std::{
     ffi::{OsStr, OsString, c_void},
     net::{AddrParseError, SocketAddr},
     os::windows::ffi::{OsStrExt, OsStringExt},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use core::str;
-use repl_oxide::strip_ansi;
+use repl_oxide::{
+    ansi_code::{RED, RESET},
+    strip_ansi,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
@@ -268,6 +272,33 @@ async fn add_to_history(msg_sender: &Sender<Message>, line: &str, kind: Connecti
         }
         Err(err) => send_msg_over(msg_sender, Message::error(err)).await,
     }
+}
+
+pub async fn try_init_launch(
+    exe_path: PathBuf,
+    no_launch: bool,
+) -> Option<Result<PTY, LaunchError>> {
+    if no_launch {
+        return None;
+    }
+
+    let game_open = match game_open() {
+        Ok(open_status) => open_status,
+        Err(err) => {
+            error!("{err}, could not determine if it is okay to launch");
+            return None;
+        }
+    };
+
+    if let Some(window_name) = game_open {
+        main_thread_state::alt_screen::push_message(Message::str(format!(
+            "{RED}{window_name} is already running{RESET}\n{ConnectionHelp}"
+        )));
+    }
+
+    // delay h2m doesn't block splash screen
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    Some(spawn_pseudo(&exe_path))
 }
 
 impl CommandContext {

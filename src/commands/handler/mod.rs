@@ -11,13 +11,13 @@ use crate::{
         launch::{WinApiErr, game_open, hide_pseudo_console, spawn_pseudo},
         tag_last_cmd,
     },
-    exe_details, get_latest_hmw_manifest,
     models::cli::{CacheCmd, Command, Filters},
     open_dir, send_msg_over,
     utils::{
         caching::{build_cache, write_cache},
         display::{self, ConnectionHelp, DisplayLogs},
         main_thread_state::{self, ThreadCopyState, pty_handle::PseudoConStatus},
+        request::crypto::get_latest_hmw_manifest,
     },
 };
 
@@ -232,7 +232,7 @@ impl CommandContext {
         match spawn_pseudo(self.game.path()) {
             Ok(conpty) => {
                 info!("Launching {}...", self.game_name());
-                self.game.update(exe_details(self.game.path()));
+                self.game.update();
                 main_thread_state::pty_handle::set(Some(conpty));
                 self.listener_routine().unwrap_or_else(display::error);
                 CommandReturn::processed()
@@ -340,7 +340,7 @@ impl CommandContext {
         }
 
         if verify_all {
-            self.game.update(exe_details(self.game.path()));
+            self.game.update();
 
             if !self.game.manifest_verified() {
                 println!("{RED}Failed to verify integrity of HMW manifest{RESET}");

@@ -8,6 +8,8 @@ pub mod utils {
     pub mod caching;
     pub mod details;
     pub mod display;
+    pub mod limiter;
+    pub mod request;
 
     /// All state is stored in TLS, it is crucial everything accessed within this file is done through
     /// the main thread. Failing to do so may result in runtime panics.
@@ -17,17 +19,14 @@ pub mod utils {
 }
 
 use crate::{
-    commands::{
-        Message, ReplHandle, StartupCacheContents,
-        launch::{LaunchError, game_open, get_exe_version, spawn_pseudo},
-    },
+    commands::{Message, ReplHandle, StartupCacheContents},
     models::{
         cli::Command,
-        json_data::{CacheFile, HmwManifest, StartupInfo},
+        json_data::{CacheFile, StartupInfo},
     },
     utils::{
         caching::{ReadCacheErr, build_cache},
-        display::{self, ConnectionHelp, table::TABLE_PADDING},
+        display::{self, table::TABLE_PADDING},
         main_thread_state,
         subscriber::init_subscriber,
     },
@@ -37,41 +36,34 @@ use std::{
     borrow::Cow,
     fmt::Display,
     io::{self, BufRead, BufReader},
-    marker::PhantomData,
-    num::NonZero,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use clap::CommandFactory;
 use constcat::concat;
 use crossterm::cursor;
-use pgp::composed::{CleartextSignedMessage, Deserializable, SignedPublicKey};
 use regex::Regex;
 use repl_oxide::ansi_code::{RED, RESET};
-use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tracing::{error, info, warn};
-use winptyrs::PTY;
+use tracing::{error, info};
 
-pub(crate) const STATUS_OK: reqwest::StatusCode = reqwest::StatusCode::OK;
-
-pub(crate) const CONSEC_CMD_DELAY: Duration = Duration::from_millis(15);
+const CONSEC_CMD_DELAY: Duration = Duration::from_millis(15);
 
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const CRATE_VER: &str = env!("CARGO_PKG_VERSION");
 
-pub(crate) const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
+const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
 const MOD_FILES_MODULE_NAME: &str = "mod";
 
 pub const H2M_MAX_CLIENT_NUM: u8 = 18;
-pub(crate) const H2M_MAX_TEAM_SIZE: u8 = 9;
+const H2M_MAX_TEAM_SIZE: u8 = 9;
 
-pub(crate) const SAVED_HISTORY_CAP: usize = 20;
+const SAVED_HISTORY_CAP: usize = 20;
 
-pub(crate) mod files {
+mod files {
     pub(crate) const GAME_ENTRIES: [&str; 5] = [
         "h1_mp64_ship.exe",
         "hmw-mod.exe",
@@ -98,8 +90,8 @@ pub(crate) mod files {
 #[cfg(not(debug_assertions))]
 use files::*;
 
-pub const LOCAL_DATA: &str = "LOCALAPPDATA";
-pub(crate) const CACHED_DATA: &str = "cache.json";
+const LOCAL_DATA: &str = "LOCALAPPDATA";
+const CACHED_DATA: &str = "cache.json";
 
 pub mod splash_screen {
     use std::{io, thread::JoinHandle};
@@ -183,43 +175,6 @@ pub mod splash_screen {
     }
 }
 
-#[derive(Debug)]
-pub enum ResponseErr {
-    Reqwest(reqwest::Error),
-    Status {
-        msg: Cow<'static, str>,
-        status: reqwest::StatusCode,
-    },
-    Pgp(pgp::errors::Error),
-    Serialize {
-        ctx: &'static str,
-        err: serde_json::Error,
-    },
-    Other(Cow<'static, str>),
-}
-
-impl ResponseErr {
-    fn bad_status<T: Into<Cow<'static, str>>>(ctx: T, response: reqwest::Response) -> Self {
-        Self::Status {
-            msg: ctx.into(),
-            status: response.status(),
-        }
-    }
-    crate::from_static_cow_fn!(Other, other);
-}
-
-impl From<reqwest::Error> for ResponseErr {
-    fn from(err: reqwest::Error) -> Self {
-        Self::Reqwest(err)
-    }
-}
-
-impl From<pgp::errors::Error> for ResponseErr {
-    fn from(err: pgp::errors::Error) -> Self {
-        Self::Pgp(err)
-    }
-}
-
 /// Returns the working `%localappdata%` for this program
 pub fn try_init_logger() -> Option<PathBuf> {
     let local_dir = std::env::var_os(LOCAL_DATA);
@@ -251,126 +206,7 @@ pub fn try_init_logger() -> Option<PathBuf> {
     }
 }
 
-pub async fn try_init_launch(
-    exe_path: PathBuf,
-    no_launch: bool,
-) -> Option<Result<PTY, LaunchError>> {
-    if no_launch {
-        return None;
-    }
-
-    let game_open = match game_open() {
-        Ok(open_status) => open_status,
-        Err(err) => {
-            error!("{err}, could not determine if it is okay to launch");
-            return None;
-        }
-    };
-
-    if let Some(window_name) = game_open {
-        main_thread_state::alt_screen::push_message(Message::str(format!(
-            "{RED}{window_name} is already running{RESET}\n{ConnectionHelp}"
-        )));
-    }
-
-    // delay h2m doesn't block splash screen
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    Some(spawn_pseudo(&exe_path))
-}
-
-pub(crate) fn client_with_timeout(secs: u64) -> Client {
-    Client::builder().timeout(Duration::from_secs(secs)).build().expect(
-        "TLS backend cannot be initialized, or the resolver cannot load the system configuration",
-    )
-}
-
-pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
-    let (Some(hmw_manifest), Some(hmw_pgp_public_key)) = (
-        main_thread_state::Endpoints::hmw_signed_manifest(),
-        main_thread_state::Endpoints::hmw_pgp_public_key(),
-    ) else {
-        return Err(ResponseErr::other(
-            "Could not verify encryption of HMW manifest location\n\
-                Restart MatchWire to try again",
-        ));
-    };
-
-    if main_thread_state::Endpoints::skip_verification() {
-        return try_parse_signed_json_unverified::<HmwManifest>(hmw_manifest, "HMW env manifest")
-            .await;
-    }
-
-    try_parse_signed_json::<HmwManifest>(
-        hmw_manifest,
-        "HMW manifest",
-        hmw_pgp_public_key,
-        "HMW PGP public key",
-    )
-    .await
-}
-
-async fn try_parse_signed_json_unverified<T: serde::de::DeserializeOwned>(
-    cleartext_json_url: &str,
-    cleartext_ctx: &'static str,
-) -> Result<T, ResponseErr> {
-    let hmw_response = reqwest::get(cleartext_json_url).await?;
-
-    if hmw_response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status(cleartext_ctx, hmw_response));
-    }
-
-    let (msg, _headers_msg) =
-        CleartextSignedMessage::from_string(hmw_response.text().await?.trim())?;
-
-    warn!("{cleartext_ctx} verification bypassed");
-    serde_json::from_str::<T>(&msg.signed_text()).map_err(|err| ResponseErr::Serialize {
-        ctx: cleartext_ctx,
-        err,
-    })
-}
-
-pub(crate) async fn try_parse_signed_json<T: serde::de::DeserializeOwned>(
-    cleartext_json_url: &str,
-    cleartext_ctx: &'static str,
-    public_key_url: &str,
-    public_key_ctx: &'static str,
-) -> Result<T, ResponseErr> {
-    let client = client_with_timeout(6);
-
-    let (cleartext_response, public_key_response) = tokio::try_join!(
-        client.get(cleartext_json_url).send(),
-        client.get(public_key_url).send()
-    )?;
-
-    if cleartext_response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status(cleartext_ctx, cleartext_response));
-    }
-
-    if public_key_response.status() != STATUS_OK {
-        return Err(ResponseErr::bad_status(public_key_ctx, public_key_response));
-    }
-
-    let (cleartext_string, public_key_string) =
-        tokio::try_join!(cleartext_response.text(), public_key_response.text())?;
-
-    let signed_string = pgp_verify_cleartext(&cleartext_string, &public_key_string)?;
-    info!(name: LOG_ONLY, "{cleartext_ctx} PGP signature verified!");
-
-    serde_json::from_str::<T>(&signed_string).map_err(|err| ResponseErr::Serialize {
-        ctx: cleartext_ctx,
-        err,
-    })
-}
-
-pub fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> Result<String, ResponseErr> {
-    let (public_key, _headers_public) = SignedPublicKey::from_string(public_key.trim())?;
-    let (msg, _headers_msg) = CleartextSignedMessage::from_string(cleartext.trim())?;
-
-    msg.verify(&public_key)?;
-    Ok(msg.signed_text())
-}
-
-pub(crate) fn open_dir(path: &Path) -> io::Result<std::process::Child> {
+fn open_dir(path: &Path) -> io::Result<std::process::Child> {
     std::process::Command::new("explorer").arg(path).spawn()
 }
 
@@ -406,36 +242,11 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
     Ok(exe_dir.join(found_game))
 }
 
-pub(crate) fn hash_file_hex(path: &Path) -> io::Result<String> {
+fn hash_file_hex(path: &Path) -> io::Result<String> {
     let file = std::fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(&file);
     Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
-    let version = get_exe_version(game_exe_path).or_else(|| {
-        println!(
-            "{RED}Failed to get version of {}{RESET}",
-            game_exe_path
-                .file_name()
-                .expect("input was not modified")
-                .to_string_lossy()
-        );
-        None
-    });
-    let hash = hash_file_hex(game_exe_path)
-        .map_err(|err| {
-            println!(
-                "{RED}{err}, input file_name: {}{RESET}",
-                game_exe_path
-                    .file_name()
-                    .expect("input was not modified")
-                    .to_string_lossy()
-            )
-        })
-        .ok();
-    (version, hash)
 }
 
 pub fn await_user_for_end<D: Display>(err: D) {
@@ -471,11 +282,11 @@ fn check_app_dir_exists(local: &Path) -> io::Result<PathBuf> {
     Ok(curr_local_dir)
 }
 
-pub(crate) fn make_slice_ascii_lowercase(slice: &mut [String]) {
+fn make_slice_ascii_lowercase(slice: &mut [String]) {
     slice.iter_mut().for_each(|s| s.make_ascii_lowercase());
 }
 
-pub(crate) fn elide(str: &str, at: usize) -> Option<String> {
+fn elide(str: &str, at: usize) -> Option<String> {
     let mut chars = str.char_indices();
     let i = chars
         .nth(at)
@@ -485,7 +296,7 @@ pub(crate) fn elide(str: &str, at: usize) -> Option<String> {
     Some(elided)
 }
 
-pub(crate) fn parse_hostname(name: &str) -> String {
+fn parse_hostname(name: &str) -> String {
     let trimmed_name = name.trim_start();
     if trimmed_name.is_empty() {
         return String::new();
@@ -546,7 +357,7 @@ pub fn print_help() {
     println!();
 }
 
-pub(crate) async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, message: Message) {
+async fn send_msg_over(sender: &tokio::sync::mpsc::Sender<Message>, message: Message) {
     if main_thread_state::alt_screen::is_visible() {
         main_thread_state::alt_screen::push_message(message);
     } else {
@@ -594,7 +405,7 @@ pub async fn startup_cache_task(
 /// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
 ///
 /// [`CmdErr::Critical`]: crate::commands::handler::CmdErr::Critical
-pub(crate) fn try_fit_table(
+fn try_fit_table(
     repl: &mut ReplHandle,
     (cols, rows): (u16, u16),
     desired: usize,
@@ -606,113 +417,4 @@ pub(crate) fn try_fit_table(
     }
 
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-pub struct RateLimiter<T> {
-    ct: usize,
-    start: Option<Instant>,
-    limit: usize,
-    interval: Duration,
-    _marker: PhantomData<T>,
-}
-
-pub trait RateLimitConfig {
-    const LIMIT: NonZero<usize>;
-    const INTERVAL: NonZeroDuration;
-    const DISP_NAME: &str;
-}
-
-#[derive(Clone, Copy)]
-pub struct NonZeroDuration(Duration);
-
-impl NonZeroDuration {
-    pub const fn new(duration: Duration) -> Option<Self> {
-        if duration.is_zero() { None } else { Some(Self(duration)) }
-    }
-
-    pub const fn get(&self) -> Duration {
-        self.0
-    }
-}
-
-/// `$ident` is the struct and display name of the generated `RateLimitConfig`\
-/// `($ident:ident, $limit:usize, $interval:Duration)`
-///
-/// ```compile_fail
-/// # use match_wire::impl_rate_limit_config;
-/// # use std::time::Duration;
-/// // Limit must be non-zero
-/// impl_rate_limit_config!(LimitZero, 0, Duration::from_secs(60)); // doesn't compile!
-/// ```
-///
-/// ```compile_fail
-/// # use match_wire::impl_rate_limit_config;
-/// # use std::time::Duration;
-/// // Interval must be non-zero
-/// impl_rate_limit_config!(IntervalZero, 60, Duration::from_secs(0)); // doesn't compile!
-/// ```
-#[macro_export]
-macro_rules! impl_rate_limit_config {
-    ($ident:ident, $limit:expr, $interval:expr) => {
-        #[derive(Clone, Copy)]
-        pub(crate) struct $ident;
-
-        impl $crate::RateLimitConfig for $ident {
-            const LIMIT: std::num::NonZero<usize> = std::num::NonZero::new($limit).unwrap();
-            const INTERVAL: $crate::NonZeroDuration =
-                $crate::NonZeroDuration::new($interval).unwrap();
-            const DISP_NAME: &str = stringify!($ident);
-        }
-
-        const _: () = assert!(!$interval.is_zero(), "Interval must be non-zero");
-        const _: () = assert!($limit != 0, "Limit must be non-zero");
-    };
-}
-
-impl<T: RateLimitConfig> RateLimiter<T> {
-    #[expect(clippy::new_without_default, reason = "`Self` will only be const")]
-    pub const fn new() -> Self {
-        Self {
-            ct: 0,
-            start: None,
-            limit: T::LIMIT.get(),
-            interval: T::INTERVAL.get(),
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    fn elapsed(&self) -> Option<Duration> {
-        self.start.map(|start| start.elapsed())
-    }
-
-    pub fn remainder(&self) -> Option<Duration> {
-        self.start
-            .and_then(|start| self.interval.checked_sub(start.elapsed()))
-    }
-
-    /// This method is used to advance the internal state and return if it is ok to send an API request. Do
-    /// **NOT** use to find if the limit has been reached when not also attempting to send a request.
-    /// Limited status can be found with [`Self::limited`].
-    pub fn within_limit(&mut self) -> bool {
-        if self.ct == 0 {
-            self.start = Some(Instant::now())
-        } else if self.ct >= self.limit {
-            return if self.elapsed().unwrap() > self.interval {
-                self.start = Some(Instant::now());
-                self.ct = 1;
-                true
-            } else {
-                false
-            };
-        }
-
-        self.ct += 1;
-        true
-    }
-
-    pub fn limited(&self) -> bool {
-        !(self.ct < self.limit || self.elapsed().expect("limit can not be 0") > self.interval)
-    }
 }
