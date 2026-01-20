@@ -423,23 +423,21 @@ pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters)
             continue;
         }
 
-        let mut normalized_hostname = None;
-        if let Some(include_terms) = args.includes.as_deref() {
-            normalized_hostname = Some(parse_hostname(&info.host_name));
-            let hostname = normalized_hostname.as_deref().unwrap();
-            if !include_terms.iter().any(|term| hostname.contains(term)) {
-                servers.swap_remove(i);
-                continue;
-            }
+        if args.includes.is_none() && args.excludes.is_none() {
+            continue;
         }
-        if let Some(exclude_terms) = args.excludes.as_deref() {
-            if normalized_hostname.is_none() {
-                normalized_hostname = Some(parse_hostname(&info.host_name));
-            }
-            let hostname = normalized_hostname.as_deref().unwrap();
-            if exclude_terms.iter().any(|term| hostname.contains(term)) {
-                servers.swap_remove(i);
-            }
+
+        let hostname = parse_hostname(&info.host_name);
+        if let Some(include_terms) = args.includes.as_deref()
+            && !include_terms.iter().any(|term| hostname.contains(term))
+        {
+            servers.swap_remove(i);
+            continue;
+        }
+        if let Some(exclude_terms) = args.excludes.as_deref()
+            && exclude_terms.iter().any(|term| hostname.contains(term))
+        {
+            servers.swap_remove(i);
         }
     }
 }
