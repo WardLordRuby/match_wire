@@ -1,8 +1,8 @@
 use crate::{
     CRATE_NAME, LOG_ONLY, client_with_timeout,
     commands::{
+        CommandContext, Message,
         filter::{Addressable, GetInfoMetaData, Request, Sourced, try_get_info},
-        handler::{CommandContext, Message},
     },
     parse_hostname, send_msg_over, strip_unwanted_ansi_sequences,
     utils::{
@@ -272,7 +272,7 @@ async fn add_to_history(msg_sender: &Sender<Message>, line: &str, kind: Connecti
 
 impl CommandContext {
     pub fn init_listener(&self) -> Result<(), String> {
-        let game_name = self.game_name();
+        let game_name = self.game_name_owned();
 
         let PseudoConStatus::Attached =
             main_thread_state::pty_handle::check_connection().map_err(|err| err.to_string())?

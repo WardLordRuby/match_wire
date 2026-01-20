@@ -6,10 +6,7 @@ pub use strategies::{FilterPreProcess, GameStats};
 
 use crate::{
     LOG_ONLY, RateLimiter, ResponseErr, STATUS_OK, client_with_timeout,
-    commands::{
-        handler::{CommandContext, CommandErr, ReplHandle},
-        settings::Settings,
-    },
+    commands::{CommandContext, CommandErr, ReplHandle, settings::Settings},
     impl_rate_limit_config,
     models::{
         cli::{Filters, Region, Source},
@@ -83,7 +80,7 @@ fn serialize_json_ips(
 }
 
 #[instrument(name = "filter", level = "trace", skip_all)]
-pub(crate) async fn build_favorites(
+pub(super) async fn build_favorites(
     ctx: &CommandContext,
     repl: &mut ReplHandle,
     args: Option<Filters>,

@@ -1,10 +1,4 @@
-pub mod commands {
-    pub mod filter;
-    pub mod handler;
-    pub mod launch;
-    pub mod reconnect;
-    pub mod settings;
-}
+pub mod commands;
 pub mod models {
     pub mod cli;
     pub mod command_scheme;
@@ -12,6 +6,7 @@ pub mod models {
 }
 pub mod utils {
     pub mod caching;
+    pub mod details;
     pub mod display;
 
     /// All state is stored in TLS, it is crucial everything accessed within this file is done through
@@ -23,7 +18,7 @@ pub mod utils {
 
 use crate::{
     commands::{
-        handler::{Message, ReplHandle, StartupCacheContents},
+        Message, ReplHandle, StartupCacheContents,
         launch::{LaunchError, game_open, get_exe_version, spawn_pseudo},
     },
     models::{

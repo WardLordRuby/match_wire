@@ -1,13 +1,13 @@
 use crate::{
     CACHED_DATA, CRATE_VER, LOG_ONLY, SAVED_HISTORY_CAP, client_with_timeout,
     commands::{
+        CommandContext, HistoryTag, ReplHandle,
         filter::{
             Addressable, DEFAULT_SOURCES, GetInfoMetaData, Server, Sourced,
             ops::{get_sourced_servers, process_region_requests, spawn_info_requests},
             strategies::FastStrategy,
             try_batched_location_lookup,
         },
-        handler::{CommandContext, HistoryTag, ReplHandle},
         reconnect::HISTORY_MAX,
     },
     models::{

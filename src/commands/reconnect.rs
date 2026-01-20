@@ -1,11 +1,8 @@
 use crate::{
     LOG_ONLY, client_with_timeout,
     commands::{
+        CommandContext, CommandErr, CommandReturn, CommandSender, HistoryTag, Message, ReplHandle,
         filter::{Request, Sourced, try_get_info},
-        handler::{
-            CommandContext, CommandErr, CommandReturn, CommandSender, HistoryTag, Message,
-            ReplHandle,
-        },
         launch::HostName,
     },
     models::cli::HistoryArgs,

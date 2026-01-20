@@ -1,14 +1,12 @@
 use match_wire::{
     CRATE_NAME, LOG_ONLY, await_user_for_end,
-    commands::{
-        handler::{AppDetails, CommandContext, GameDetails, Message, ReplHandle, StartupData},
-        settings::Settings,
-    },
+    commands::{CommandContext, Message, ReplHandle, StartupData, settings::Settings},
     get_latest_hmw_manifest,
     models::json_data::Version,
     print_help, splash_screen, startup_cache_task, try_init_launch, try_init_logger,
     utils::{
         caching::read_cache,
+        details::{AppDetails, GameDetails},
         display::{self, DisplayPanic},
         main_thread_state,
     },
@@ -137,7 +135,7 @@ fn app_startup(
 
         Ok(StartupData {
             app_data: AppDetails::from(version_data, exe_path),
-            launch_task: tokio::spawn(try_init_launch(game_data.path.clone(), no_launch)),
+            launch_task: tokio::spawn(try_init_launch(game_data.path().to_owned(), no_launch)),
             cache_task: tokio::spawn(startup_cache_task(cache_res)),
             hmw_manifest_task: tokio::spawn(get_latest_hmw_manifest()),
             game_data,

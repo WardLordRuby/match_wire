@@ -11,8 +11,8 @@ use super::{
 use crate::{
     LOG_ONLY, StartupInfo,
     commands::{
+        Message, ReplHandle,
         filter::{FilterPreProcess, Server},
-        handler::{Message, ReplHandle},
         launch::{HostName, WinApiErr},
     },
     models::json_data::{CacheFile, CondManifest, Version},
@@ -557,7 +557,7 @@ pub(crate) mod pty_handle {
     use super::{Cow, LOG_ONLY, OsString, PTY, PTY_HANDLE, WinApiErr, display, error, info};
     use crate::{
         commands::{
-            handler::CommandSender,
+            CommandSender,
             launch::{game_open, terminate_process_by_id},
         },
         utils::display::indicator::Spinner,

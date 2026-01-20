@@ -5,12 +5,15 @@ use crate::{
     CRATE_NAME, CRATE_VER, LOG_ONLY, RateLimitConfig, RateLimiter, ResponseErr,
     commands::{
         filter::{Sourced, UnresponsiveCounter},
-        handler::{AppDetails, GameDetails, ModFileStatus},
+        handler::status::ModFileStatus,
         launch::{LaunchError, WinApiErr, game_open},
     },
     main_thread_state,
     models::cli::Source,
-    utils::caching::{ContCode, ReadCacheErr},
+    utils::{
+        caching::{ContCode, ReadCacheErr},
+        details::{AppDetails, GameDetails},
+    },
 };
 
 use std::{borrow::Cow, fmt::Display};

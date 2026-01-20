@@ -3,10 +3,7 @@ use super::{
     Request, Server, Sourced, ops::*, try_batched_location_lookup, try_get_info,
 };
 use crate::{
-    commands::{
-        handler::{CommandErr, ReplHandle},
-        settings::Settings,
-    },
+    commands::{CommandErr, ReplHandle, settings::Settings},
     display::{indicator::Spinner, table::DisplaySourceStatsInner},
     elide,
     models::{
