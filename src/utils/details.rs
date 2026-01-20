@@ -1,5 +1,5 @@
 use crate::{
-    commands::{handler::status::ModFileStatus, launch::get_exe_version, settings::Settings},
+    commands::{handler::status::ModFileStatus, launch::ffi::get_exe_version, settings::Settings},
     files::*,
     hash_file_hex,
     models::json_data::{CacheFile, Version},

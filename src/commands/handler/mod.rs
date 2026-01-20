@@ -8,7 +8,10 @@ use crate::{
         CommandContext, CommandErr, CommandHandle, CommandReturn, CommandSender, HistoryTag,
         HookTag, Message, ReplHandle,
         filter::build_favorites,
-        launch::{WinApiErr, game_open, hide_pseudo_console, spawn_pseudo},
+        launch::{
+            ffi::{WinApiErr, game_open, hide_pseudo_console},
+            spawn_pseudo,
+        },
         tag_last_cmd,
     },
     models::cli::{CacheCmd, Command, Filters},

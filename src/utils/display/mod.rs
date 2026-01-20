@@ -6,7 +6,10 @@ use crate::{
     commands::{
         filter::{Sourced, UnresponsiveCounter},
         handler::status::ModFileStatus,
-        launch::{LaunchError, WinApiErr, game_open},
+        launch::{
+            LaunchError,
+            ffi::{WinApiErr, game_open},
+        },
     },
     main_thread_state,
     models::cli::Source,

@@ -3,7 +3,7 @@ use crate::{
     commands::{
         CommandContext, CommandErr, CommandReturn, CommandSender, HistoryTag, Message, ReplHandle,
         filter::{Request, Sourced, try_get_info},
-        launch::HostName,
+        launch::connection::HostName,
     },
     models::cli::HistoryArgs,
     parse_hostname, send_msg_over, try_fit_table,

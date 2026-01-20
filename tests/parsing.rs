@@ -2,7 +2,7 @@
 mod test {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use match_wire::{commands::launch::HostName, strip_unwanted_ansi_sequences};
+    use match_wire::{commands::launch::connection::HostName, strip_unwanted_ansi_sequences};
     use repl_oxide::strip_ansi;
 
     #[test]

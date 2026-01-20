@@ -14,7 +14,7 @@ use crate::{
     commands::{
         Message, ReplHandle,
         filter::{FilterPreProcess, Server},
-        launch::{HostName, WinApiErr},
+        launch::{connection::HostName, ffi::WinApiErr},
     },
     models::json_data::{CacheFile, CondManifest, Version},
     try_fit_table,
@@ -51,7 +51,7 @@ thread_local! {
     static FORWARD_LOGS: Cell<bool> = const { Cell::new(false) };
     static ENDPOINTS: OnceCell<Endpoints> = const { OnceCell::new() };
     static PTY_HANDLE: RefCell<Option<PTY>> = panic!("Attempted to access PTY prior to set");
-    static SELF_HWND: Option<HWND> = crate::commands::launch::get_console_hwnd()
+    static SELF_HWND: Option<HWND> = crate::commands::launch::ffi::get_console_hwnd()
         .map_err(display::error)
         .unwrap_or_default();
     static LAST_SERVER_STATS: RefCell<LastServerStats> = const { RefCell::new(LastServerStats::default()) };
@@ -559,7 +559,7 @@ pub(crate) mod pty_handle {
     use crate::{
         commands::{
             CommandSender,
-            launch::{game_open, terminate_process_by_id},
+            launch::ffi::{game_open, terminate_process_by_id},
         },
         utils::display::indicator::Spinner,
     };

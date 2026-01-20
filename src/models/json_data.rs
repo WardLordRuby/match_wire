@@ -1,5 +1,5 @@
 use crate::{
-    commands::launch::HostName,
+    commands::launch::connection::HostName,
     utils::caching::{AddrMap, ContCode, ContCodeMap, DnsResolutionMap, HostNameMap},
 };
 
