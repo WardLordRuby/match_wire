@@ -28,6 +28,7 @@ use std::{
     borrow::Cow,
     io::{self, Stdout},
     path::Path,
+    time::Duration,
 };
 
 use constcat::concat;
@@ -42,7 +43,6 @@ use repl_oxide::{
     executor::Executor,
     input_hook::{HookControl, HookID, HookStates, HookedEvent, InputHook},
 };
-use tokio::{task::JoinHandle, time::Duration};
 use tracing::{error, info};
 
 #[macro_export]
@@ -130,25 +130,18 @@ impl Executor<Stdout> for CommandContext {
 }
 
 impl CommandContext {
-    pub(super) fn try_abort_queued_con(&mut self) -> bool {
-        let Some(prev) = self
-            .queued_con_task
-            .take()
-            .filter(|task| !task.is_finished())
-        else {
-            return false;
-        };
+    pub fn graceful_shutdown(&mut self, line_handle: &ReplHandle) {
+        self.save_cache_if_needed(line_handle)
+            .unwrap_or_else(display::log_error);
 
-        prev.abort();
-        println!("{YELLOW}Previously queued connection attempt aborted{RESET}");
+        main_thread_state::pty_handle::try_drop_pty(self.game_name());
 
-        true
-    }
-    pub(super) fn set_queued_con(&mut self, task: JoinHandle<()>) {
-        assert!(
-            self.queued_con_task.replace(task).is_none(),
-            "Task must be aborted prior to a new queued connection attempt is spawned"
-        )
+        if let Some(hwnd) = main_thread_state::app_hwnd::get().filter(|_| !self.can_close_console) {
+            // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
+            unsafe { self.toggle_close_state(hwnd) }.unwrap_or_else(display::log_error);
+        }
+
+        info!(name: LOG_ONLY, "graceful app shutdown");
     }
 
     fn try_open_explorer(dir: &Path) -> CommandReturn {
@@ -178,26 +171,12 @@ impl CommandContext {
         Self::try_open_explorer(dir)
     }
 
-    pub fn graceful_shutdown(&mut self, line_handle: &ReplHandle) {
-        self.save_cache_if_needed(line_handle)
-            .unwrap_or_else(display::log_error);
-
-        main_thread_state::pty_handle::try_drop_pty(self.game_name());
-
-        if let Some(hwnd) = main_thread_state::app_hwnd::get().filter(|_| !self.can_close_console) {
-            // Safety: `hwnd` only ever refers to the current process, making it so it _must_ always be a valid pointer
-            unsafe { self.toggle_close_state(hwnd) }.unwrap_or_else(display::log_error);
-        }
-
-        info!(name: LOG_ONLY, "graceful app shutdown");
-    }
-
     fn try_send_cmd_from_hook(&mut self, command: String) -> Result<(), Cow<'static, str>> {
         main_thread_state::pty_handle::try_if_alive(|game_console| game_console.send_cmd(command))
             .map_err(Into::into)
     }
 
-    pub(super) fn launch_handler(&mut self) -> CommandReturn {
+    fn launch_handler(&mut self) -> CommandReturn {
         let game_open = match game_open() {
             Ok(open_status) => open_status,
             Err(err) => {

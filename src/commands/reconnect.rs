@@ -21,6 +21,7 @@ use crate::{
 use std::{borrow::Cow, io, net::SocketAddr};
 
 use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
+use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 pub const HISTORY_MAX: usize = 6;
@@ -140,6 +141,29 @@ impl CommandContext {
         // attempts when it is alive.
 
         HISTORY_OUTPUT
+    }
+
+    fn try_abort_queued_con(&mut self) -> bool {
+        let Some(prev) = self
+            .queued_con_task
+            .take()
+            .filter(|task| !task.is_finished())
+        else {
+            return false;
+        };
+
+        prev.abort();
+        println!("{YELLOW}Previously queued connection attempt aborted{RESET}");
+
+        true
+    }
+
+    /// [`Self::try_abort_queued_con`] must be called prior to calling this method
+    fn set_queued_con(&mut self, task: JoinHandle<()>) {
+        assert!(
+            self.queued_con_task.replace(task).is_none(),
+            "Task must be aborted prior to a new queued connection attempt is spawned"
+        )
     }
 
     fn init_queued_connection(&mut self, addr: SocketAddr) {
