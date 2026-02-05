@@ -119,7 +119,12 @@ const COMMAND_INNER: &[InnerScheme] = &[
         Some(VERSION_INNER),
     ),
     // last
-    InnerScheme::end(Parent::Root),
+    InnerScheme::new(
+        RecData::new(RecKind::argument_with_no_required_inputs())
+            .with_parent(Parent::Root)
+            .with_recommendations(LAST_RECS),
+        Some(LAST_INNER),
+    ),
     // settings
     InnerScheme::new(
         RecData::new(RecKind::argument_with_no_required_inputs())
@@ -238,6 +243,13 @@ const VERSION_ALIAS: &[(usize, usize)] = &[(0, 1)];
 const VERSION_INNER: &[InnerScheme] = &[
     // verify-all
     InnerScheme::end(Parent::Entry(COMMAND_RECS[8])),
+];
+
+const LAST_RECS: &[&str] = &["refresh"];
+
+const LAST_INNER: &[InnerScheme] = &[
+    // refresh
+    InnerScheme::end(Parent::Entry(COMMAND_RECS[9])),
 ];
 
 const SETTINGS_RECS: &[&str] = &["use-default"];

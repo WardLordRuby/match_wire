@@ -99,9 +99,7 @@ impl Executor<Stdout> for CommandContext {
 
         let command_res = match command {
             Command::Filter { args } => self.new_favorites_with(line_handle, args).await,
-            Command::Last => main_thread_state::LastServerStats::display(line_handle)
-                .map(|_| CommandReturn::processed())
-                .unwrap_or_else(CommandReturn::critical_err),
+            Command::Last { refresh } => self.last(line_handle, refresh).await,
             Command::Reconnect { args } => self.reconnect(line_handle, args),
             Command::Launch => self.launch_handler(),
             Command::Cache { option } => self.modify_cache(option).await,
@@ -117,7 +115,7 @@ impl Executor<Stdout> for CommandContext {
             return Err(err);
         }
 
-        if HistoryTag::is_valid(command_res.tag.map(Into::into)) {
+        if HistoryTag::is_valid(command_res.tag) {
             main_thread_state::UpdateCache::set(true);
         }
 
@@ -314,6 +312,41 @@ impl CommandContext {
             }
             Err(err) => CommandReturn::err(err),
         }
+    }
+
+    async fn last(&self, line_handle: &mut ReplHandle, refresh: bool) -> CommandReturn {
+        if !refresh {
+            return main_thread_state::LastServerStats::display(line_handle)
+                .map(|_| CommandReturn::processed())
+                .unwrap_or_else(CommandReturn::critical_err);
+        }
+
+        const EXPECT_MSG: &str = "map condition guarantees validity";
+        const FILTER_CMD: &str = "filter ";
+
+        let Some(last_filter_cmd) = line_handle
+            .history_entries()
+            .find(|&entry| {
+                HistoryTag::is_valid(entry.tag())
+                    && entry
+                        .value()
+                        .get(..FILTER_CMD.len())
+                        .is_some_and(|start| start.eq_ignore_ascii_case(FILTER_CMD))
+            })
+            .map(|entry| try_parse_from(entry.value().split_whitespace()).expect(EXPECT_MSG))
+        else {
+            println!("{YELLOW}Could not find any previously executed valid filter commands{RESET}");
+            return CommandReturn::non_critical_err();
+        };
+
+        let Command::Filter { args } = last_filter_cmd else {
+            unreachable!("{EXPECT_MSG}");
+        };
+
+        let mut filters = args.unwrap_or_default();
+        filters.stats = true;
+
+        self.new_favorites_with(line_handle, Some(filters)).await
     }
 
     async fn print_version(&mut self, verify_all: bool) -> CommandReturn {

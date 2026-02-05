@@ -87,7 +87,10 @@ pub(crate) enum HistoryTag {
 unitOnlyDiscriminant!(HistoryTag);
 
 impl HistoryTag {
-    pub(crate) fn is_valid(tag: Option<u32>) -> bool {
+    // Command: 'last --refresh' depends on the default behavior of valid entries being none.
+    // If this changes when previous history are loaded on startup, all entries will have to be
+    // marked as valid.
+    pub(crate) fn is_valid<T: Into<u32>>(tag: Option<T>) -> bool {
         tag.is_none()
     }
 }

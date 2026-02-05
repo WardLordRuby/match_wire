@@ -24,7 +24,11 @@ pub(crate) enum Command {
 
     /// Displays the results from the last filter command that included '--stats'
     #[command(alias = "Last")]
-    Last,
+    Last {
+        /// Refresh and display stats about the last executed `Filter` command
+        #[arg(short, long)]
+        refresh: bool,
+    },
 
     /// Reconnect or queue into a recently joined server
     #[command(alias = "Reconnect")]
