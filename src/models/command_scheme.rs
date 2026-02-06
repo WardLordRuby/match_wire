@@ -1,5 +1,5 @@
 use super::cli::{REGION_LEN, SOURCE_LEN};
-use crate::{H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE, main_thread_state};
+use crate::{MAX_H2M_CLIENT_NUM, MAX_H2M_TEAM_SIZE, main_thread_state};
 
 use repl_oxide::completion::{CommandScheme, InnerScheme, Parent, RecData, RecKind};
 
@@ -170,11 +170,11 @@ const FILTER_INNER: &[InnerScheme] = &[
     // player-min
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
-        .with_parsing_rule(|value| u8_bounds(value, |v| v <= H2M_MAX_CLIENT_NUM)),
+        .with_parsing_rule(|value| u8_bounds(value, |v| v <= MAX_H2M_CLIENT_NUM)),
     // team-size-max
     InnerScheme::user_defined(1)
         .with_parent(Parent::Entry(COMMAND_RECS[0]))
-        .with_parsing_rule(|value| u8_bounds(value, |v| v > 0 && v <= H2M_MAX_TEAM_SIZE)),
+        .with_parsing_rule(|value| u8_bounds(value, |v| v > 0 && v <= MAX_H2M_TEAM_SIZE)),
     // region
     InnerScheme::new(
         RecData::new(RecKind::value_with_num_args(REGION_LEN))

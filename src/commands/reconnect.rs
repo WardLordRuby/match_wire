@@ -24,7 +24,7 @@ use repl_oxide::ansi_code::{GREEN, RED, RESET, YELLOW};
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
-pub const HISTORY_MAX: usize = 6;
+pub(crate) const MAX_CONNECTION_HISTORY: usize = 6;
 
 /// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
 ///
@@ -37,7 +37,7 @@ fn display_history(
     let ips = history
         .iter()
         .rev()
-        .take(HISTORY_MAX)
+        .take(MAX_CONNECTION_HISTORY)
         .map(|entry| {
             host_to_connect
                 .get(&entry.raw)
@@ -48,7 +48,7 @@ fn display_history(
 
     let (set, max_host_len, max_connect_len) =
         history.iter().rev().zip(ips.iter().map(Cow::as_ref)).fold(
-            (Vec::with_capacity(HISTORY_MAX), 0, 0),
+            (Vec::with_capacity(MAX_CONNECTION_HISTORY), 0, 0),
             |(mut out, max_host_len, max_ip_len), (host, connect_ip)| {
                 let ip_len = connect_ip.chars().count();
                 let host_len = host.parsed.chars().count();

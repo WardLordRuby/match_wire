@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test {
     use match_wire::{
-        H2M_MAX_CLIENT_NUM,
+        MAX_H2M_CLIENT_NUM,
         commands::filter::{FilterPreProcess, GameStats, Server, Sourced},
         models::{cli::Source, json_data::GetInfo},
         utils::display::{
@@ -88,7 +88,7 @@ mod test {
         let mut servers = Vec::with_capacity(60);
 
         for _ in 0..60 {
-            let max_clients = rng.random_range(2..=H2M_MAX_CLIENT_NUM);
+            let max_clients = rng.random_range(2..=MAX_H2M_CLIENT_NUM);
             let bots = if rng.random_bool(0.5) {
                 max_clients - rng.random_range(1..=max_clients)
             } else {

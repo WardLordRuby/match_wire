@@ -37,7 +37,6 @@ use std::{
     fmt::Display,
     io::{self, BufRead, BufReader},
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use clap::CommandFactory;
@@ -48,20 +47,14 @@ use repl_oxide::ansi_code::{RED, RESET};
 use sha2::{Digest, Sha256};
 use tracing::{error, info};
 
-const CONSEC_CMD_DELAY: Duration = Duration::from_millis(15);
-
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const CRATE_VER: &str = env!("CARGO_PKG_VERSION");
 
 const MAIN_PROMPT: &str = concat!(CRATE_NAME, ".exe");
 pub const LOG_ONLY: &str = "log_only";
 
-const MOD_FILES_MODULE_NAME: &str = "mod";
-
-pub const H2M_MAX_CLIENT_NUM: u8 = 18;
-const H2M_MAX_TEAM_SIZE: u8 = 9;
-
-const SAVED_HISTORY_CAP: usize = 20;
+pub const MAX_H2M_CLIENT_NUM: u8 = 18;
+const MAX_H2M_TEAM_SIZE: u8 = 9;
 
 mod files {
     pub(crate) const GAME_ENTRIES: [&str; 5] = [

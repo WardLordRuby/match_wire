@@ -1,5 +1,5 @@
 use crate::{
-    LOG_ONLY, MOD_FILES_MODULE_NAME,
+    LOG_ONLY,
     files::FNAME_HMW,
     hash_file_hex,
     models::json_data::{CondManifest, HmwManifest},
@@ -14,6 +14,9 @@ use std::{io::ErrorKind, num::NonZero};
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tracing::{error, info};
+
+const MOD_FILES_MODULE_NAME: &str = "mod";
+const NULL_256_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 #[derive(Debug)]
 #[repr(u8)]
@@ -65,9 +68,6 @@ impl GameDetails {
         &mut self,
         mut man: HmwManifest,
     ) -> Option<String> {
-        const NULL_256_HASH: &str =
-            "0000000000000000000000000000000000000000000000000000000000000000";
-
         fn try_get_exe_hash(cache: &Cache) -> Option<String> {
             cache.hmw_manifest.files_with_hashes.get(FNAME_HMW).cloned()
         }
@@ -172,9 +172,9 @@ impl GameDetails {
                 .filter_map(|(file, expected)| {
                     let hash = hash_file_hex(&exe_dir.join(file)).unwrap_or_else(|err| {
                         if err.kind() == ErrorKind::NotFound {
-                            error!("file: {file}, not found",);
+                            error!("file: {file}, not found");
                         } else {
-                            error!("file: {file}, {err}",);
+                            error!("file: {file}, {err}");
                         }
                         String::new()
                     });

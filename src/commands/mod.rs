@@ -27,6 +27,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use repl_oxide::{
@@ -44,6 +45,8 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 use winptyrs::PTY;
+
+const CONSEC_CMD_DELAY: Duration = Duration::from_millis(15);
 
 #[macro_export]
 macro_rules! from_static_cow_fn {
@@ -472,7 +475,7 @@ impl CommandSender for PTY {
     /// Before calling be sure to guard against invalid handles by checking pty connection is alive
     fn send_connect(&self, ip_port: SocketAddr) -> Result<(), Cow<'static, str>> {
         self.send_cmd("disconnect")?;
-        std::thread::sleep(crate::CONSEC_CMD_DELAY);
+        std::thread::sleep(CONSEC_CMD_DELAY);
         self.send_cmd(format!("connect {ip_port}"))
     }
 }

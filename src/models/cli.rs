@@ -1,6 +1,6 @@
 use crate::{
-    H2M_MAX_CLIENT_NUM, H2M_MAX_TEAM_SIZE,
-    commands::{reconnect::HISTORY_MAX, settings::RETRIES_MAX},
+    MAX_H2M_CLIENT_NUM, MAX_H2M_TEAM_SIZE,
+    commands::{reconnect::MAX_CONNECTION_HISTORY, settings::RETRIES_MAX},
 };
 
 use clap::{Args, Parser, ValueEnum, value_parser};
@@ -100,7 +100,7 @@ pub(crate) struct HistoryArgs {
     pub(crate) queue: bool,
 
     /// Connect to numbered entry in history
-    #[arg(short, long, value_name = "HISTORY_ENTRY", value_parser = value_parser!(u8).range(1..=HISTORY_MAX as i64))]
+    #[arg(short, long, value_name = "HISTORY_ENTRY", value_parser = value_parser!(u8).range(1..=MAX_CONNECTION_HISTORY as i64))]
     pub(crate) connect: Option<u8>,
 }
 
@@ -113,11 +113,11 @@ pub(crate) struct Filters {
     pub(crate) limit: Option<usize>,
 
     /// Specify a minimum number of players a server must have [Default: 0]
-    #[arg(short, long, value_name = "MIN_PLAYERS", value_parser = value_parser!(u8).range(0..=H2M_MAX_CLIENT_NUM as i64))]
+    #[arg(short, long, value_name = "MIN_PLAYERS", value_parser = value_parser!(u8).range(0..=MAX_H2M_CLIENT_NUM as i64))]
     pub(crate) player_min: Option<u8>,
 
     /// Specify a maximum team size [Default: 9]
-    #[arg(short, long, value_name = "MAX_TEAM_SIZE", value_parser = value_parser!(u8).range(1..=H2M_MAX_TEAM_SIZE as i64))]
+    #[arg(short, long, value_name = "MAX_TEAM_SIZE", value_parser = value_parser!(u8).range(1..=MAX_H2M_TEAM_SIZE as i64))]
     pub(crate) team_size_max: Option<u8>,
 
     /// Server contains bot players

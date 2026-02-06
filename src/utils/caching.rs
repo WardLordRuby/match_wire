@@ -1,5 +1,5 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY, SAVED_HISTORY_CAP,
+    CACHED_DATA, CRATE_VER, LOG_ONLY,
     commands::{
         CommandContext, HistoryTag, ReplHandle,
         filter::{
@@ -8,7 +8,7 @@ use crate::{
             strategies::FastStrategy,
             try_batched_location_lookup,
         },
-        reconnect::HISTORY_MAX,
+        reconnect::MAX_CONNECTION_HISTORY,
     },
     models::{
         cli::Source,
@@ -33,6 +33,8 @@ use std::{
 use constcat::concat;
 use tokio::task::JoinSet;
 use tracing::{error, info, instrument, trace};
+
+const MAX_COMMAND_HISTORY: usize = 20;
 
 pub(crate) type ContCode = [u8; 2];
 
@@ -280,7 +282,7 @@ pub fn write_cache(context: &CommandContext, line_handle: &ReplHandle) -> io::Re
     let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
 
     let cmd_history =
-        line_handle.export_filtered_history(HistoryTag::is_valid, Some(SAVED_HISTORY_CAP));
+        line_handle.export_filtered_history(HistoryTag::is_valid, Some(MAX_COMMAND_HISTORY));
 
     main_thread_state::Cache::with_borrow(|cache| {
         serde_json::to_writer_pretty(
@@ -288,8 +290,8 @@ pub fn write_cache(context: &CommandContext, line_handle: &ReplHandle) -> io::Re
             &serde_json::json!({
                 "version": CRATE_VER,
                 "created": cache.created,
-                "connection_history": if cache.connection_history.len() > HISTORY_MAX {
-                    &cache.connection_history[cache.connection_history.len() - HISTORY_MAX..]
+                "connection_history": if cache.connection_history.len() > MAX_CONNECTION_HISTORY {
+                    &cache.connection_history[cache.connection_history.len() - MAX_CONNECTION_HISTORY..]
                 } else {
                     &cache.connection_history
                 },
