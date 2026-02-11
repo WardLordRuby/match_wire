@@ -7,7 +7,10 @@ use super::{
             TABLE_PADDING,
         },
     },
-    request::crypto::try_parse_signed_json,
+    request::{
+        ResponseErr,
+        crypto::{ClearTextJsonUrl, try_parse_signed_json},
+    },
 };
 use crate::{
     LOG_ONLY, StartupInfo,
@@ -35,11 +38,6 @@ use repl_oxide::ansi_code::{RESET, YELLOW};
 use tracing::{error, info};
 use windows_sys::Win32::Foundation::HWND;
 use winptyrs::PTY;
-
-const MATCH_WIRE_PUBLIC_PGP_KEY: &str =
-    "https://gist.githubusercontent.com/WardLordRuby/ca630bae78429d56a9484a099ddbefde/raw";
-const SIGNED_STARTUP_INFO: &str =
-    "https://gist.githubusercontent.com/WardLordRuby/795d840e208df2de08735c152889b2e4/raw";
 
 const ENV_FILE: &str = ".env";
 const ENV_OVERRIDE_PATH_KEY: &str = "HMW_ENV";
@@ -299,6 +297,17 @@ impl Endpoints {
         }
     }
 
+    #[cfg(test)]
+    #[expect(non_snake_case, reason = "used in tests only")]
+    pub(super) fn TESTING_get_hmw_manifest_signed(&self) -> Option<&str> {
+        self.hmw_manifest_signed.as_deref()
+    }
+    #[cfg(test)]
+    #[expect(non_snake_case, reason = "used in tests only")]
+    pub(super) fn TESTING_get_hmw_pgp_public_key(&self) -> Option<&str> {
+        self.hmw_pgp_public_key.as_deref()
+    }
+
     #[expect(clippy::result_large_err)]
     fn set(endpoints: Self) -> Result<(), Self> {
         ENDPOINTS.with(|cell| cell.set(endpoints))
@@ -382,12 +391,7 @@ impl Endpoints {
     }
 
     pub async fn init() -> Option<Version> {
-        let parse_task = tokio::spawn(try_parse_signed_json::<StartupInfo>(
-            SIGNED_STARTUP_INFO,
-            "MatchWire startup json",
-            MATCH_WIRE_PUBLIC_PGP_KEY,
-            "MatchWire PGP public key",
-        ));
+        let parse_task = tokio::spawn(try_parse_signed_json::<StartupInfo>());
 
         let env_override = Self::search_env();
 
@@ -439,13 +443,20 @@ impl Endpoints {
     pub(crate) fn hmw_master_server() -> &'static str {
         Self::get(|endpoints| &endpoints.hmw_master_server)
     }
-    #[inline]
-    pub(crate) fn hmw_signed_manifest() -> Option<&'static str> {
-        Self::get(|endpoints| endpoints.hmw_manifest_signed.as_deref())
-    }
-    #[inline]
-    pub(crate) fn hmw_pgp_public_key() -> Option<&'static str> {
-        Self::get(|endpoints| endpoints.hmw_pgp_public_key.as_deref())
+    pub(super) fn hmw_signed_urls() -> Result<ClearTextJsonUrl, ResponseErr> {
+        let (Some(hmw_manifest), Some(hmw_pgp_public_key)) = Self::get(|endpoints| {
+            (
+                endpoints.hmw_manifest_signed.as_deref(),
+                endpoints.hmw_pgp_public_key.as_deref(),
+            )
+        }) else {
+            return Err(ResponseErr::other(
+                "Could not verify encryption of HMW manifest location\n\
+                    Restart MatchWire to try again",
+            ));
+        };
+
+        Ok(ClearTextJsonUrl::new(hmw_manifest, hmw_pgp_public_key))
     }
     #[inline]
     pub(crate) fn iw4_master_server() -> &'static str {
@@ -819,69 +830,5 @@ impl IDMaps {
 
     pub(crate) fn with_borrow<R>(f: impl FnOnce(&Self) -> R) -> R {
         ID_MAPS.with(|maps| f(maps))
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::{MATCH_WIRE_PUBLIC_PGP_KEY, SIGNED_STARTUP_INFO};
-    use crate::{
-        models::json_data::StartupInfo,
-        utils::request::{ResponseErr, crypto::pgp_verify_cleartext},
-    };
-    use reqwest::{StatusCode, blocking::get};
-
-    fn blocking_verify(
-        cleartext_json_url: &str,
-        cleartext_ctx: &'static str,
-        public_key_url: &str,
-        public_key_ctx: &'static str,
-    ) -> Result<String, ResponseErr> {
-        let cleartext_response = get(cleartext_json_url).unwrap();
-        let public_key_response = get(public_key_url).unwrap();
-
-        if cleartext_response.status() != StatusCode::OK {
-            panic!(
-                "{cleartext_ctx} returned status: {}",
-                cleartext_response.status()
-            )
-        }
-
-        if public_key_response.status() != StatusCode::OK {
-            panic!(
-                "{public_key_ctx} returned status: {}",
-                public_key_response.status()
-            )
-        }
-
-        let cleartext_string = cleartext_response.text().unwrap();
-        let public_key_string = public_key_response.text().unwrap();
-
-        pgp_verify_cleartext(&cleartext_string, &public_key_string)
-    }
-
-    #[test]
-    fn pgp_verify_manifest() {
-        let remote_endpoints = blocking_verify(
-            SIGNED_STARTUP_INFO,
-            "MatchWire startup data",
-            MATCH_WIRE_PUBLIC_PGP_KEY,
-            "MatchWire PGP public key",
-        )
-        .map(|data| {
-            serde_json::from_str::<StartupInfo>(&data)
-                .unwrap()
-                .endpoints
-        })
-        .unwrap();
-
-        let hmw_manifest_res = blocking_verify(
-            remote_endpoints.hmw_manifest_signed.as_deref().unwrap(),
-            "HMW manifest",
-            remote_endpoints.hmw_pgp_public_key.as_deref().unwrap(),
-            "HMW PGP public key",
-        );
-
-        assert!(hmw_manifest_res.is_ok())
     }
 }
