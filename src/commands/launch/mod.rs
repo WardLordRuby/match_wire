@@ -34,7 +34,7 @@ macro_rules! uppercase_pairs {
 const CMP_LEN: usize = 8;
 
 const JOINING_STR: &str = "Joining ";
-const CONNECTING_STR: &str = "Connecti";
+const CONNECTING_STR: &str = "Connecting ";
 const CONNECT_STR: [(char, char); CMP_LEN] =
     uppercase_pairs!['c', 'o', 'n', 'n', 'e', 'c', 't', ' '];
 const ESCAPE_CHAR: char = '\x1b';
@@ -42,8 +42,6 @@ const COLOR_CMD: char = 'm';
 const CARRIAGE_RETURN: u16 = '\r' as u16;
 const NEW_LINE: u16 = '\n' as u16;
 
-const _: () = assert!(JOINING_STR.len() == CMP_LEN);
-const _: () = assert!(CONNECTING_STR.len() == CMP_LEN);
 pub enum LaunchError {
     SpawnErr(OsString),
     WinApiErr(WinApiErr),
@@ -214,7 +212,8 @@ impl CommandContext {
                             case_insensitive_cmp_direct(trimmed)
                         } else {
                             trimmed
-                                .contains(connecting_str)
+                                .trim_start()
+                                .starts_with(connecting_str)
                                 .then_some(Connection::Browser)
                         };
 
