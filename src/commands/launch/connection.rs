@@ -19,6 +19,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tracing::info;
 
+pub(super) enum Connection {
+    Browser,
+    Direct(usize),
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HostName {
     pub parsed: String,
@@ -113,11 +118,6 @@ impl HostName {
     }
 }
 
-pub(super) enum Connection {
-    Browser,
-    Direct(usize),
-}
-
 /// Caller must guarantee that the given `Connection` kind is valid within `line`
 pub(super) async fn add_to_history(
     msg_sender: &Sender<Message>,
@@ -125,58 +125,6 @@ pub(super) async fn add_to_history(
     kind: Connection,
     version: f64,
 ) {
-    fn cache_insert(host_name_meta: HostNameRequestMeta) {
-        main_thread_state::Cache::with_borrow_mut(|cache| {
-            let mut modified = true;
-            let ip_opt = if let Some(Ok(ip)) = host_name_meta.socket_addr {
-                cache
-                    .host_to_connect
-                    .entry(host_name_meta.host_name.raw.clone())
-                    .and_modify(|cache_ip| {
-                        if *cache_ip == ip {
-                            modified = false
-                        } else {
-                            *cache_ip = ip
-                        }
-                    })
-                    .or_insert(ip);
-                Some(ip)
-            } else {
-                cache
-                    .host_to_connect
-                    .get(&host_name_meta.host_name.raw)
-                    .copied()
-            };
-            if let Some(curr_ip) = ip_opt
-                && let Some(i) = cache.connection_history.iter().position(|prev| {
-                    prev.raw != host_name_meta.host_name.raw
-                        && cache
-                            .host_to_connect
-                            .get(&prev.raw)
-                            .is_some_and(|&ip| ip == curr_ip)
-                })
-            {
-                cache.connection_history.remove(i);
-                modified = true
-            }
-            if let Some(i) = cache
-                .connection_history
-                .iter()
-                .position(|prev| prev.raw == host_name_meta.host_name.raw)
-            {
-                if i != cache.connection_history.len() - 1 {
-                    let entry = cache.connection_history.remove(i);
-                    cache.connection_history.push(entry);
-                    modified = true
-                }
-            } else {
-                cache.connection_history.push(host_name_meta.host_name);
-                modified = true
-            }
-            main_thread_state::UpdateCache::and_modify(|curr| curr | modified);
-        });
-    }
-
     debug_assert_eq!(strip_ansi(line), line);
     let res = match kind {
         Connection::Browser => match HostName::from_browser(line, version) {
@@ -201,4 +149,56 @@ pub(super) async fn add_to_history(
         }
         Err(err) => send_msg_over(msg_sender, Message::error(err)).await,
     }
+}
+
+fn cache_insert(host_name_meta: HostNameRequestMeta) {
+    main_thread_state::Cache::with_borrow_mut(|cache| {
+        let mut modified = true;
+        let ip_opt = if let Some(Ok(ip)) = host_name_meta.socket_addr {
+            cache
+                .host_to_connect
+                .entry(host_name_meta.host_name.raw.clone())
+                .and_modify(|cache_ip| {
+                    if *cache_ip == ip {
+                        modified = false
+                    } else {
+                        *cache_ip = ip
+                    }
+                })
+                .or_insert(ip);
+            Some(ip)
+        } else {
+            cache
+                .host_to_connect
+                .get(&host_name_meta.host_name.raw)
+                .copied()
+        };
+        if let Some(curr_ip) = ip_opt
+            && let Some(i) = cache.connection_history.iter().position(|prev| {
+                prev.raw != host_name_meta.host_name.raw
+                    && cache
+                        .host_to_connect
+                        .get(&prev.raw)
+                        .is_some_and(|&ip| ip == curr_ip)
+            })
+        {
+            cache.connection_history.remove(i);
+            modified = true
+        }
+        if let Some(i) = cache
+            .connection_history
+            .iter()
+            .position(|prev| prev.raw == host_name_meta.host_name.raw)
+        {
+            if i != cache.connection_history.len() - 1 {
+                let entry = cache.connection_history.remove(i);
+                cache.connection_history.push(entry);
+                modified = true
+            }
+        } else {
+            cache.connection_history.push(host_name_meta.host_name);
+            modified = true
+        }
+        main_thread_state::UpdateCache::and_modify(|curr| curr | modified);
+    });
 }
