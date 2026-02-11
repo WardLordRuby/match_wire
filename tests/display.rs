@@ -18,7 +18,7 @@ mod test {
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     };
 
-    use rand::{Rng, distr::Alphanumeric, seq::IndexedRandom};
+    use rand::{Rng, RngExt, distr::Alphanumeric, seq::IndexedRandom};
 
     #[test]
     fn line_len() {
