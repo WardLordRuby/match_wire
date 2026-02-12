@@ -64,7 +64,7 @@ impl GameDetails {
     }
 
     /// Returns the guid of the previous manifest if a newer manifest was available
-    pub(in super::super) fn conditional_condense_manifest(
+    pub(in crate::commands) fn conditional_condense_manifest(
         &mut self,
         mut man: HmwManifest,
     ) -> Option<String> {
@@ -111,7 +111,7 @@ impl GameDetails {
         })
     }
 
-    pub(in super::super) fn prep_verification_state(&mut self) -> Result<(), ()> {
+    pub(in crate::commands) fn prep_verification_state(&mut self) -> Result<(), ()> {
         let exe_dir = self.get_exe_dir();
 
         let missing = main_thread_state::Cache::with_borrow(|cache| {

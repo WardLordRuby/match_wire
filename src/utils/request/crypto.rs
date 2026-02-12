@@ -14,13 +14,13 @@ const SIGNED_STARTUP_INFO: &str =
 const MATCH_WIRE_PUBLIC_PGP_KEY: &str =
     "https://gist.githubusercontent.com/WardLordRuby/ca630bae78429d56a9484a099ddbefde/raw";
 
-pub(in super::super) struct ClearTextJsonUrl {
+pub(in crate::utils) struct ClearTextJsonUrl {
     json: &'static str,
     key: &'static str,
 }
 
 impl ClearTextJsonUrl {
-    pub(in super::super) fn new(json: &'static str, key: &'static str) -> Self {
+    pub(in crate::utils) fn new(json: &'static str, key: &'static str) -> Self {
         Self { json, key }
     }
 
@@ -32,12 +32,12 @@ impl ClearTextJsonUrl {
     }
 }
 
-pub(in super::super) enum UrlSource {
+pub(in crate::utils) enum UrlSource {
     Static(ClearTextJsonUrl),
     Getter(fn() -> Result<ClearTextJsonUrl, ResponseErr>),
 }
 
-pub(in super::super) trait ClearTextJson {
+pub(in crate::utils) trait ClearTextJson {
     const CTX: &str;
     const KEY_CTX: &str;
     const URLS: UrlSource;
@@ -94,7 +94,7 @@ where
         .map_err(|err| ResponseErr::Serialize { ctx: T::CTX, err })
 }
 
-pub(in super::super) async fn try_parse_signed_json<T>() -> Result<T, ResponseErr>
+pub(in crate::utils) async fn try_parse_signed_json<T>() -> Result<T, ResponseErr>
 where
     T: DeserializeOwned + ClearTextJson,
 {
