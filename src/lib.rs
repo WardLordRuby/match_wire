@@ -295,7 +295,7 @@ fn parse_hostname(name: &str) -> String {
         return String::new();
     }
 
-    fn step(c: char, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<char> {
+    fn step(c: char, chars: &mut impl Iterator<Item = char>) -> Option<char> {
         if c == COLOR_ESCAPE_CODE {
             chars.next();
             None
@@ -305,16 +305,14 @@ fn parse_hostname(name: &str) -> String {
     }
 
     const COLOR_ESCAPE_CODE: char = '^';
-    let mut chars = trimmed_name.chars().peekable();
+    let mut chars = trimmed_name.chars();
     let mut host_name = String::new();
 
     if let Some(c) = step(chars.next().expect("early return"), &mut chars) {
         host_name.push(c);
     }
 
-    while chars.peek().copied().is_some_and(char::is_whitespace) {
-        chars.next();
-    }
+    let mut chars = chars.skip_while(|c| c.is_whitespace());
 
     while let Some(c) = chars.next() {
         if let Some(c) = step(c, &mut chars) {

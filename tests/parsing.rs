@@ -40,7 +40,7 @@ mod test {
     fn parse_host_names_hmw() {
         const INPUT: [&str; 4] = [
             "Connecting to server:[0] {152.53.39.127:27017} ^5[US-EAST] ^3Respex ^1| ^6Map Voting ^1| ^2COD4^7/^3MW2 ^4Maps ^1| ^9HARDCORE TDM ^1| 2XP",
-            "Connecting to server:[49] {2.56.166.179:27017} ^1Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",
+            "Connecting to server:[49] {2.56.166.179:27017} ^1  Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",
             "Connecting to server:[33] {99.41.89.109:27020} ^:[NA-S] ^7| ^2Ashes ^7SnD 6v6 ^62XP",
             "Connecting to server:[3] {103.195.100.207:29737} ^1~ M ~ ^2MANIACOS ^7SHIPMENT",
         ];
@@ -53,7 +53,7 @@ mod test {
             ),
             (
                 "crimson tide | 24/7 shipment & rust us #6",
-                "^1Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",
+                "^1  Crimson Tide ^7| ^524/7 ^3Shipment ^7& ^3Rust ^5US #6",
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::new(2, 56, 166, 179)), 27017),
             ),
             (
