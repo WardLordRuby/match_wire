@@ -2,7 +2,7 @@ use super::{ResponseErr, STATUS_OK, client_with_timeout};
 use crate::{
     CRATE_NAME, LOG_ONLY,
     models::json_data::{HmwManifest, StartupInfo},
-    utils::main_thread_state,
+    utils::{display::DISP_NAME_HMW, main_thread_state},
 };
 
 use pgp::composed::{CleartextSignedMessage, Deserializable, SignedPublicKey};
@@ -20,15 +20,15 @@ pub(in crate::utils) struct ClearTextJsonUrl {
 }
 
 impl ClearTextJsonUrl {
-    pub(in crate::utils) fn new(json: &'static str, key: &'static str) -> Self {
+    pub(in crate::utils) const fn new(json: &'static str, key: &'static str) -> Self {
         Self { json, key }
     }
 
-    const fn startup_info() -> UrlSource {
-        UrlSource::Static(Self {
+    const fn startup_info() -> Self {
+        Self {
             json: SIGNED_STARTUP_INFO,
             key: MATCH_WIRE_PUBLIC_PGP_KEY,
-        })
+        }
     }
 }
 
@@ -37,17 +37,19 @@ pub(in crate::utils) enum UrlSource {
     Getter(fn() -> Result<ClearTextJsonUrl, ResponseErr>),
 }
 
-pub(in crate::utils) trait ClearTextJson {
-    const CTX: &str;
-    const KEY_CTX: &str;
-    const URLS: UrlSource;
-
-    fn get_urls() -> Result<ClearTextJsonUrl, ResponseErr> {
-        match Self::URLS {
+impl UrlSource {
+    pub(in crate::utils) fn get(self) -> Result<ClearTextJsonUrl, ResponseErr> {
+        match self {
             UrlSource::Static(url) => Ok(url),
             UrlSource::Getter(get_urls) => get_urls(),
         }
     }
+}
+
+pub(in crate::utils) trait ClearTextJson {
+    const CTX: &str;
+    const KEY_CTX: &str;
+    const URLS: UrlSource;
 }
 
 macro_rules! context_msg {
@@ -59,11 +61,11 @@ macro_rules! context_msg {
 
 impl ClearTextJson for StartupInfo {
     context_msg!(CRATE_NAME, "startup json");
-    const URLS: UrlSource = ClearTextJsonUrl::startup_info();
+    const URLS: UrlSource = UrlSource::Static(ClearTextJsonUrl::startup_info());
 }
 
 impl ClearTextJson for HmwManifest {
-    context_msg!("HMW", "manifest");
+    context_msg!(DISP_NAME_HMW, "manifest");
     const URLS: UrlSource = UrlSource::Getter(main_thread_state::Endpoints::hmw_signed_urls);
 }
 
@@ -79,7 +81,7 @@ async fn try_parse_signed_json_unverified<T>() -> Result<T, ResponseErr>
 where
     T: DeserializeOwned + ClearTextJson,
 {
-    let url = T::get_urls()?;
+    let url = T::URLS.get()?;
     let hmw_response = reqwest::get(url.json).await?;
 
     if hmw_response.status() != STATUS_OK {
@@ -99,7 +101,7 @@ where
     T: DeserializeOwned + ClearTextJson,
 {
     let client = client_with_timeout(6);
-    let url = T::get_urls()?;
+    let url = T::URLS.get()?;
 
     let (cleartext_response, public_key_response) =
         tokio::try_join!(client.get(url.json).send(), client.get(url.key).send())?;
@@ -135,12 +137,12 @@ mod test {
     use super::{ClearTextJson, ClearTextJsonUrl, UrlSource, pgp_verify_cleartext};
     use crate::{
         models::json_data::StartupInfo,
-        utils::{main_thread_state::Endpoints, request::ResponseErr},
+        utils::{display::DISP_NAME_HMW, main_thread_state::Endpoints, request::ResponseErr},
     };
     use reqwest::{StatusCode, blocking::get};
 
     fn blocking_verify<T: ClearTextJson>() -> Result<String, ResponseErr> {
-        let url = T::get_urls()?;
+        let url = T::URLS.get()?;
 
         let cleartext_response = get(url.json).unwrap();
         let public_key_response = get(url.key).unwrap();
@@ -172,7 +174,7 @@ mod test {
     static MANIFEST_URL: std::sync::OnceLock<Endpoints> = std::sync::OnceLock::new();
 
     impl ClearTextJson for TestHmwManifest {
-        context_msg!("HMW", "manifest");
+        context_msg!(DISP_NAME_HMW, "manifest");
         const URLS: UrlSource = UrlSource::Getter(|| {
             let manifest = MANIFEST_URL.get().unwrap();
             Ok(ClearTextJsonUrl::new(
