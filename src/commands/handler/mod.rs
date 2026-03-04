@@ -19,7 +19,7 @@ use crate::{
     utils::{
         caching::{build_cache, write_cache},
         display::{self, ConnectionHelp, DisplayLogs},
-        main_thread_state::{self, ThreadCopyState, pty_handle::PseudoConStatus},
+        main_thread_state::{self, ThreadCopyState, pty_handle::GameStatus},
         request::crypto::get_latest_hmw_manifest,
     },
 };
@@ -269,7 +269,7 @@ impl CommandContext {
             let messages = loop {
                 tokio::time::sleep(SLEEP * attempt).await;
                 match main_thread_state::pty_handle::check_connection() {
-                    Ok(PseudoConStatus::Attached) if attempt == 3 => {
+                    Ok(GameStatus::PseudoConAttached) if attempt == 3 => {
                         match hide_pseudo_console() {
                             Ok(true) => info!(name: LOG_ONLY, "Pseudo console window hidden"),
                             Ok(false) => {
@@ -280,8 +280,8 @@ impl CommandContext {
                         game_state_change.notify_one();
                         break vec![Message::info(format!("Connected to {game_name} console"))];
                     }
-                    Ok(PseudoConStatus::Attached) => attempt += 1,
-                    Ok(PseudoConStatus::Closed) | Ok(PseudoConStatus::Unattached) => {
+                    Ok(GameStatus::PseudoConAttached) => attempt += 1,
+                    Ok(GameStatus::Closed) | Ok(GameStatus::OpenUnattached) => {
                         break vec![
                             Message::error(format!(
                                 "Could not establish connection to {game_name}"

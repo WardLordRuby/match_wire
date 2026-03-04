@@ -640,9 +640,9 @@ pub(crate) mod pty_handle {
         }
     }
 
-    pub(crate) enum PseudoConStatus {
-        Attached,
-        Unattached,
+    pub(crate) enum GameStatus {
+        PseudoConAttached,
+        OpenUnattached,
         Closed,
     }
 
@@ -668,14 +668,14 @@ pub(crate) mod pty_handle {
         PTY_HANDLE.with_borrow_mut(is_alive)
     }
 
-    pub(crate) fn check_connection() -> Result<PseudoConStatus, ConnectionErr> {
+    pub(crate) fn check_connection() -> Result<GameStatus, ConnectionErr> {
         if game_connected()? {
-            return Ok(PseudoConStatus::Attached);
+            return Ok(GameStatus::PseudoConAttached);
         }
 
         Ok(match game_open()? {
-            Some(_) => PseudoConStatus::Unattached,
-            None => PseudoConStatus::Closed,
+            Some(_) => GameStatus::OpenUnattached,
+            None => GameStatus::Closed,
         })
     }
 

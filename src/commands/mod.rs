@@ -300,6 +300,22 @@ pub(crate) enum CommandErr {
     Command,
 }
 
+impl CommandErr {
+    const fn to_outcome(&self) -> CommandHandle {
+        match self {
+            CommandErr::Critical(_) => CommandHandle::Exit,
+            CommandErr::Command | CommandErr::NonCritical => CommandHandle::Processed,
+        }
+    }
+
+    const fn to_tag(&self) -> Option<HistoryTag> {
+        match self {
+            CommandErr::Critical(_) | CommandErr::NonCritical => None,
+            CommandErr::Command => Some(HistoryTag::Invalid),
+        }
+    }
+}
+
 impl From<io::Error> for CommandErr {
     /// This implementation of `from` should be used carefully, not _all_ `io::Error`s are critical,
     /// but **all** `io::Error`s that originate from the repl_oxide crate are.
@@ -323,7 +339,7 @@ impl CommandReturn {
         }
     }
 
-    fn insert_hook(hook: InputHook<CommandContext, Stdout>) -> Self {
+    const fn insert_hook(hook: InputHook<CommandContext, Stdout>) -> Self {
         Self {
             outcome: CommandHandle::InsertHook(hook),
             tag: None,
@@ -348,43 +364,21 @@ impl CommandReturn {
     }
 
     const fn command_err() -> Self {
-        Self {
-            outcome: CommandHandle::Processed,
-            tag: Some(HistoryTag::Invalid),
-            err: Some(CommandErr::Command),
-        }
+        Self::err(CommandErr::Command)
     }
 
     const fn non_critical_err() -> Self {
-        Self {
-            outcome: CommandHandle::Processed,
-            tag: None,
-            err: Some(CommandErr::NonCritical),
-        }
+        Self::err(CommandErr::NonCritical)
     }
 
-    fn critical_err(err: io::Error) -> Self {
-        Self {
-            outcome: CmdHandle::Exit,
-            tag: None,
-            err: Some(CommandErr::Critical(err)),
-        }
+    const fn critical_err(err: io::Error) -> Self {
+        Self::err(CommandErr::Critical(err))
     }
 
-    fn err(err: CommandErr) -> Self {
-        let outcome = match err {
-            CommandErr::Critical(_) => CommandHandle::Exit,
-            CommandErr::Command | CommandErr::NonCritical => CommandHandle::Processed,
-        };
-
-        let tag = match err {
-            CommandErr::Critical(_) | CommandErr::NonCritical => None,
-            CommandErr::Command => Some(HistoryTag::Invalid),
-        };
-
+    const fn err(err: CommandErr) -> Self {
         Self {
-            outcome,
-            tag,
+            outcome: err.to_outcome(),
+            tag: err.to_tag(),
             err: Some(err),
         }
     }

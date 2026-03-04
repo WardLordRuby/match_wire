@@ -9,7 +9,7 @@ use crate::{
     send_msg_over, strip_unwanted_ansi_sequences,
     utils::{
         display::ConnectionHelp,
-        main_thread_state::{self, ThreadCopyState, pty_handle::PseudoConStatus},
+        main_thread_state::{self, ThreadCopyState, pty_handle::GameStatus},
     },
 };
 
@@ -113,7 +113,7 @@ impl CommandContext {
     pub fn init_listener(&self) -> Result<(), String> {
         let game_name = self.game_name_owned();
 
-        let PseudoConStatus::Attached =
+        let GameStatus::PseudoConAttached =
             main_thread_state::pty_handle::check_connection().map_err(|err| err.to_string())?
         else {
             return Err(format!("No connection to {game_name} console"));
