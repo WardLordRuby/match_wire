@@ -72,7 +72,7 @@ pub(crate) enum Command {
     #[command(alias = "Settings")]
     Settings {
         /// Reset settings to MatchWire defaults
-        #[arg(long, alias = "verify")]
+        #[arg(long, aliases = ["default", "reset"])]
         use_default: bool,
     },
 
@@ -81,7 +81,7 @@ pub(crate) enum Command {
     Quit,
 
     /// Open the current local data directory
-    #[command(aliases(["Localenv", "localenv", "LocalEnv"]), hide = true)]
+    #[command(aliases = ["Localenv", "localenv", "LocalEnv"], hide = true)]
     LocalEnv,
 }
 

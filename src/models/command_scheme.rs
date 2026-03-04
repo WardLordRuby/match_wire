@@ -129,7 +129,8 @@ const COMMAND_INNER: &[InnerScheme] = &[
     InnerScheme::new(
         RecData::new(RecKind::argument_with_no_required_inputs())
             .with_parent(Parent::Root)
-            .with_recommendations(SETTINGS_RECS),
+            .with_recommendations(SETTINGS_RECS)
+            .with_alias(SETTINGS_ALIAS),
         Some(SETTINGS_INNER),
     ),
 ];
@@ -252,7 +253,8 @@ const LAST_INNER: &[InnerScheme] = &[
     InnerScheme::end(Parent::Entry(COMMAND_RECS[9])),
 ];
 
-const SETTINGS_RECS: &[&str] = &["use-default"];
+const SETTINGS_RECS: &[&str] = &["use-default", "default", "reset"];
+const SETTINGS_ALIAS: &[(usize, usize)] = &[(0, 1), (0, 2)];
 
 const SETTINGS_INNER: &[InnerScheme] = &[
     // use-default
