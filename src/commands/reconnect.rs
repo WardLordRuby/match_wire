@@ -5,7 +5,7 @@ use crate::{
         filter::{Request, Sourced, try_get_info},
         launch::connection::HostName,
     },
-    models::cli::HistoryArgs,
+    models::cli::ReconnectArgs,
     parse_hostname, send_msg_over, try_fit_table,
     utils::{
         caching::HostNameMap,
@@ -66,7 +66,11 @@ fn display_history(
 }
 
 impl CommandContext {
-    pub(super) fn reconnect(&mut self, repl: &mut ReplHandle, args: HistoryArgs) -> CommandReturn {
+    pub(super) fn reconnect(
+        &mut self,
+        repl: &mut ReplHandle,
+        args: ReconnectArgs,
+    ) -> CommandReturn {
         if args.abort {
             return if self.try_abort_queued_con() {
                 CommandReturn::processed()

@@ -122,7 +122,8 @@ const COMMAND_INNER: &[InnerScheme] = &[
     InnerScheme::new(
         RecData::new(RecKind::argument_with_no_required_inputs())
             .with_parent(Parent::Root)
-            .with_recommendations(LAST_RECS),
+            .with_recommendations(LAST_RECS)
+            .with_short(LAST_SHORT),
         Some(LAST_INNER),
     ),
     // settings
@@ -247,6 +248,7 @@ const VERSION_INNER: &[InnerScheme] = &[
 ];
 
 const LAST_RECS: &[&str] = &["refresh"];
+const LAST_SHORT: &[(usize, &str)] = &[(0, "R")];
 
 const LAST_INNER: &[InnerScheme] = &[
     // refresh

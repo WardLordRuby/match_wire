@@ -26,7 +26,7 @@ pub(crate) enum Command {
     #[command(alias = "Last")]
     Last {
         /// Refresh and display stats about the last executed `Filter` command
-        #[arg(short, long)]
+        #[arg(short = 'R', long)]
         refresh: bool,
     },
 
@@ -34,7 +34,7 @@ pub(crate) enum Command {
     #[command(alias = "Reconnect")]
     Reconnect {
         #[clap(flatten)]
-        args: HistoryArgs,
+        args: ReconnectArgs,
     },
 
     /// Launch HMW/H2M
@@ -86,7 +86,7 @@ pub(crate) enum Command {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct HistoryArgs {
+pub(crate) struct ReconnectArgs {
     /// Display previously connected servers
     #[arg(short = 'H', long, conflicts_with_all = ["abort", "queue", "connect"])]
     pub(crate) history: bool,
