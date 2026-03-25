@@ -663,7 +663,9 @@ pub(crate) mod pty_handle {
     }
 
     /// Only checks if the PTY console is alive, if you also need more information about the games current open
-    /// state use [`Self::check_connection`]
+    /// state use [`pty_handle::check_connection`]
+    ///
+    /// [`pty_handle::check_connection`]: check_connection
     pub(crate) fn game_connected() -> Result<bool, OsString> {
         PTY_HANDLE.with_borrow_mut(is_alive)
     }
@@ -769,9 +771,9 @@ impl LastServerStats {
         }
     }
 
-    /// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
+    /// The returned `io::Error` should be propagated as [`CommandErr::Critical`]
     ///
-    /// [`CmdErr::Critical`]: crate::commands::handler::CmdErr::Critical
+    /// [`CommandErr::Critical`]: crate::commands::CommandErr::Critical
     pub(crate) fn display(repl: &mut ReplHandle) -> io::Result<()> {
         LAST_SERVER_STATS.with_borrow(|stats| {
             if stats.source.is_empty() {

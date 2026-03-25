@@ -127,7 +127,7 @@ impl CommandContext {
             let mut buffer = OsString::new();
             let connecting_str = if version < 1.0 { JOINING_STR } else { CONNECTING_STR };
 
-            /// 16 KB
+            // 16 KB
             const BUFFER_SIZE: u32 = 16384;
             const PROCESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 

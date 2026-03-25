@@ -393,9 +393,9 @@ pub async fn startup_cache_task(
     }
 }
 
-/// The returned `io::Error` should be propagated as [`CmdErr::Critical`]
+/// The returned `io::Error` should be propagated as [`CommandErr::Critical`]
 ///
-/// [`CmdErr::Critical`]: crate::commands::handler::CmdErr::Critical
+/// [`CommandErr::Critical`]: crate::commands::CommandErr::Critical
 fn try_fit_table(
     repl: &mut ReplHandle,
     (cols, rows): (u16, u16),

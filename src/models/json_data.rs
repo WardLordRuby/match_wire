@@ -179,8 +179,8 @@ pub struct CondManifest {
     ///
     /// To find if `Self` has been verified genuine use [`GameDetails::manifest_verified`]
     ///
-    /// [`ModFileStatus`]: crate::commands::handler::ModFileStatus
-    /// [`GameDetails::manifest_verified`]: crate::commands::handler::GameDetails::manifest_verified
+    /// [`ModFileStatus`]: crate::commands::handler::status::ModFileStatus
+    /// [`GameDetails::manifest_verified`]: crate::utils::details::GameDetails::manifest_verified
     pub verified: bool,
 }
 
