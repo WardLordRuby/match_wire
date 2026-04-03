@@ -1,7 +1,7 @@
 use crate::{
     LOG_ONLY,
     files::FNAME_HMW,
-    hash_file_hex,
+    file_hexdigest,
     models::json_data::{CondManifest, HmwManifest},
     utils::{
         details::GameDetails,
@@ -170,7 +170,7 @@ impl GameDetails {
                 .files_with_hashes
                 .par_iter()
                 .filter_map(|(file, expected)| {
-                    let hash = hash_file_hex(&exe_dir.join(file)).unwrap_or_else(|err| {
+                    let hash = file_hexdigest(&exe_dir.join(file)).unwrap_or_else(|err| {
                         if err.kind() == ErrorKind::NotFound {
                             error!("file: {file}, not found");
                         } else {

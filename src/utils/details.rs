@@ -1,7 +1,7 @@
 use crate::{
     commands::{handler::status::ModFileStatus, launch::ffi::get_exe_version, settings::Settings},
+    file_hexdigest,
     files::*,
-    hash_file_hex,
     models::json_data::{CacheFile, Version},
     utils::display::{self, DISP_NAME_HMW},
 };
@@ -24,7 +24,7 @@ fn exe_details(game_exe_path: &Path) -> (Option<f64>, Option<String>) {
         );
         None
     });
-    let hash = hash_file_hex(game_exe_path)
+    let hash = file_hexdigest(game_exe_path)
         .map_err(|err| {
             println!(
                 "{RED}{err}, input file_name: {}{RESET}",
@@ -189,7 +189,7 @@ impl AppDetails {
             .unwrap_or_default();
 
         AppDetails {
-            hash_curr: hash_file_hex(exe_path).map_err(display::error).ok(),
+            hash_curr: file_hexdigest(exe_path).map_err(display::error).ok(),
             hash_latest,
             update_msg,
         }

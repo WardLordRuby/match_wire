@@ -34,7 +34,7 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    fmt::Display,
+    fmt::{Display, Write},
     io::{self, BufRead, BufReader},
     path::{Path, PathBuf},
 };
@@ -235,11 +235,14 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
     Ok(exe_dir.join(found_game))
 }
 
-fn hash_file_hex(path: &Path) -> io::Result<String> {
+fn file_hexdigest(path: &Path) -> io::Result<String> {
     let file = std::fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&file);
-    Ok(format!("{:x}", hasher.finalize()))
+    let hash = Sha256::digest(&file);
+    let mut hex_string = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        write!(hex_string, "{byte:02x}").unwrap()
+    }
+    Ok(hex_string)
 }
 
 pub fn await_user_for_end<D: Display>(err: D) {
