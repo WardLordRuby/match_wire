@@ -27,7 +27,6 @@ use crate::{
 
 use std::{
     cell::Cell,
-    cmp::Reverse,
     collections::HashSet,
     fmt::Display,
     fs::File,
@@ -144,7 +143,7 @@ pub(super) async fn build_favorites(
         if !filter.sorted {
             filter
                 .servers
-                .sort_unstable_by_key(|&(_, clients)| Reverse(clients));
+                .sort_unstable_by_key(|&(_, clients)| std::cmp::Reverse(clients));
         }
         limit
     } else {

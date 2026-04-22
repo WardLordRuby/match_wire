@@ -366,7 +366,7 @@ impl FilterStrategy for StatTrackStrategy {
         }
 
         filter_via_get_info(&mut servers, &mut args);
-        servers.sort_unstable_by(|a, b| b.info.player_ct().cmp(&a.info.player_ct()));
+        servers.sort_unstable_by_key(|server| std::cmp::Reverse(server.info.player_ct()));
 
         let out = servers
             .iter()
@@ -499,7 +499,7 @@ impl StatTrackStrategy {
             }
         }
 
-        iw4.sort_unstable_by(|a, b| b.players.cmp(&a.players));
+        iw4.sort_unstable_by_key(|stats| std::cmp::Reverse(stats.players));
 
         [
             (Source::HmwMaster, hmw_total, hmw, None),
