@@ -195,8 +195,6 @@ mod test {
             .unwrap();
 
         MANIFEST_URL.set(remote_endpoints).unwrap();
-
-        let hmw_manifest_res = blocking_verify::<TestHmwManifest>();
-        assert!(hmw_manifest_res.is_ok())
+        blocking_verify::<TestHmwManifest>().unwrap();
     }
 }
