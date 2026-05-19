@@ -18,7 +18,7 @@ use crate::{
             DisplayServerCount, SingularPlural, indicator::Spinner,
         },
         main_thread_state,
-        request::{ResponseErr, STATUS_OK},
+        request::{ResponseErr, STATUS_OK, serde_deserialize},
     },
 };
 
@@ -61,9 +61,9 @@ where
                     .try_extend_with_cached_servers::<S>(&mut servers)
                     .is_ok()
                 {
-                    error!(name: LOG_ONLY, "{err}");
+                    err.log_only();
                 } else {
-                    error!("{err}")
+                    err.display_and_log();
                 }
             }
         }
@@ -75,7 +75,7 @@ where
     Ok(servers)
 }
 
-pub(super) enum SourceResponse {
+pub(crate) enum SourceResponse {
     Iw4Master(Vec<Iw4JsonFmt>),
     HmwMaster(Vec<HmwJsonFmt>),
 }
@@ -105,7 +105,7 @@ impl From<Vec<Iw4JsonFmt>> for SourceResponse {
 struct HmwServers;
 struct Iw4Servers;
 
-trait MasterServer {
+pub(crate) trait MasterServer {
     type Response: DeserializeOwned + Into<SourceResponse>;
     const NAME: &str;
 
@@ -136,7 +136,11 @@ impl Source {
     async fn fetch<T: MasterServer>(client: Client) -> Result<SourceResponse, ResponseErr> {
         trace!("retrieving {} master server list", T::NAME);
 
-        let response = client.get(T::url()).send().await?;
+        let response = client
+            .get(T::url())
+            .send()
+            .await
+            .map_err(ResponseErr::master_server_reqwest::<T>)?;
 
         if response.status() != STATUS_OK {
             return Err(ResponseErr::bad_status(
@@ -145,11 +149,9 @@ impl Source {
             ));
         }
 
-        response
-            .json::<T::Response>()
+        serde_deserialize::<T::Response>(response)
             .await
             .map(Into::into)
-            .map_err(Into::into)
     }
 
     async fn try_get_sourced_servers(

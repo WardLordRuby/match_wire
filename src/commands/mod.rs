@@ -7,13 +7,12 @@ pub mod settings;
 use crate::{
     LOG_ONLY, MAIN_PROMPT,
     display::{self, ConnectionHelp, UPDATE_MSG_HMW},
-    hmw_hash_err,
     models::json_data::HmwManifest,
     splash_screen,
     utils::{
         details::{AppDetails, GameDetails},
         main_thread_state::{self, ThreadCopyState},
-        request::ResponseErr,
+        request::{ResponseErr, crypto::get_latest_hmw_manifest_panic_msg},
     },
 };
 use handler::status::ModFileStatus;
@@ -203,8 +202,8 @@ impl CommandContext {
                     });
                 }
             }
-            Ok(Err(err)) => hmw_hash_err!("{err}"),
-            Err(err) => hmw_hash_err!("{err}"),
+            Ok(Err(err)) => err.display_and_log(),
+            Err(err) => get_latest_hmw_manifest_panic_msg(err),
         }
 
         let startup_contents = cache_res.unwrap_or_else(|err| {

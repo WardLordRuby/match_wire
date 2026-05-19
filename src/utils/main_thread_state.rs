@@ -407,6 +407,7 @@ impl Endpoints {
                 alt_screen::push_message(Message::error(format!(
                     "Failed to verify startup data: {err}"
                 )));
+                err.log_only();
                 Self::set(Self::default()).expect("only valid set");
                 None
             }

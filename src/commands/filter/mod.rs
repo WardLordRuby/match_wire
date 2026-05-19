@@ -20,8 +20,7 @@ use crate::{
         },
         limiter::RateLimiter,
         main_thread_state,
-        request::STATUS_OK,
-        request::{ResponseErr, client_with_timeout},
+        request::{ResponseErr, STATUS_OK, client_with_timeout, serde_deserialize},
     },
 };
 
@@ -39,6 +38,7 @@ use repl_oxide::ansi_code::{CLEAR_LINE, GREEN, RED, RESET, YELLOW};
 use reqwest::Client;
 use tracing::{error, info, instrument, trace, warn};
 
+const LOCATION_SERVICE_PROVIDER: &str = "ip-api.com";
 const BATCH_LOCATION_URL: &str = "http://ip-api.com/batch?fields=message,continentCode";
 impl_rate_limit_config!(Location, 15, Duration::from_secs(60));
 
@@ -612,14 +612,20 @@ pub(crate) async fn try_batched_location_lookup<'a>(
         batch: String,
         client: Client,
     ) -> Result<Vec<IpLocation>, ResponseErr> {
-        let api_response = client.post(BATCH_LOCATION_URL).body(batch).send().await?;
+        let api_response = client
+            .post(BATCH_LOCATION_URL)
+            .body(batch)
+            .send()
+            .await
+            .map_err(|err| ResponseErr::reqwest(LOCATION_SERVICE_PROVIDER, err))?;
 
         if api_response.status() != STATUS_OK {
             return Err(ResponseErr::bad_status("IP api", api_response));
         }
 
-        let LocationApiResponse(api_data) = api_response.json::<LocationApiResponse>().await?;
-        Ok(api_data)
+        serde_deserialize::<LocationApiResponse>(api_response)
+            .await
+            .map(|location_wrapper| location_wrapper.0)
     }
 
     let mut requests = Vec::with_capacity(ips.len().div_ceil(BATCH_CAP));
@@ -652,8 +658,8 @@ pub(crate) async fn try_batched_location_lookup<'a>(
                     error!(name: LOG_ONLY, "requested data for: {} ips, got data for: {} ips", batch.len(), data.len());
                 }
             }
-            Ok(Err(err)) => error!(name: LOG_ONLY, "{err}"),
-            Err(err) => error!(name: LOG_ONLY, "{err}"),
+            Ok(Err(err)) => err.log_only(),
+            Err(err) => error!(name: LOG_ONLY, "`location_requests` panicked! {err:?}"),
         }
     }
 

@@ -20,7 +20,7 @@ use crate::{
         caching::{build_cache, write_cache},
         display::{self, ConnectionHelp, DisplayLogs},
         main_thread_state::{self, ThreadCopyState, pty_handle::GameStatus},
-        request::crypto::get_latest_hmw_manifest,
+        request::crypto::{get_latest_hmw_manifest, get_latest_hmw_manifest_panic_msg},
     },
 };
 
@@ -44,13 +44,6 @@ use repl_oxide::{
     input_hook::{HookControl, HookID, HookStates, HookedEvent, InputHook},
 };
 use tracing::{error, info};
-
-#[macro_export]
-macro_rules! hmw_hash_err {
-    ($($arg:tt)*) => {
-        error!("Could not get latest HMW version - {}", format_args!($($arg)*))
-    }
-}
 
 const QUIT_PROMPT: &str = concat!(
     "Press (",
@@ -398,8 +391,8 @@ impl CommandContext {
                     .conditional_condense_manifest(latest_manifest)
                     .is_some();
             }
-            Ok(Err(err)) => hmw_hash_err!("{err}"),
-            Err(err) => hmw_hash_err!("{err}"),
+            Ok(Err(err)) => err.display_and_log(),
+            Err(err) => get_latest_hmw_manifest_panic_msg(err),
         };
 
         main_thread_state::UpdateCache::and_modify(|curr| curr | cache_modified);

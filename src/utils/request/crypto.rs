@@ -7,7 +7,7 @@ use crate::{
 
 use pgp::composed::{CleartextSignedMessage, Deserializable, SignedPublicKey};
 use serde::de::DeserializeOwned;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 const SIGNED_STARTUP_INFO: &str =
     "https://gist.githubusercontent.com/WardLordRuby/795d840e208df2de08735c152889b2e4/raw";
@@ -77,23 +77,38 @@ pub async fn get_latest_hmw_manifest() -> Result<HmwManifest, ResponseErr> {
     }
 }
 
+pub(crate) fn get_latest_hmw_manifest_panic_msg(err: tokio::task::JoinError) {
+    error!("Could not get latest HMW version");
+    error!(name: LOG_ONLY, "`get_latest_hmw_manifest` panicked! {err:?}")
+}
+
 async fn try_parse_signed_json_unverified<T>() -> Result<T, ResponseErr>
 where
     T: DeserializeOwned + ClearTextJson,
 {
     let url = T::URLS.get()?;
-    let hmw_response = reqwest::get(url.json).await?;
+    let hmw_response = reqwest::get(url.json)
+        .await
+        .map_err(ResponseErr::cleartext_reqwest::<T>)?;
 
     if hmw_response.status() != STATUS_OK {
         return Err(ResponseErr::bad_status(T::CTX, hmw_response));
     }
 
-    let (msg, _headers_msg) =
-        CleartextSignedMessage::from_string(hmw_response.text().await?.trim())?;
+    let (msg, _headers_msg) = CleartextSignedMessage::from_string(
+        hmw_response
+            .text()
+            .await
+            .map_err(ResponseErr::cleartext_reqwest::<T>)?
+            .trim(),
+    )
+    .map_err(ResponseErr::cleartext_pgp::<T>)?;
+
+    let deserialized = serde_json::from_str::<T>(&msg.signed_text())
+        .map_err(ResponseErr::cleartext_serialize::<T>)?;
 
     warn!("{} verification bypassed", T::CTX);
-    serde_json::from_str::<T>(&msg.signed_text())
-        .map_err(|err| ResponseErr::Serialize { ctx: T::CTX, err })
+    Ok(deserialized)
 }
 
 pub(in crate::utils) async fn try_parse_signed_json<T>() -> Result<T, ResponseErr>
@@ -104,7 +119,8 @@ where
     let url = T::URLS.get()?;
 
     let (cleartext_response, public_key_response) =
-        tokio::try_join!(client.get(url.json).send(), client.get(url.key).send())?;
+        tokio::try_join!(client.get(url.json).send(), client.get(url.key).send())
+            .map_err(ResponseErr::cleartext_reqwest::<T>)?;
 
     if cleartext_response.status() != STATUS_OK {
         return Err(ResponseErr::bad_status(T::CTX, cleartext_response));
@@ -115,16 +131,17 @@ where
     }
 
     let (cleartext_string, public_key_string) =
-        tokio::try_join!(cleartext_response.text(), public_key_response.text())?;
+        tokio::try_join!(cleartext_response.text(), public_key_response.text())
+            .map_err(ResponseErr::cleartext_reqwest::<T>)?;
 
-    let signed_string = pgp_verify_cleartext(&cleartext_string, &public_key_string)?;
+    let signed_string = pgp_verify_cleartext(&cleartext_string, &public_key_string)
+        .map_err(ResponseErr::cleartext_pgp::<T>)?;
     info!(name: LOG_ONLY, "{} PGP signature verified!", T::CTX);
 
-    serde_json::from_str::<T>(&signed_string)
-        .map_err(|err| ResponseErr::Serialize { ctx: T::CTX, err })
+    serde_json::from_str::<T>(&signed_string).map_err(ResponseErr::cleartext_serialize::<T>)
 }
 
-fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> Result<String, ResponseErr> {
+fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> pgp::errors::Result<String> {
     let (public_key, _headers_public) = SignedPublicKey::from_string(public_key.trim())?;
     let (msg, _headers_msg) = CleartextSignedMessage::from_string(cleartext.trim())?;
 
@@ -167,6 +184,7 @@ mod test {
         let public_key_string = public_key_response.text().unwrap();
 
         pgp_verify_cleartext(&cleartext_string, &public_key_string)
+            .map_err(ResponseErr::cleartext_pgp::<T>)
     }
 
     struct TestHmwManifest;
