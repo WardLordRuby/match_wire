@@ -25,6 +25,13 @@ const COMMAND_RECS: &[&str] = &[
 ];
 const COMMANDS_ALIAS: &[(usize, usize)] = &[(4, 11), (5, 12), (6, 13)];
 
+const FILTER: Parent = Parent::Entry(COMMAND_RECS[0]);
+const RECONNECT: Parent = Parent::Entry(COMMAND_RECS[1]);
+const CONSOLE: &str = COMMAND_RECS[4];
+const VERSION: &str = COMMAND_RECS[8];
+const LAST: &str = COMMAND_RECS[9];
+const SETTINGS: &str = COMMAND_RECS[10];
+
 const fn init_command_scheme() -> CommandScheme {
     CommandScheme::new(
         RecData::new(RecKind::Command)
@@ -167,20 +174,20 @@ fn u8_bounds(value: &str, valid: impl Fn(u8) -> bool) -> bool {
 const FILTER_INNER: &[InnerScheme] = &[
     // limit
     InnerScheme::user_defined(1)
-        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parent(FILTER)
         .with_parsing_rule(is_unsigned),
     // player-min
     InnerScheme::user_defined(1)
-        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parent(FILTER)
         .with_parsing_rule(|value| u8_bounds(value, |v| v <= MAX_H2M_CLIENT_NUM)),
     // team-size-max
     InnerScheme::user_defined(1)
-        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parent(FILTER)
         .with_parsing_rule(|value| u8_bounds(value, |v| v > 0 && v <= MAX_H2M_TEAM_SIZE)),
     // region
     InnerScheme::new(
         RecData::new(RecKind::value_with_num_args(REGION_LEN))
-            .with_parent(Parent::Entry(COMMAND_RECS[0]))
+            .with_parent(FILTER)
             .with_recommendations(FILTER_REGIONS)
             .with_alias(FILTER_REGIONS_ALIAS)
             .without_help(),
@@ -189,7 +196,7 @@ const FILTER_INNER: &[InnerScheme] = &[
     // source
     InnerScheme::new(
         RecData::new(RecKind::value_with_num_args(SOURCE_LEN))
-            .with_parent(Parent::Entry(COMMAND_RECS[0]))
+            .with_parent(FILTER)
             .with_recommendations(FILTER_SOURCE_RECS)
             .with_alias(FILTER_SOURCE_ALIAS)
             .without_help(),
@@ -197,46 +204,46 @@ const FILTER_INNER: &[InnerScheme] = &[
     ),
     // includes
     InnerScheme::user_defined(usize::MAX)
-        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parent(FILTER)
         .with_parsing_rule(search_term_parser),
     // excludes
     InnerScheme::user_defined(usize::MAX)
-        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parent(FILTER)
         .with_parsing_rule(search_term_parser),
     // stats
-    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
+    InnerScheme::flag().with_parent(FILTER),
     // with-bots
-    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
+    InnerScheme::flag().with_parent(FILTER),
     // without-bots
-    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
+    InnerScheme::flag().with_parent(FILTER),
     // include-unresponsive
-    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[0])),
+    InnerScheme::flag().with_parent(FILTER),
     // retry-max
     InnerScheme::user_defined(1)
-        .with_parent(Parent::Entry(COMMAND_RECS[0]))
+        .with_parent(FILTER)
         .with_parsing_rule(is_unsigned),
 ];
 
 const RECONNECT_INNER: &[InnerScheme] = &[
     // history
-    InnerScheme::end(Parent::Entry(COMMAND_RECS[1])),
+    InnerScheme::end(RECONNECT),
     // connect
     InnerScheme::user_defined(1)
-        .with_parent(Parent::Entry(COMMAND_RECS[1]))
+        .with_parent(RECONNECT)
         .with_parsing_rule(|value| {
             u8_bounds(value, |v| {
                 v > 0 && v <= main_thread_state::Cache::history_len()
             })
         }),
     // queue
-    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[1])),
+    InnerScheme::flag().with_parent(RECONNECT),
     // abort
-    InnerScheme::flag().with_parent(Parent::Entry(COMMAND_RECS[1])),
+    InnerScheme::flag().with_parent(RECONNECT),
 ];
 
 const CONSOLE_INNER: &[InnerScheme] = &[
     // all
-    InnerScheme::end(Parent::Entry(COMMAND_RECS[4])),
+    InnerScheme::end(Parent::Entry(CONSOLE)),
 ];
 
 const VERSION_RECS: &[&str] = &["verify-all", "verify"];
@@ -244,7 +251,7 @@ const VERSION_ALIAS: &[(usize, usize)] = &[(0, 1)];
 
 const VERSION_INNER: &[InnerScheme] = &[
     // verify-all
-    InnerScheme::end(Parent::Entry(COMMAND_RECS[8])),
+    InnerScheme::end(Parent::Entry(VERSION)),
 ];
 
 const LAST_RECS: &[&str] = &["refresh"];
@@ -252,7 +259,7 @@ const LAST_SHORT: &[(usize, &str)] = &[(0, "R")];
 
 const LAST_INNER: &[InnerScheme] = &[
     // refresh
-    InnerScheme::end(Parent::Entry(COMMAND_RECS[9])),
+    InnerScheme::end(Parent::Entry(LAST)),
 ];
 
 const SETTINGS_RECS: &[&str] = &["use-default", "default", "reset"];
@@ -260,5 +267,5 @@ const SETTINGS_ALIAS: &[(usize, usize)] = &[(0, 1), (0, 2)];
 
 const SETTINGS_INNER: &[InnerScheme] = &[
     // use-default
-    InnerScheme::end(Parent::Entry(COMMAND_RECS[10])),
+    InnerScheme::end(Parent::Entry(SETTINGS)),
 ];

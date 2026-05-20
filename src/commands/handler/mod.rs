@@ -12,7 +12,6 @@ use crate::{
             ffi::{WinApiErr, game_open, hide_pseudo_console},
             spawn_pseudo,
         },
-        tag_last_cmd,
     },
     models::cli::{CacheCmd, Command, Filters},
     open_dir, send_msg_over,
@@ -82,10 +81,10 @@ impl Executor<Stdout> for CommandContext {
         line_handle: &mut ReplHandle,
         user_tokens: Vec<String>,
     ) -> io::Result<CommandHandle> {
-        let command = match try_parse_from(&user_tokens) {
+        let command = match try_parse_from(user_tokens) {
             Ok(c) => c,
             Err(err) => {
-                tag_last_cmd(line_handle, HistoryTag::Invalid);
+                HistoryTag::Invalid.apply_to_last_cmd(line_handle);
                 return err.print().map(|_| CommandHandle::Processed);
             }
         };
@@ -113,7 +112,7 @@ impl Executor<Stdout> for CommandContext {
         }
 
         if let Some(tag) = command_res.tag {
-            tag_last_cmd(line_handle, tag);
+            tag.apply_to_last_cmd(line_handle);
         }
 
         Ok(command_res.outcome)

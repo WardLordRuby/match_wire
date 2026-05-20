@@ -95,6 +95,12 @@ impl HistoryTag {
     pub(crate) fn is_valid<T: Into<u32>>(tag: Option<T>) -> bool {
         tag.is_none()
     }
+
+    /// Caller must guarantee an entry exists in history
+    fn apply_to_last_cmd(self, repl: &mut ReplHandle) {
+        repl.tag_last_history(|entry_tag| *entry_tag = Some(self.discriminant()))
+            .expect("command was added")
+    }
 }
 
 #[derive(Default)]
@@ -237,7 +243,7 @@ impl CommandContext {
             .with_custom_quit_command("quit")
             .with_history_entries(&startup_contents.command_history)
             .with_custom_parse_err_hook(|repl, err| {
-                tag_last_cmd(repl, HistoryTag::Invalid);
+                HistoryTag::Invalid.apply_to_last_cmd(repl);
                 println!("{RED}{err}{RESET}");
                 Ok(())
             })
@@ -381,12 +387,6 @@ impl CommandReturn {
             err: Some(err),
         }
     }
-}
-
-/// Caller must guarantee an entry exists in history
-fn tag_last_cmd(repl: &mut ReplHandle, tag: HistoryTag) {
-    repl.tag_last_history(|entry_tag| *entry_tag = Some(tag.discriminant()))
-        .expect("command was added")
 }
 
 pub enum Message {

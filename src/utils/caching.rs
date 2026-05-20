@@ -1,5 +1,5 @@
 use crate::{
-    CACHED_DATA, CRATE_VER, LOG_ONLY,
+    CACHE_FILE, CRATE_VER, LOG_ONLY,
     commands::{
         CommandContext, HistoryTag, ReplHandle,
         filter::{
@@ -248,11 +248,11 @@ impl From<serde_json::Error> for ReadCacheErr {
 #[instrument(level = "trace", skip_all)]
 #[expect(clippy::result_large_err)]
 pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
-    let file = match std::fs::read(local_env_dir.join(CACHED_DATA)) {
+    let file = match std::fs::read(local_env_dir.join(CACHE_FILE)) {
         Ok(data) => data,
         Err(err) => {
             return if err.kind() == ErrorKind::NotFound {
-                Err(ReadCacheErr::new(concat!(CACHED_DATA, " not found")))
+                Err(ReadCacheErr::new(concat!(CACHE_FILE, " not found")))
             } else {
                 Err(err.into())
             };
@@ -262,7 +262,7 @@ pub fn read_cache(local_env_dir: &Path) -> Result<CacheFile, ReadCacheErr> {
     let cache = serde_json::from_slice::<CacheFile>(&file)?;
     trace!("Cache read from file");
 
-    match std::time::SystemTime::now().duration_since(cache.created) {
+    match SystemTime::now().duration_since(cache.created) {
         Ok(time_since_update) => {
             if time_since_update > Duration::new(60 * 60 * 24, 0) {
                 return Err(ReadCacheErr::with_old("cache is too old", cache));
@@ -279,7 +279,7 @@ pub fn write_cache(context: &CommandContext, line_handle: &ReplHandle) -> io::Re
     let Some(local_path) = context.local_dir() else {
         return Err(io::Error::other("No valid location to save cache to"));
     };
-    let file = std::fs::File::create(local_path.join(CACHED_DATA))?;
+    let file = std::fs::File::create(local_path.join(CACHE_FILE))?;
 
     let cmd_history =
         line_handle.export_filtered_history(HistoryTag::is_valid, Some(MAX_COMMAND_HISTORY));

@@ -1,7 +1,6 @@
 use crate::{
-    LOG_ONLY,
+    LOG_ONLY, file_hexdigest,
     files::FNAME_HMW,
-    file_hexdigest,
     models::json_data::{CondManifest, HmwManifest},
     utils::{
         details::GameDetails,

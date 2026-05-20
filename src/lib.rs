@@ -84,7 +84,7 @@ mod files {
 use files::*;
 
 const LOCAL_DATA: &str = "LOCALAPPDATA";
-const CACHED_DATA: &str = "cache.json";
+const CACHE_FILE: &str = "cache.json";
 
 pub mod splash_screen {
     use std::{io, thread::JoinHandle};
@@ -205,13 +205,24 @@ fn open_dir(path: &Path) -> io::Result<std::process::Child> {
 
 #[cfg(not(debug_assertions))]
 fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>> {
-    use crate::utils::display::HmwDownloadHint;
-
-    fn exists(exe_dir: &Path, file: &'static str) -> Result<bool, String> {
+    fn exists(exe_dir: &Path, file_name: &'static str) -> Result<bool, String> {
         exe_dir
-            .join(file)
+            .join(file_name)
             .try_exists()
             .map_err(|err| err.to_string())
+    }
+
+    fn find_game(exe_dir: &Path) -> Result<&'static str, String> {
+        for game_name in [FNAME_HMW, FNAME_H2M_1, FNAME_H2M_2] {
+            if exists(exe_dir, game_name)? {
+                return Ok(game_name);
+            }
+        }
+
+        return Err(format!(
+            "Mod exe not found, {}",
+            crate::utils::display::HmwDownloadHint
+        ));
     }
 
     if !exists(exe_dir, FNAME_MWR)? {
@@ -222,17 +233,7 @@ fn contains_required_files(exe_dir: &Path) -> Result<PathBuf, Cow<'static, str>>
         )));
     }
 
-    let found_game = if exists(exe_dir, FNAME_HMW)? {
-        FNAME_HMW
-    } else if exists(exe_dir, FNAME_H2M_1)? {
-        FNAME_H2M_1
-    } else if exists(exe_dir, FNAME_H2M_2)? {
-        FNAME_H2M_2
-    } else {
-        return Err(Cow::Owned(format!("Mod exe not found, {HmwDownloadHint}")));
-    };
-
-    Ok(exe_dir.join(found_game))
+    Ok(exe_dir.join(find_game(exe_dir)?))
 }
 
 fn file_hexdigest(path: &Path) -> io::Result<String> {

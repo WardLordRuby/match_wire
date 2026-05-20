@@ -55,7 +55,7 @@ thread_local! {
     static LAST_SERVER_STATS: RefCell<LastServerStats> = const { RefCell::new(LastServerStats::default()) };
     static ID_MAPS: IDMaps = IDMaps::new();
     static ALT_SCREEN_VIS: Cell<bool> = const { Cell::new(false) };
-    static ALT_SCREEN_EVENT_BUFFER: RefCell<AltScreenEvents> = const { RefCell::new(AltScreenEvents::new()) };
+    static ALT_SCREEN_EVENT_BUFFER: RefCell<alt_screen::AltScreenEvents> = const { RefCell::new(alt_screen::AltScreenEvents::new()) };
     static EXE_PATH: io::Result<PathBuf> = std::env::current_exe();
     static ENV_PATH: io::Result<local_path::Env> = local_path::Env::new();
 }
@@ -141,23 +141,23 @@ pub mod local_path {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct AltScreenEvents {
-    pub(crate) pre_subscriber: Vec<Message>,
-    pub(crate) from_subscriber: String,
-}
-
-impl AltScreenEvents {
-    const fn new() -> Self {
-        Self {
-            pre_subscriber: Vec::new(),
-            from_subscriber: String::new(),
-        }
-    }
-}
-
 pub(crate) mod alt_screen {
     use super::{ALT_SCREEN_EVENT_BUFFER, ALT_SCREEN_VIS, Message};
+
+    #[derive(Default)]
+    pub(super) struct AltScreenEvents {
+        pre_subscriber: Vec<Message>,
+        from_subscriber: String,
+    }
+
+    impl AltScreenEvents {
+        pub(super) const fn new() -> Self {
+            Self {
+                pre_subscriber: Vec::new(),
+                from_subscriber: String::new(),
+            }
+        }
+    }
 
     pub(crate) fn enter() {
         ALT_SCREEN_VIS.set(true);
@@ -414,43 +414,39 @@ impl Endpoints {
         }
     }
 
-    fn get<R>(f: impl FnOnce(&'static Endpoints) -> R) -> R {
+    fn get() -> &'static Self {
         ENDPOINTS.with(|cell| {
             let endpoints = cell.get().expect(
                 "tried to access endpoints before startup process or outside of the main thread",
-            );
+            ) as *const Self;
 
             // Safety:
             // - Initialization of `OnceCell<Endpoints>` and all subsequent access to containing fields
             //   happen on the same thread set by tokio "Current thread" runtime.
             // - The use of `OnceCell` ensures we will panic on the above 'expect' before we allow undefined behavior
-            let endpoints =
-                unsafe { std::mem::transmute::<&Endpoints, &'static Endpoints>(endpoints) };
-
-            f(endpoints)
+            unsafe { &*endpoints }
         })
     }
 
     pub(crate) fn skip_verification() -> bool {
-        Self::get(|endpoints| endpoints.skip_pgp)
+        Self::get().skip_pgp
     }
 
     #[cfg(not(debug_assertions))]
     #[inline]
     pub(crate) fn hmw_download() -> &'static str {
-        Self::get(|endpoints| &endpoints.hmw_download)
+        &Self::get().hmw_download
     }
     #[inline]
     pub(crate) fn hmw_master_server() -> &'static str {
-        Self::get(|endpoints| &endpoints.hmw_master_server)
+        &Self::get().hmw_master_server
     }
     pub(super) fn hmw_signed_urls() -> Result<ClearTextJsonUrl, ResponseErr> {
-        let (Some(hmw_manifest), Some(hmw_pgp_public_key)) = Self::get(|endpoints| {
-            (
-                endpoints.hmw_manifest_signed.as_deref(),
-                endpoints.hmw_pgp_public_key.as_deref(),
-            )
-        }) else {
+        let endpoints = Self::get();
+        let (Some(hmw_manifest), Some(hmw_pgp_public_key)) = (
+            endpoints.hmw_manifest_signed.as_deref(),
+            endpoints.hmw_pgp_public_key.as_deref(),
+        ) else {
             return Err(ResponseErr::other(
                 "Could not verify encryption of HMW manifest location\n\
                     Restart MatchWire to try again",
@@ -461,11 +457,11 @@ impl Endpoints {
     }
     #[inline]
     pub(crate) fn iw4_master_server() -> &'static str {
-        Self::get(|endpoints| &endpoints.iw4_master_server)
+        &Self::get().iw4_master_server
     }
     #[inline]
     pub(crate) fn server_info_endpoint() -> &'static str {
-        Self::get(|endpoints| &endpoints.server_info_endpoint)
+        &Self::get().server_info_endpoint
     }
 }
 

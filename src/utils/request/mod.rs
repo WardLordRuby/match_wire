@@ -86,10 +86,12 @@ impl ResponseErr {
     }
 
     pub(crate) fn has_debug_info(&self) -> bool {
-        matches!(
-            &self.err,
-            ResponseErrType::Reqwest(_) | ResponseErrType::Pgp(_) | ResponseErrType::Serialize(_)
-        )
+        match &self.err {
+            ResponseErrType::Reqwest(_)
+            | ResponseErrType::Pgp(_)
+            | ResponseErrType::Serialize(_) => true,
+            ResponseErrType::Status(_) | ResponseErrType::Other => false,
+        }
     }
 
     pub(crate) fn display_and_log(&self) {
