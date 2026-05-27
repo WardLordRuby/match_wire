@@ -307,6 +307,17 @@ pub(crate) struct GetInfoMetaData {
     pub(crate) meta: Sourced,
 }
 
+macro_rules! set_flag {
+    ($(#[$attr:meta])* $name:ident, $field:ident, $value:literal) => {
+        $(#[$attr])*
+        #[inline]
+        pub(crate) fn $name(&mut self) -> &mut Self {
+            self.$field = $value;
+            self
+        }
+    };
+}
+
 #[expect(dead_code)]
 impl GetInfoMetaData {
     fn new(meta: Sourced, server_info_endpoint: &'static str) -> Self {
@@ -327,44 +338,21 @@ impl GetInfoMetaData {
         self
     }
 
-    #[inline]
-    pub(crate) fn with_url(&mut self) -> &mut Self {
-        self.display_url = true;
-        self
-    }
-
-    #[inline]
-    pub(crate) fn with_socket_addr(&mut self) -> &mut Self {
-        self.display_socket_addr = true;
-        self
-    }
-
-    #[inline]
-    pub(crate) fn with_source(&mut self) -> &mut Self {
-        self.display_source = true;
-        self
-    }
-
-    #[inline]
-    /// `GetInfoErr` default display is without addr
-    pub(crate) fn without_url(&mut self) -> &mut Self {
-        self.display_url = false;
-        self
-    }
-
-    #[inline]
-    /// `GetInfoErr` default display is without ip
-    pub(crate) fn without_ip(&mut self) -> &mut Self {
-        self.display_url = false;
-        self
-    }
-
-    #[inline]
-    /// `GetInfoErr` default display is without source
-    pub(crate) fn without_source(&mut self) -> &mut Self {
-        self.display_source = false;
-        self
-    }
+    set_flag!(with_url, display_url, true);
+    set_flag!(with_socket_addr, display_socket_addr, true);
+    set_flag!(with_source, display_source, true);
+    set_flag!(
+        /// `GetInfoErr` default display is without addr
+        without_url, display_url, false
+    );
+    set_flag!(
+        /// `GetInfoErr` default display is without ip
+        without_socket_addr, display_socket_addr, false
+    );
+    set_flag!(
+        /// `GetInfoErr` default display is without source
+        without_source, display_source, false
+    );
 }
 
 impl Display for GetInfoMetaData {
