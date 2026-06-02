@@ -399,47 +399,31 @@ pub(super) fn filter_via_get_info(servers: &mut Vec<Server>, args: &mut Filters)
     args.includes.as_deref_mut().map(make_slice_ascii_lowercase);
     args.excludes.as_deref_mut().map(make_slice_ascii_lowercase);
 
+    macro_rules! swap_remove {
+        ($i:tt if $cond:expr) => {
+            if $cond {
+                servers.swap_remove($i);
+                continue;
+            }
+        };
+    }
+
     for i in (0..servers.len()).rev() {
         let info = &servers[i].info;
 
-        if args
-            .team_size_max
-            .is_some_and(|max| info.max_clients > max * 2)
-        {
-            servers.swap_remove(i);
-            continue;
-        }
-
-        if args.player_min.is_some_and(|min| info.player_ct() < min) {
-            servers.swap_remove(i);
-            continue;
-        }
-
-        if args.with_bots && info.bots == 0 {
-            servers.swap_remove(i);
-            continue;
-        }
-
-        if args.without_bots && info.bots != 0 {
-            servers.swap_remove(i);
-            continue;
-        }
+        swap_remove!(i if args.team_size_max.is_some_and(|max| info.max_clients > max * 2));
+        swap_remove!(i if args.player_min.is_some_and(|min| info.player_ct() < min));
+        swap_remove!(i if args.with_bots && info.bots == 0);
+        swap_remove!(i if args.without_bots && info.bots != 0);
 
         if args.includes.is_none() && args.excludes.is_none() {
             continue;
         }
 
         let hostname = parse_hostname(&info.host_name);
-        if let Some(include_terms) = args.includes.as_deref()
-            && !include_terms.iter().any(|term| hostname.contains(term))
-        {
-            servers.swap_remove(i);
-            continue;
-        }
-        if let Some(exclude_terms) = args.excludes.as_deref()
-            && exclude_terms.iter().any(|term| hostname.contains(term))
-        {
-            servers.swap_remove(i);
-        }
+        swap_remove!(i if args.includes.as_deref()
+            .is_some_and(|include_terms| !include_terms.iter().any(|term| hostname.contains(term))));
+        swap_remove!(i if args.excludes.as_deref()
+            .is_some_and(|exclude_terms| exclude_terms.iter().any(|term| hostname.contains(term))));
     }
 }

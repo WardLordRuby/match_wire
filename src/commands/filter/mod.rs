@@ -694,8 +694,7 @@ fn try_resolve_from_str(ip_str: &str) -> Option<IpAddr> {
             .ok()
             .and_then(|mut socket_addr| socket_addr.next().map(|socket| socket.ip()));
 
-        let replaced = cache.dns_resolution.insert(ip_str.to_string(), resolved);
-        assert!(replaced.is_none());
+        cache.dns_resolution.insert(ip_str.to_string(), resolved);
 
         #[cfg(debug_assertions)]
         if let Some(ip) = resolved {
@@ -708,6 +707,26 @@ fn try_resolve_from_str(ip_str: &str) -> Option<IpAddr> {
 
 #[instrument(level = "trace", skip_all)]
 fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> Result<IpAddr, AddrParseError> {
+    fn parse_ipv6_webfront(webfront_url: &str) -> Option<&str> {
+        const HTTP_ENDING: &str = "//";
+
+        let ip_start = webfront_url
+            .find(HTTP_ENDING)
+            .map(|i| i + HTTP_ENDING.len())?;
+        let ipv6_slice = if let Some(ip_end) = webfront_url.rfind(':') {
+            if ip_end <= ip_start {
+                error!(name: LOG_ONLY, "Bad ipv6 slice op: {webfront_url}");
+                return None;
+            }
+            &webfront_url[ip_start..ip_end]
+        } else {
+            &webfront_url[ip_start..]
+        };
+
+        trace!("Parsed: {ipv6_slice}, from webfront_url");
+        Some(ipv6_slice)
+    }
+
     let ip_trim = ip.trim_matches('/').trim_matches(':');
 
     if let Some(ip) = try_resolve_from_str(ip_trim) {
@@ -715,26 +734,14 @@ fn parse_possible_ipv6(ip: &str, webfront_url: &str) -> Result<IpAddr, AddrParse
     }
 
     match ip_trim.parse::<IpAddr>() {
-        Ok(ip) => Ok(ip),
+        success @ Ok(_) => success,
         Err(err) => {
-            const HTTP_ENDING: &str = "//";
-            if let Some(i) = webfront_url.find(HTTP_ENDING) {
-                const PORT_SEPARATOR: char = ':';
-                let ip_start = i + HTTP_ENDING.len();
-                let ipv6_slice = if let Some(j) = webfront_url[ip_start..].rfind(PORT_SEPARATOR) {
-                    let ip_end = j + ip_start;
-                    if ip_end <= ip_start {
-                        error!(name: LOG_ONLY, "Bad ipv6 slice op: {webfront_url}");
-                        return Err(err);
-                    }
-                    &webfront_url[ip_start..ip_end]
-                } else {
-                    &webfront_url[ip_start..]
-                };
-                trace!("Parsed: {ipv6_slice}, from webfront_url");
-                return ipv6_slice.parse::<IpAddr>();
-            }
-            Err(err)
+            let Some(ipv6_str) = parse_ipv6_webfront(webfront_url) else {
+                return Err(err);
+            };
+
+            trace!("Failed to parse: {ip_trim} - {err}");
+            ipv6_str.parse::<IpAddr>()
         }
     }
 }
