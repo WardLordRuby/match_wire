@@ -25,7 +25,7 @@ use crate::{
 
 use std::{
     borrow::Cow,
-    cell::{Cell, OnceCell, RefCell},
+    cell::{Cell, RefCell},
     collections::HashMap,
     ffi::OsString,
     io,
@@ -47,7 +47,7 @@ thread_local! {
     static CACHE: RefCell<Cache> = panic!("Attempted to access cache prior to set");
     static UPDATE_CACHE: Cell<bool> = const { Cell::new(false) };
     static FORWARD_LOGS: Cell<bool> = const { Cell::new(false) };
-    static ENDPOINTS: OnceCell<Endpoints> = const { OnceCell::new() };
+    static ENDPOINTS: Cell<Endpoints> = panic!("Attempted to access endpoints prior to set");
     static PTY_HANDLE: RefCell<Option<PTY>> = panic!("Attempted to access PTY prior to set");
     static SELF_HWND: Option<HWND> = crate::commands::launch::ffi::get_console_hwnd()
         .map_err(display::error)
@@ -308,9 +308,8 @@ impl Endpoints {
         self.hmw_pgp_public_key.as_deref()
     }
 
-    #[expect(clippy::result_large_err)]
-    fn set(endpoints: Self) -> Result<(), Self> {
-        ENDPOINTS.with(|cell| cell.set(endpoints))
+    fn set(endpoints: Self) {
+        ENDPOINTS.set(endpoints)
     }
 
     fn search_env() -> Option<String> {
@@ -400,7 +399,7 @@ impl Endpoints {
                 if let Some(env_manifest) = env_override {
                     startup.endpoints.set_manifest_override(env_manifest);
                 }
-                Self::set(startup.endpoints).expect("only valid set");
+                Self::set(startup.endpoints);
                 Some(startup.version)
             }
             Err(err) => {
@@ -408,7 +407,7 @@ impl Endpoints {
                     "Failed to verify startup data: {err}"
                 )));
                 err.log_only();
-                Self::set(Self::default()).expect("only valid set");
+                Self::set(Self::default());
                 None
             }
         }
@@ -416,14 +415,16 @@ impl Endpoints {
 
     fn get() -> &'static Self {
         ENDPOINTS.with(|cell| {
-            let endpoints = cell.get().expect(
-                "tried to access endpoints before startup process or outside of the main thread",
-            ) as *const Self;
+            let endpoints = cell.as_ptr();
 
             // Safety:
-            // - Initialization of `OnceCell<Endpoints>` and all subsequent access to containing fields
-            //   happen on the same thread set by tokio "Current thread" runtime.
-            // - The use of `OnceCell` ensures we will panic on the above 'expect' before we allow undefined behavior
+            // - `ENDPOINTS` is only set once on the processes main thread (Tokio's "Current thread")
+            // - The `Cell` is initialized with a panic guard, ensuring we panic before returning an
+            //   invalid reference if called before `set` or called from another thread.
+            // - `ENDPOINTS` will live as long as the processes main thread, hence the returned reference is
+            //   valid for the `'static` lifetime.
+            // - `Cell::get_mut` is never called. Doing so would create a mutable alias against any live
+            //   `&'static` references and is undefined behavior.
             unsafe { &*endpoints }
         })
     }
