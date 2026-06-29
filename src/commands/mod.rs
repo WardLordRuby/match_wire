@@ -5,7 +5,7 @@ pub mod reconnect;
 pub mod settings;
 
 use crate::{
-    LOG_ONLY, MAIN_PROMPT,
+    CRATE_NAME, LOG_ONLY, MAIN_PROMPT,
     display::{self, ConnectionHelp, UPDATE_MSG_HMW},
     models::json_data::HmwManifest,
     splash_screen,
@@ -177,7 +177,7 @@ impl CommandContext {
                 .app_data
                 .update_msg
                 .as_deref()
-                .expect("Must be `Some` if `hash_latest` is `Some`");
+                .unwrap_or(constcat::concat!(CRATE_NAME, " update available"));
             info!("{msg}");
         }
 

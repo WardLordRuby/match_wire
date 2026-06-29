@@ -89,14 +89,11 @@ where
         unexpected => {
             return Err(de::Error::invalid_value(
                 de::Unexpected::Str(unexpected),
-                &"0 or 1",
+                &"0, 1, false, true",
             ));
         }
     })
 }
-
-#[derive(Deserialize, Debug)]
-pub(crate) struct LocationApiResponse(pub(crate) Vec<IpLocation>);
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct IpLocation {

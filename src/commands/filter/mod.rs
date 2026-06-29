@@ -10,7 +10,7 @@ use crate::{
     impl_rate_limit_config,
     models::{
         cli::{Filters, Region, Source},
-        json_data::{GetInfo, IpLocation, LocationApiResponse, ServerInfo},
+        json_data::{GetInfo, IpLocation, ServerInfo},
     },
     non_critical_err, parse_hostname,
     utils::{
@@ -580,7 +580,8 @@ impl Source {
     }
 }
 
-pub(super) type LocationBatchRes<'a> = (Vec<(&'a [IpAddr], Vec<IpLocation>)>, usize);
+pub(super) type LocationApiResponse = Vec<IpLocation>;
+pub(super) type LocationBatchRes<'a> = (Vec<(&'a [IpAddr], LocationApiResponse)>, usize);
 
 /// This API request is rate limited, see: [`Location`] for set limits. Returns the aligned data and the number of
 /// `IpAddr`s that were included in the batched API requests. The return type is what [`process_region_requests`] expects.
@@ -599,7 +600,7 @@ pub(crate) async fn try_batched_location_lookup<'a>(
     async fn location_requests(
         batch: String,
         client: Client,
-    ) -> Result<Vec<IpLocation>, ResponseErr> {
+    ) -> Result<LocationApiResponse, ResponseErr> {
         let api_response = client
             .post(BATCH_LOCATION_URL)
             .body(batch)
@@ -611,9 +612,7 @@ pub(crate) async fn try_batched_location_lookup<'a>(
             return Err(ResponseErr::bad_status("IP api", api_response));
         }
 
-        serde_deserialize::<LocationApiResponse>(api_response)
-            .await
-            .map(|location_wrapper| location_wrapper.0)
+        serde_deserialize(api_response).await
     }
 
     let mut requests = Vec::with_capacity(ips.len().div_ceil(BATCH_CAP));
