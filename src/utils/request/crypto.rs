@@ -151,10 +151,10 @@ fn pgp_verify_cleartext(cleartext: &str, public_key: &str) -> pgp::errors::Resul
 
 #[cfg(test)]
 mod test {
-    use super::{ClearTextJson, ClearTextJsonUrl, UrlSource, pgp_verify_cleartext};
+    use super::{ClearTextJson, HmwManifest, pgp_verify_cleartext};
     use crate::{
         models::json_data::StartupInfo,
-        utils::{display::DISP_NAME_HMW, main_thread_state::Endpoints, request::ResponseErr},
+        utils::{main_thread_state::Endpoints, request::ResponseErr},
     };
     use reqwest::{StatusCode, blocking::get};
 
@@ -187,21 +187,6 @@ mod test {
             .map_err(ResponseErr::cleartext_pgp::<T>)
     }
 
-    struct TestHmwManifest;
-
-    static MANIFEST_URL: std::sync::OnceLock<Endpoints> = std::sync::OnceLock::new();
-
-    impl ClearTextJson for TestHmwManifest {
-        context_msg!(DISP_NAME_HMW, "manifest");
-        const URLS: UrlSource = UrlSource::Getter(|| {
-            let manifest = MANIFEST_URL.get().unwrap();
-            Ok(ClearTextJsonUrl::new(
-                manifest.TESTING_get_hmw_manifest_signed().unwrap(),
-                manifest.TESTING_get_hmw_pgp_public_key().unwrap(),
-            ))
-        });
-    }
-
     #[test]
     fn pgp_verify_manifest() {
         let remote_endpoints = blocking_verify::<StartupInfo>()
@@ -212,7 +197,7 @@ mod test {
             })
             .unwrap();
 
-        MANIFEST_URL.set(remote_endpoints).unwrap();
-        blocking_verify::<TestHmwManifest>().unwrap();
+        Endpoints::set(remote_endpoints);
+        blocking_verify::<HmwManifest>().unwrap();
     }
 }

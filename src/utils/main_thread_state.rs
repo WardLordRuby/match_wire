@@ -298,16 +298,11 @@ impl Endpoints {
     }
 
     #[cfg(test)]
-    #[expect(non_snake_case, reason = "used in tests only")]
-    pub(super) fn TESTING_get_hmw_manifest_signed(&self) -> Option<&str> {
-        self.hmw_manifest_signed.as_deref()
-    }
-    #[cfg(test)]
-    #[expect(non_snake_case, reason = "used in tests only")]
-    pub(super) fn TESTING_get_hmw_pgp_public_key(&self) -> Option<&str> {
-        self.hmw_pgp_public_key.as_deref()
+    pub fn set(endpoints: Self) {
+        ENDPOINTS.set(endpoints)
     }
 
+    #[cfg(not(test))]
     fn set(endpoints: Self) {
         ENDPOINTS.set(endpoints)
     }
